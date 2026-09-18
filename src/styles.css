@@ -39,7 +39,10 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--linen);
+  background:
+    radial-gradient(ellipse 70% 45% at 80% 8%, #e4eee6 0%, transparent 58%),
+    radial-gradient(ellipse 50% 35% at 0% 0%, #efe6d4 0%, transparent 50%),
+    var(--linen);
   color: var(--ink);
 }
 
@@ -236,8 +239,8 @@ a:hover {
 
 .hero {
   display: grid;
-  gap: 3rem;
-  padding: 3.2rem 0 5.5rem;
+  gap: 2.4rem;
+  padding: 2.4rem 0 2.8rem;
   align-items: center;
 }
 
@@ -272,15 +275,12 @@ h3 {
 
 h1 {
   margin: 0 0 1.15rem;
-  font-size: clamp(2.6rem, 8vw, 4.6rem);
-  max-width: 11ch;
+  font-size: clamp(2.7rem, 8vw, 4.75rem);
+  max-width: 10ch;
 }
 
 .accent {
-  background: linear-gradient(120deg, var(--moss) 10%, #6d9a73 55%, var(--honey) 140%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--moss);
 }
 
 .lead {
@@ -332,6 +332,17 @@ h1 {
   color: var(--ink);
 }
 
+.btn-ghost {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.btn-ghost:hover {
+  background: #fff;
+  color: var(--ink);
+}
+
 .btn-compact {
   min-height: 2.45rem;
   padding: 0.45rem 0.95rem;
@@ -354,25 +365,67 @@ h1 {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   justify-items: center;
-  gap: 0.6rem;
+  gap: 0.55rem;
 }
 
-.phone-nav {
-  width: 2.4rem;
-  height: 2.4rem;
-  border: 0;
-  border-radius: 999px;
-  background: var(--paper);
-  box-shadow: var(--shadow-soft);
-  color: var(--muted);
-  font-size: 1.3rem;
-  line-height: 1;
+.phone-stage {
+  position: relative;
+  width: min(100%, 21rem);
+  padding-top: 4.2rem;
+}
+
+.hero-mascot {
+  position: absolute;
+  width: 9.5rem;
+  top: -0.4rem;
+  right: -0.6rem;
+  z-index: 2;
+  filter: drop-shadow(0 14px 20px rgba(28, 42, 34, 0.14));
   pointer-events: none;
 }
 
+.phone-nav {
+  width: 2.55rem;
+  height: 2.55rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.phone-nav:hover {
+  background: #fff;
+}
+
 .phone {
-  width: min(100%, 19.5rem);
+  width: 100%;
   filter: drop-shadow(0 28px 50px rgba(28, 42, 34, 0.16));
+}
+
+.phone-dots {
+  display: flex;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 0.9rem;
+}
+
+.phone-dots button {
+  width: 0.5rem;
+  height: 0.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  background: var(--line);
+  cursor: pointer;
+}
+
+.phone-dots .is-active {
+  width: 1.15rem;
+  background: var(--moss);
 }
 
 .phone-bezel {
@@ -411,6 +464,14 @@ h1 {
 
 .phone-status-dots {
   letter-spacing: 0.08em;
+}
+
+.phone-slides {
+  min-height: 22.5rem;
+}
+
+.phone-slide[hidden] {
+  display: none;
 }
 
 .phone-appbar {
@@ -499,8 +560,37 @@ h1 {
   background: var(--moss);
 }
 
+.proof {
+  padding: 0 0 2.4rem;
+}
+
+.proof-grid {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 1.4rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.proof-item {
+  padding: 0.7rem 0.85rem;
+}
+
+.proof-item strong {
+  display: block;
+  letter-spacing: -0.03em;
+}
+
+.proof-item p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .section {
-  padding: 5.5rem 0;
+  padding: 3.6rem 0;
 }
 
 .section-head {
@@ -593,15 +683,51 @@ h1 {
 
 .cta-band {
   background:
-    radial-gradient(ellipse 80% 70% at 50% 0%, #355844 0%, transparent 58%),
+    radial-gradient(ellipse 70% 80% at 15% 20%, #355844 0%, transparent 55%),
     linear-gradient(180deg, #24362c 0%, #121a16 100%);
   color: #e8efe9;
-  padding: 6.5rem 0;
-  text-align: center;
+  padding: 3.6rem 0;
+}
+
+.cta-panel {
+  display: grid;
+  gap: 1.6rem;
+  align-items: center;
+}
+
+.cta-mascot {
+  width: min(100%, 14rem);
+  margin-inline: auto;
+  filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.2));
 }
 
 .cta-inner {
-  max-width: 40rem;
+  max-width: 36rem;
+}
+
+.cta-points {
+  margin: 0 0 1.4rem;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+  color: #c4d2c9;
+}
+
+.cta-points li {
+  padding-left: 1.15rem;
+  position: relative;
+}
+
+.cta-points li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.55rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #9dcaa8;
 }
 
 .eyebrow-light {
@@ -718,6 +844,16 @@ h1 {
   .hero-visual {
     grid-template-columns: 1fr;
   }
+
+  .hero-mascot {
+    width: 7.2rem;
+    right: 0.2rem;
+    top: -0.2rem;
+  }
+
+  .phone-stage {
+    padding-top: 3.2rem;
+  }
 }
 
 @media (min-width: 720px) {
@@ -729,12 +865,21 @@ h1 {
     display: flex;
   }
 
+  .proof-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
   .features {
     grid-template-columns: repeat(2, 1fr);
   }
 
   .steps {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .cta-panel {
+    grid-template-columns: 0.7fr 1.3fr;
+    gap: 2rem;
   }
 
   .footer-grid {
@@ -748,8 +893,9 @@ h1 {
 
 @media (min-width: 980px) {
   .hero {
-    grid-template-columns: 1.05fr 0.95fr;
-    padding: 4.8rem 0 7rem;
+    grid-template-columns: 1.02fr 0.98fr;
+    padding: 3.2rem 0 2.2rem;
+    gap: 2rem;
   }
 
   .features {
@@ -770,7 +916,9 @@ h1 {
     scroll-behavior: auto;
   }
 
-  .phone {
+  .phone,
+  .hero-mascot,
+  .cta-mascot {
     filter: none;
   }
 }

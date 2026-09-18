@@ -85,52 +85,113 @@
               Last ned i App Store
               <span class="btn-arrow" aria-hidden="true">→</span>
             </a>
+            <a class="btn btn-ghost" href="#funksjoner">Se funksjonene</a>
           </div>
           <p class="trust">Laget i Norge av MK Product Development AS</p>
         </div>
 
         <div class="hero-visual">
-          <button class="phone-nav" type="button" aria-hidden="true" tabindex="-1">
-            <span>‹</span>
+          <button class="phone-nav" type="button" data-phone-prev aria-controls="telefon-karusell" aria-label="Forrige skjerm i appen">
+            <span aria-hidden="true">‹</span>
           </button>
-          <div class="phone" aria-hidden="true">
-            <div class="phone-bezel">
-              <div class="phone-screen">
-                <div class="phone-island"></div>
-                <div class="phone-status">
-                  <span>9:41</span>
-                  <span class="phone-status-dots">●●●</span>
-                </div>
-                <div class="phone-appbar">
-                  <img src="/brand/enkel-utleie-logo.png" alt="" width="22" height="22" />
-                  <strong>Min bolig</strong>
-                  <span class="phone-dot"></span>
-                </div>
-                <img class="phone-mascot" src="/brand/house-mascot.png" alt="" />
-                <div class="phone-cards">
-                  <article class="phone-card">
-                    <span>Husleie mottatt</span>
-                    <strong>18&nbsp;500 kr</strong>
-                    <small>April · 2. etasje</small>
-                  </article>
-                  <article class="phone-card phone-card-accent">
-                    <span>Vedlikehold</span>
-                    <strong>2 åpne</strong>
-                    <small>Vaskemaskin i morgen</small>
-                  </article>
-                </div>
-                <div class="phone-tabs">
-                  <span class="is-active"></span>
-                  <span></span>
-                  <span></span>
-                  <span></span>
+          <div class="phone-stage">
+            <img class="hero-mascot" src="/brand/house-mascot.png" alt="" width="220" height="220" />
+            <div class="phone" id="telefon-karusell" data-phone-carousel>
+              <div class="phone-bezel">
+                <div class="phone-screen">
+                  <div class="phone-island"></div>
+                  <div class="phone-status">
+                    <span>9:41</span>
+                    <span class="phone-status-dots">●●●</span>
+                  </div>
+                  <div class="phone-slides">
+                    <article class="phone-slide is-active" data-slide>
+                      <div class="phone-appbar">
+                        <img src="/brand/enkel-utleie-logo.png" alt="" width="22" height="22" />
+                        <strong>Min bolig</strong>
+                        <span class="phone-dot"></span>
+                      </div>
+                      <img class="phone-mascot" src="/brand/house-mascot.png" alt="" />
+                      <div class="phone-card">
+                        <span>Husleie mottatt</span>
+                        <strong>18&nbsp;500 kr</strong>
+                        <small>April · 2. etasje</small>
+                      </div>
+                    </article>
+                    <article class="phone-slide" data-slide hidden>
+                      <div class="phone-appbar">
+                        <img src="/brand/enkel-utleie-logo.png" alt="" width="22" height="22" />
+                        <strong>Økonomi</strong>
+                        <span class="phone-dot"></span>
+                      </div>
+                      <div class="phone-cards">
+                        <article class="phone-card">
+                          <span>Husleieinntekt</span>
+                          <strong>18&nbsp;500 kr</strong>
+                          <small>Denne måneden</small>
+                        </article>
+                        <article class="phone-card phone-card-accent">
+                          <span>Vedlikehold</span>
+                          <strong>2 åpne</strong>
+                          <small>Vaskemaskin i morgen</small>
+                        </article>
+                      </div>
+                    </article>
+                    <article class="phone-slide" data-slide hidden>
+                      <div class="phone-appbar">
+                        <img src="/brand/enkel-utleie-logo.png" alt="" width="22" height="22" />
+                        <strong>Dialog</strong>
+                        <span class="phone-dot"></span>
+                      </div>
+                      <div class="phone-cards">
+                        <article class="phone-card">
+                          <span>Melding fra leietaker</span>
+                          <strong>Vaskemaskinen</strong>
+                          <small>Kan vi se på den i morgen?</small>
+                        </article>
+                        <article class="phone-card phone-card-accent">
+                          <span>Kontrakt</span>
+                          <strong>Aktiv</strong>
+                          <small>Leiligheten i 2. etasje</small>
+                        </article>
+                      </div>
+                    </article>
+                  </div>
+                  <div class="phone-tabs" aria-hidden="true">
+                    <span class="is-active"></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
                 </div>
               </div>
             </div>
+            <div class="phone-dots" data-phone-dots>
+              <button type="button" class="is-active" data-phone-dot aria-label="Vis boligskjerm"></button>
+              <button type="button" data-phone-dot aria-label="Vis økonomiskjerm"></button>
+              <button type="button" data-phone-dot aria-label="Vis dialogskjerm"></button>
+            </div>
           </div>
-          <button class="phone-nav" type="button" aria-hidden="true" tabindex="-1">
-            <span>›</span>
+          <button class="phone-nav" type="button" data-phone-next aria-controls="telefon-karusell" aria-label="Neste skjerm i appen">
+            <span aria-hidden="true">›</span>
           </button>
+        </div>
+      </section>
+
+      <section class="proof" aria-label="Hva appen samler">
+        <div class="wrap proof-grid">
+          <article class="proof-item">
+            <strong>Kontrakt</strong>
+            <p>Samlet for deg og leietaker</p>
+          </article>
+          <article class="proof-item">
+            <strong>Husleie</strong>
+            <p>Inntekt og utgifter i oversikt</p>
+          </article>
+          <article class="proof-item">
+            <strong>Dialog</strong>
+            <p>Meldinger der utleien allerede er</p>
+          </article>
         </div>
       </section>
 
@@ -224,15 +285,23 @@
       </section>
 
       <section class="cta-band" id="last-ned">
-        <div class="wrap cta-inner">
-          <p class="eyebrow eyebrow-light">Klar?</p>
-          <h2>Klar for en roligere utleiehverdag?</h2>
-          <p>Last ned Enkel Utleie når appen er i App Store.</p>
-          <a class="btn btn-light" href="https://apps.apple.com/">
-            Last ned i App Store
-            <span class="btn-arrow" aria-hidden="true">→</span>
-          </a>
-          <p class="store-note">Plassholderlenke til App Store inntil den ekte adressen er klar.</p>
+        <div class="wrap cta-panel">
+          <img class="cta-mascot" src="/brand/house-mascot.png" alt="" width="200" height="200" />
+          <div class="cta-inner">
+            <p class="eyebrow eyebrow-light">Klar?</p>
+            <h2>Klar for en roligere utleiehverdag?</h2>
+            <p>Last ned Enkel Utleie når appen er i App Store.</p>
+            <ul class="cta-points">
+              <li>Kontrakt, husleie og chat i samme app</li>
+              <li>For både utleier og leietaker</li>
+              <li>Laget i Norge av MK Product Development AS</li>
+            </ul>
+            <a class="btn btn-light" href="https://apps.apple.com/">
+              Last ned i App Store
+              <span class="btn-arrow" aria-hidden="true">→</span>
+            </a>
+            <p class="store-note">Plassholderlenke til App Store inntil den ekte adressen er klar.</p>
+          </div>
         </div>
       </section>
     </main>
