@@ -116,6 +116,11 @@ a:hover {
   box-shadow: var(--shadow-soft);
 }
 
+.header-bar-simple {
+  width: fit-content;
+  margin-inline: 0;
+}
+
 .site-header.is-scrolled .header-bar {
   box-shadow: var(--shadow);
 }
