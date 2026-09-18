@@ -37,19 +37,28 @@ if (carousel) {
   const show = (nextIndex) => {
     index = (nextIndex + slides.length) % slides.length;
     slides.forEach((slide, i) => {
-      const active = i === index;
-      slide.hidden = !active;
-      slide.classList.toggle("is-active", active);
+      slide.classList.toggle("is-active", i === index);
     });
     dots.forEach((dot, i) => {
-      dot.classList.toggle("is-active", i === index);
+      const active = i === index;
+      dot.classList.toggle("is-active", active);
+      dot.setAttribute("aria-current", active ? "true" : "false");
     });
   };
 
-  prev?.addEventListener("click", () => show(index - 1));
-  next?.addEventListener("click", () => show(index + 1));
+  prev?.addEventListener("click", (event) => {
+    event.preventDefault();
+    show(index - 1);
+  });
+  next?.addEventListener("click", (event) => {
+    event.preventDefault();
+    show(index + 1);
+  });
   dots.forEach((dot, i) => {
-    dot.addEventListener("click", () => show(i));
+    dot.addEventListener("click", (event) => {
+      event.preventDefault();
+      show(i);
+    });
   });
 
   show(0);

@@ -371,20 +371,11 @@ h1 {
 .phone-stage {
   position: relative;
   width: min(100%, 21rem);
-  padding-top: 4.2rem;
-}
-
-.hero-mascot {
-  position: absolute;
-  width: 9.5rem;
-  top: -0.4rem;
-  right: -0.6rem;
-  z-index: 2;
-  filter: drop-shadow(0 14px 20px rgba(28, 42, 34, 0.14));
-  pointer-events: none;
 }
 
 .phone-nav {
+  position: relative;
+  z-index: 3;
   width: 2.55rem;
   height: 2.55rem;
   border: 0;
@@ -470,8 +461,12 @@ h1 {
   min-height: 22.5rem;
 }
 
-.phone-slide[hidden] {
+.phone-slide {
   display: none;
+}
+
+.phone-slide.is-active {
+  display: block;
 }
 
 .phone-appbar {
@@ -696,9 +691,13 @@ h1 {
 }
 
 .cta-mascot {
-  width: min(100%, 14rem);
+  width: min(100%, 13.5rem);
+  aspect-ratio: 1;
   margin-inline: auto;
-  filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.2));
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--linen);
+  box-shadow: 0 16px 24px rgba(0, 0, 0, 0.2);
 }
 
 .cta-inner {
@@ -845,15 +844,6 @@ h1 {
     grid-template-columns: 1fr;
   }
 
-  .hero-mascot {
-    width: 7.2rem;
-    right: 0.2rem;
-    top: -0.2rem;
-  }
-
-  .phone-stage {
-    padding-top: 3.2rem;
-  }
 }
 
 @media (min-width: 720px) {
@@ -917,7 +907,6 @@ h1 {
   }
 
   .phone,
-  .hero-mascot,
   .cta-mascot {
     filter: none;
   }
