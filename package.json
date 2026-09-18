@@ -1,0 +1,19 @@
+{
+  "name": "enkelutleie-website",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Marketing site for Enkel Utleie — Cloudflare Pages on enkelutleie.com",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.3",
+  "devDependencies": {
+    "vite": "^7.1.5"
+  }
+}
