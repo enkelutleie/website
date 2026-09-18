@@ -376,6 +376,9 @@ h1 {
 .phone-nav {
   position: relative;
   z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 2.55rem;
   height: 2.55rem;
   border: 0;
@@ -385,38 +388,11 @@ h1 {
   color: var(--ink);
   font-size: 1.35rem;
   line-height: 1;
-  cursor: pointer;
-}
-
-.phone-nav:hover {
-  background: #fff;
 }
 
 .phone {
   width: 100%;
   filter: drop-shadow(0 28px 50px rgba(28, 42, 34, 0.16));
-}
-
-.phone-dots {
-  display: flex;
-  justify-content: center;
-  gap: 0.45rem;
-  margin-top: 0.9rem;
-}
-
-.phone-dots button {
-  width: 0.5rem;
-  height: 0.5rem;
-  padding: 0;
-  border: 0;
-  border-radius: 99px;
-  background: var(--line);
-  cursor: pointer;
-}
-
-.phone-dots .is-active {
-  width: 1.15rem;
-  background: var(--moss);
 }
 
 .phone-bezel {
@@ -428,12 +404,12 @@ h1 {
 .phone-screen {
   position: relative;
   overflow: hidden;
-  min-height: 34rem;
+  min-height: 32rem;
   border-radius: 2.05rem;
   background:
     radial-gradient(circle at 50% 18%, #fff 0%, transparent 38%),
     linear-gradient(180deg, #f7f3ea 0%, var(--sage) 100%);
-  padding: 0.7rem 0.85rem 1rem;
+  padding: 0.7rem 0.85rem 1.4rem;
 }
 
 .phone-island {
@@ -455,18 +431,6 @@ h1 {
 
 .phone-status-dots {
   letter-spacing: 0.08em;
-}
-
-.phone-slides {
-  min-height: 22.5rem;
-}
-
-.phone-slide {
-  display: none;
-}
-
-.phone-slide.is-active {
-  display: block;
 }
 
 .phone-appbar {
@@ -495,64 +459,16 @@ h1 {
 }
 
 .phone-mascot {
-  width: 11.2rem;
-  margin: 0.15rem auto 0.1rem;
-  padding: 0.35rem;
-  background:
-    radial-gradient(circle at 50% 55%, #fff 0%, color-mix(in srgb, var(--sage) 70%, #fff) 72%, transparent 73%);
+  width: min(100%, 14.5rem);
+  margin: 1.4rem auto 0.8rem;
 }
 
-.phone-cards {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.phone-card {
-  background: var(--paper);
-  border-radius: 1rem;
-  padding: 0.75rem 0.85rem;
-  box-shadow: var(--shadow-soft);
-}
-
-.phone-card span,
-.phone-card small {
-  display: block;
+.phone-caption {
+  margin: 0;
+  text-align: center;
   color: var(--muted);
-  font-size: 0.72rem;
-}
-
-.phone-card strong {
-  display: block;
-  margin: 0.15rem 0 0.1rem;
-  font-size: 1.05rem;
-  letter-spacing: -0.03em;
-}
-
-.phone-card-accent {
-  background: color-mix(in srgb, var(--paper) 80%, var(--sage));
-}
-
-.phone-tabs {
-  position: absolute;
-  left: 1.1rem;
-  right: 1.1rem;
-  bottom: 0.85rem;
-  display: flex;
-  justify-content: space-around;
-  padding: 0.7rem 0.4rem;
-  background: color-mix(in srgb, var(--paper) 88%, transparent);
-  border-radius: 999px;
-}
-
-.phone-tabs span {
-  width: 1.05rem;
-  height: 0.28rem;
-  border-radius: 99px;
-  background: var(--line);
-}
-
-.phone-tabs .is-active {
-  background: var(--moss);
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .proof {
