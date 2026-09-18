@@ -9,7 +9,7 @@
       content="Få full kontroll på utleie av boligen din. Samle informasjon, økonomi og dialog med leietaker på ett sted. Native iOS-app for private utleiere og leietakere."
     />
     <link rel="canonical" href="https://enkelutleie.com/" />
-    <meta name="theme-color" content="#3f6f52" />
+    <meta name="theme-color" content="#2f80ed" />
     <meta property="og:title" content="Enkel Utleie — full kontroll på utleie av boligen din" />
     <meta
       property="og:description"
@@ -20,7 +20,7 @@
     <meta property="og:locale" content="nb_NO" />
     <meta property="og:site_name" content="Enkel Utleie" />
     <meta property="og:image" content="https://enkelutleie.com/og-image.png" />
-    <meta property="og:image:alt" content="Enkel Utleie med hus-maskot og app-ikon" />
+    <meta property="og:image:alt" content="Enkel Utleie med det smilende huset" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Enkel Utleie — full kontroll på utleie av boligen din" />
     <meta
@@ -29,7 +29,6 @@
     />
     <meta name="twitter:image" content="https://enkelutleie.com/og-image.png" />
     <link rel="icon" href="/favicon.png" type="image/png" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="/src/styles.css" />
@@ -42,7 +41,7 @@
         <a class="brand" href="/">
           <img
             class="brand-mark"
-            src="/brand/enkel-utleie-logo.png"
+            src="/brand/house-mascot.png"
             width="36"
             height="36"
             alt=""
@@ -52,11 +51,10 @@
         <nav class="nav" data-nav aria-label="Hovedmeny">
           <a href="#funksjoner">Funksjoner</a>
           <a href="#slik-fungerer-det">Slik fungerer det</a>
-          <a href="#last-ned">Last ned</a>
+          <a href="#last-ned">Appen</a>
         </nav>
         <div class="header-actions">
-          <!-- App Store-URL: Magnus limer inn ekte lenke her. Ikke finn opp App Store-ID. -->
-          <a class="btn btn-primary btn-compact" href="https://apps.apple.com/">Last ned</a>
+          <a class="btn btn-primary btn-compact" href="/#last-ned">Appen</a>
           <button class="menu-toggle" type="button" data-menu-toggle aria-expanded="false" aria-controls="mobilmeny">
             <span class="sr-only">Meny</span>
             <span class="menu-bars" aria-hidden="true"></span>
@@ -66,23 +64,26 @@
       <nav class="mobile-nav" id="mobilmeny" data-mobile-nav hidden aria-label="Mobilmeny">
         <a href="#funksjoner">Funksjoner</a>
         <a href="#slik-fungerer-det">Slik fungerer det</a>
-        <a href="#last-ned">Last ned</a>
-        <a class="btn btn-primary" href="https://apps.apple.com/">Last ned i App Store</a>
+        <a href="#last-ned">Appen</a>
+        <a class="btn btn-primary" href="/#last-ned">Se appen</a>
       </nav>
     </header>
 
     <main id="innhold">
       <section class="hero wrap">
         <div class="hero-copy">
-          <p class="kicker">Native iOS-app for utleier og leietaker</p>
+          <div class="hero-welcome">
+            <img class="hero-mascot" src="/brand/house-mascot-happy.png" width="64" height="64" alt="" />
+            <p class="kicker">En enklere hverdag for utleier og leietaker</p>
+          </div>
           <h1>Full kontroll på <span class="accent">utleien</span> din</h1>
           <p class="lead">
-            Samle all informasjon, økonomi og dialog med leietaker – enkelt, oversiktlig, og på
-            én plass.
+            Samle all informasjon, økonomi og dialog med leietaker – enkelt og oversiktlig på
+            ett sted.
           </p>
           <div class="hero-actions">
-            <a class="btn btn-primary" href="https://apps.apple.com/">
-              Last ned i App Store
+            <a class="btn btn-primary" href="/#last-ned">
+              Se appen
               <span class="btn-arrow" aria-hidden="true">→</span>
             </a>
             <a class="btn btn-ghost" href="#funksjoner">Se funksjonene</a>
@@ -90,14 +91,9 @@
           <p class="trust">Laget i Norge av MK Product Development AS</p>
         </div>
 
-        <div class="hero-visual">
-          <span class="phone-nav" aria-hidden="true"><span>‹</span></span>
+        <figure class="hero-visual">
           <div class="phone-stage">
             <div class="phone">
-              <span class="phone-btn phone-btn-silent" aria-hidden="true"></span>
-              <span class="phone-btn phone-btn-vol-up" aria-hidden="true"></span>
-              <span class="phone-btn phone-btn-vol-down" aria-hidden="true"></span>
-              <span class="phone-btn phone-btn-power" aria-hidden="true"></span>
               <div class="phone-bezel">
                 <div class="phone-screen">
                   <img
@@ -113,8 +109,8 @@
               </div>
             </div>
           </div>
-          <span class="phone-nav" aria-hidden="true"><span>›</span></span>
-        </div>
+          <figcaption>Oversikt i Enkel Utleie · skjermbilde fra testversjonen</figcaption>
+        </figure>
       </section>
 
       <section class="proof" aria-label="Hva appen samler">
@@ -200,8 +196,8 @@
         <div class="wrap">
           <div class="section-head">
             <p class="eyebrow">Slik fungerer det</p>
-            <h2>Tre rolige steg</h2>
-            <p>Ingen oppsett utover det du allerede gjør som utleier.</p>
+            <h2>Enkelt å komme i gang</h2>
+            <p>Fra den første boligen til den daglige oppfølgingen.</p>
           </div>
           <div class="steps">
             <article class="step">
@@ -225,21 +221,20 @@
 
       <section class="cta-band" id="last-ned">
         <div class="wrap cta-panel">
-          <img class="cta-mascot" src="/brand/house-mascot.png" alt="" width="200" height="200" />
+          <img class="cta-mascot" src="/brand/house-mascot-happy.png" alt="" width="276" height="276" loading="lazy" />
           <div class="cta-inner">
-            <p class="eyebrow eyebrow-light">Klar?</p>
+            <p class="eyebrow">Enkel Utleie for iPhone</p>
             <h2>Klar for en roligere utleiehverdag?</h2>
-            <p>Last ned Enkel Utleie når appen er i App Store.</p>
+            <p>Vi gjør klart for App Store. Har du spørsmål om appen? Vi hjelper deg gjerne.</p>
             <ul class="cta-points">
               <li>Kontrakt, husleie og chat i samme app</li>
               <li>For både utleier og leietaker</li>
               <li>Laget i Norge av MK Product Development AS</li>
             </ul>
-            <a class="btn btn-light" href="https://apps.apple.com/">
-              Last ned i App Store
+            <a class="btn btn-light" href="mailto:hei@enkelutleie.com">
+              Kontakt oss
               <span class="btn-arrow" aria-hidden="true">→</span>
             </a>
-            <p class="store-note">Plassholderlenke til App Store inntil den ekte adressen er klar.</p>
           </div>
         </div>
       </section>
@@ -249,7 +244,7 @@
       <div class="wrap footer-grid">
         <div class="footer-brand-block">
           <a class="brand brand-invert" href="/">
-            <img class="brand-mark" src="/brand/enkel-utleie-logo.png" width="32" height="32" alt="" />
+            <img class="brand-mark" src="/brand/house-mascot.png" width="32" height="32" alt="" />
             <span>Enkel Utleie</span>
           </a>
           <p>
@@ -262,7 +257,7 @@
           <ul class="footer-links">
             <li><a href="#funksjoner">Funksjoner</a></li>
             <li><a href="#slik-fungerer-det">Slik fungerer det</a></li>
-            <li><a href="#last-ned">Last ned</a></li>
+            <li><a href="#last-ned">Appen</a></li>
           </ul>
         </div>
         <div>
