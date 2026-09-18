@@ -391,84 +391,71 @@ h1 {
 }
 
 .phone {
+  position: relative;
   width: 100%;
   filter: drop-shadow(0 28px 50px rgba(28, 42, 34, 0.16));
 }
 
 .phone-bezel {
-  background: linear-gradient(180deg, #2a3630 0%, #141c18 100%);
-  border-radius: 2.55rem;
-  padding: 0.55rem;
+  background: linear-gradient(165deg, #3a3a3e 0%, #1c1c1e 42%, #0d0d0f 100%);
+  border-radius: 2.85rem;
+  padding: 0.48rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .phone-screen {
   position: relative;
   overflow: hidden;
-  min-height: 32rem;
-  border-radius: 2.05rem;
-  background:
-    radial-gradient(circle at 50% 18%, #fff 0%, transparent 38%),
-    linear-gradient(180deg, #f7f3ea 0%, var(--sage) 100%);
-  padding: 0.7rem 0.85rem 1.4rem;
+  border-radius: 2.35rem;
+  background: #eef3fb;
+  line-height: 0;
 }
 
-.phone-island {
-  width: 5.4rem;
+.phone-shot {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.phone-btn {
+  position: absolute;
+  z-index: 2;
+  background: #1a1a1c;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.phone-btn-silent {
+  left: -0.16rem;
+  top: 14%;
+  width: 0.16rem;
   height: 1.15rem;
-  margin: 0.15rem auto 0.35rem;
-  background: #141c18;
-  border-radius: 999px;
+  border-radius: 3px 0 0 3px;
 }
 
-.phone-status {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 650;
-  padding: 0 0.35rem 0.55rem;
+.phone-btn-vol-up,
+.phone-btn-vol-down {
+  left: -0.18rem;
+  width: 0.18rem;
+  height: 2.05rem;
+  border-radius: 3px 0 0 3px;
 }
 
-.phone-status-dots {
-  letter-spacing: 0.08em;
+.phone-btn-vol-up {
+  top: 21%;
 }
 
-.phone-appbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.35rem 0.2rem 0.2rem;
+.phone-btn-vol-down {
+  top: 32%;
 }
 
-.phone-appbar img {
-  width: 1.35rem;
-  height: 1.35rem;
-  border-radius: 0.38rem;
-}
-
-.phone-appbar strong {
-  font-size: 0.92rem;
-}
-
-.phone-dot {
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 50%;
-  background: #7dcaa0;
-}
-
-.phone-mascot {
-  width: min(100%, 14.5rem);
-  margin: 1.4rem auto 0.8rem;
-}
-
-.phone-caption {
-  margin: 0;
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 600;
+.phone-btn-power {
+  right: -0.18rem;
+  top: 24%;
+  width: 0.18rem;
+  height: 3.4rem;
+  border-radius: 0 3px 3px 0;
 }
 
 .proof {

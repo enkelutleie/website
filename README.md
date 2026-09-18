@@ -57,6 +57,7 @@ Dette domenet skal **ikke** hoste Apple Universal Links / AASA. Det ligger på `
 ## Innhold
 
 - Markedsside med Base44-inspirert komposisjon (flytende header, telefon-hero, mørk CTA/footer) og sage/cream-palett
-- App-ikon og hus-maskot i `public/brand/` (brukes i header, hero, favicon og OG)
+- App-ikon og hus-maskot i `public/brand/` (header, footer, CTA, favicon og OG)
+- Ekte Staging-skjermbilde av Oversikt i iPhone-rammen på forsiden
 - Personvernstub under `/personvern` (MK Product Development AS, `hei@enkelutleie.com`)
 - `robots.txt`, `sitemap.xml`, Open Graph-meta
