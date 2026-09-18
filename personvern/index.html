@@ -21,30 +21,27 @@
     <meta property="og:site_name" content="Enkel Utleie" />
     <meta property="og:image" content="https://enkelutleie.com/og-image.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
     <a class="skip-link" href="#innhold">Hopp til innhold</a>
     <header class="site-header" data-site-header>
-      <div class="wrap header-inner">
+      <div class="header-bar">
         <a class="brand" href="/">
-          <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
-            <rect width="64" height="64" rx="16" fill="#e4eee6" />
-            <path d="M12 30.5 32 14l20 16.5V50a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4V30.5Z" fill="#3f6f52" />
-            <path d="M20 28.5 32 18.8l12 9.7V50H20V28.5Z" fill="#f7f3ea" />
-            <circle cx="27.2" cy="36.2" r="3.1" fill="#2c4636" />
-            <circle cx="36.8" cy="36.2" r="3.1" fill="#2c4636" />
-            <path d="M29.4 43.2c.7 1.4 2.1 2.2 3.6 2.2s2.9-.8 3.6-2.2" fill="none" stroke="#2c4636" stroke-width="1.7" stroke-linecap="round" />
-          </svg>
-          Enkel Utleie
+          <img class="brand-mark" src="/brand/enkel-utleie-logo.png" width="36" height="36" alt="" />
+          <span>Enkel Utleie</span>
         </a>
         <nav class="nav" aria-label="Hovedmeny">
           <a href="/#funksjoner">Funksjoner</a>
           <a href="/#slik-fungerer-det">Slik fungerer det</a>
           <a href="/personvern" aria-current="page">Personvern</a>
         </nav>
+        <div class="header-actions">
+          <a class="btn btn-primary btn-compact" href="https://apps.apple.com/">Last ned</a>
+        </div>
       </div>
     </header>
 
@@ -83,18 +80,30 @@
     </main>
 
     <footer class="site-footer">
-      <div class="wrap footer-inner">
+      <div class="wrap footer-grid footer-grid-compact">
+        <div class="footer-brand-block">
+          <a class="brand brand-invert" href="/">
+            <img class="brand-mark" src="/brand/enkel-utleie-logo.png" width="32" height="32" alt="" />
+            <span>Enkel Utleie</span>
+          </a>
+          <p>MK Product Development AS</p>
+        </div>
         <div>
-          <p class="footer-brand">Enkel Utleie</p>
+          <h3>Støtte</h3>
+          <ul class="footer-links">
+            <li><a href="/">Forside</a></li>
+            <li><a href="mailto:hei@enkelutleie.com">Kontakt</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Selskap</h3>
           <p class="footer-meta">
-            MK Product Development AS<br />
             <a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a>
           </p>
         </div>
-        <ul class="footer-links">
-          <li><a href="/">Forside</a></li>
-          <li><a href="mailto:hei@enkelutleie.com">Kontakt</a></li>
-        </ul>
+      </div>
+      <div class="wrap footer-bottom">
+        <p>© 2026 Enkel Utleie. Alle rettigheter reservert.</p>
       </div>
     </footer>
     <script type="module" src="/src/main.js"></script>

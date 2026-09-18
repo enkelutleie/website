@@ -9,6 +9,27 @@ function prettyPersonvern() {
     next();
   };
 
+  const previewNotFound = (req, _res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      next();
+      return;
+    }
+
+    const path = (req.url ?? "").split("?")[0];
+    const known =
+      path === "/" ||
+      path.startsWith("/personvern") ||
+      path.startsWith("/assets/") ||
+      path.startsWith("/brand/") ||
+      path.startsWith("/src/") ||
+      /\.[a-zA-Z0-9]+$/.test(path);
+
+    if (!known) {
+      req.url = "/404.html";
+    }
+    next();
+  };
+
   return {
     name: "pretty-personvern",
     configureServer(server) {
@@ -16,6 +37,9 @@ function prettyPersonvern() {
     },
     configurePreviewServer(server) {
       server.middlewares.use(rewrite);
+      return () => {
+        server.middlewares.use(previewNotFound);
+      };
     },
   };
 }
