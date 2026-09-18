@@ -35,7 +35,7 @@ Koble GitHub-repositoriet `enkelutleie/website` til et Pages-prosjekt.
 | Build output directory | `dist` |
 | Root directory | `/` |
 
-`wrangler.toml` peker `pages_build_output_dir` mot `./dist`. Sikkerhetshoder og pretty URL for personvern ligger i `public/_headers` og `public/_redirects` og kopieres inn i `dist` ved bygg.
+`wrangler.toml` peker `pages_build_output_dir` mot `./dist`. Sikkerhetshoder og pretty URL for personvern ligger i `public/_headers` og `public/_redirects` og kopieres inn i `dist` ved bygg. Cloudflare Pages serverer `404.html` automatisk for ukjente stier.
 
 Egendefinert domene i Cloudflare: `enkelutleie.com` (og gjerne `www`). Live DNS settes utenfor dette repositoriet.
 
