@@ -1,7 +1,10 @@
+@import "@fontsource-variable/fraunces/wght.css";
+@import "@fontsource-variable/source-sans-3/wght.css";
+
 :root {
   --linen: #f3efe6;
   --paper: #fffdf8;
-  --sage: #e4eee6;
+  --sage: #dce8de;
   --moss: #3f6f52;
   --moss-deep: #2c4636;
   --forest: #243028;
@@ -12,8 +15,8 @@
   --shadow: 0 16px 40px rgba(36, 48, 40, 0.08);
   --radius: 1.25rem;
   --max: 68rem;
-  --font-display: "Fraunces", "Iowan Old Style", Palatino, Georgia, serif;
-  --font-body: "Source Sans 3", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  --font-display: "Fraunces Variable", "Fraunces", "Iowan Old Style", Palatino, Georgia, serif;
+  --font-body: "Source Sans 3 Variable", "Source Sans 3", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
   color: var(--forest);
   background: var(--linen);
   font-family: var(--font-body);
@@ -113,6 +116,7 @@ a:hover {
   font-weight: 600;
   font-size: 1.15rem;
   letter-spacing: -0.02em;
+  white-space: nowrap;
 }
 
 .brand-mark {
@@ -242,19 +246,16 @@ h1 {
   display: grid;
   justify-items: center;
   align-content: center;
-  position: relative;
-  min-height: 20rem;
+  gap: 1.1rem;
 }
 
 .house {
-  width: min(100%, 18rem);
+  width: min(100%, 16.5rem);
   filter: drop-shadow(0 18px 24px rgba(44, 70, 54, 0.12));
 }
 
 .card-stack {
-  position: absolute;
-  inset: auto 0 8% auto;
-  width: min(100%, 15.5rem);
+  width: min(100%, 17rem);
   display: grid;
   gap: 0.55rem;
 }
@@ -308,7 +309,7 @@ h1 {
 }
 
 .band {
-  background: color-mix(in srgb, var(--sage) 72%, var(--linen));
+  background: var(--sage);
 }
 
 .features {
@@ -448,6 +449,7 @@ h1 {
 .page-missing {
   min-height: 62vh;
   display: grid;
+  justify-items: start;
   align-content: center;
   padding: 3rem 0;
 }
@@ -475,6 +477,16 @@ h1 {
     padding-bottom: 4.5rem;
   }
 
+  .hero-art {
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 17rem);
+    align-items: center;
+    justify-items: stretch;
+  }
+
+  .house {
+    width: 100%;
+  }
+
   .features {
     grid-template-columns: repeat(6, 1fr);
   }
@@ -487,10 +499,6 @@ h1 {
     grid-column: span 3;
   }
 
-  .card-stack {
-    right: 0;
-    width: 16rem;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
