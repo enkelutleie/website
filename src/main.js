@@ -24,4 +24,17 @@ if (toggle && mobileNav) {
   mobileNav.querySelectorAll("a").forEach((link) => {
     link.addEventListener("click", () => setOpen(false));
   });
+
+  // Keep keyboard focus predictable when dismissing the mobile menu.
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !mobileNav.hidden) {
+      setOpen(false);
+      toggle.focus();
+    }
+  });
+
+  const desktop = window.matchMedia("(min-width: 900px)");
+  desktop.addEventListener("change", (event) => {
+    if (event.matches) setOpen(false);
+  });
 }
