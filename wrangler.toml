@@ -1,0 +1,5 @@
+# Cloudflare Pages project config.
+# Dashboard Git builds: framework Vite, build command `pnpm build` (or `npm run build`), output `dist`.
+name = "enkelutleie"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-09-18"
