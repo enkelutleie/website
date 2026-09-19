@@ -14,11 +14,14 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <header class="site-header">
-      <a class="brand" href="/">
-        <img class="brand-mark" src="/brand/house-mascot.png" width="40" height="40" alt="" />
-        <span>Enkel Utleie</span>
-      </a>
+    <header class="site-header" data-site-header>
+      <div class="header-bar wrap">
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/brand/house-mascot.png" width="40" height="40" alt="" />
+          <span>Enkel Utleie</span>
+        </a>
+        <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
+      </div>
     </header>
 
     <main class="wrap legal">
@@ -49,5 +52,6 @@
 
       <p>Sist oppdatert: september 2026</p>
     </main>
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>

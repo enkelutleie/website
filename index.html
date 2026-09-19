@@ -6,7 +6,7 @@
     <title>Enkel Utleie</title>
     <meta
       name="description"
-      content="Kontrakt, husleie og chat i én app. For utleier og leietaker i Norge."
+      content="Kontrakt, husleie, chat og vedlikehold i én app. For utleier og leietaker i Norge."
     />
     <link rel="canonical" href="https://enkelutleie.com/" />
     <meta name="theme-color" content="#2F80ED" />
@@ -27,18 +27,27 @@
   <body>
     <a class="skip-link" href="#innhold">Hopp til innhold</a>
 
-    <header class="site-header">
-      <a class="brand" href="/">
-        <img class="brand-mark" src="/brand/house-mascot.png" width="40" height="40" alt="" />
-        <span>Enkel Utleie</span>
-      </a>
+    <header class="site-header" data-site-header>
+      <div class="header-bar wrap">
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/brand/house-mascot.png" width="40" height="40" alt="" />
+          <span>Enkel Utleie</span>
+        </a>
+        <nav class="nav" aria-label="Hovedmeny">
+          <a href="#funksjoner">Funksjoner</a>
+        </nav>
+        <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
+      </div>
     </header>
 
     <main id="innhold">
       <section class="hero wrap">
         <div class="hero-copy">
+          <img class="hero-mascot" src="/brand/house-mascot.png" width="88" height="88" alt="" />
           <h1>Utleie, helt enkelt</h1>
-          <p class="lead">Kontrakt, husleie og chat — i én app. For utleier og leietaker.</p>
+          <p class="lead">
+            Kontrakt, husleie og chat — samlet i én app for utleier og leietaker.
+          </p>
           <a class="btn" href="https://apps.apple.com/">Last ned i App Store</a>
         </div>
 
@@ -58,6 +67,55 @@
           </div>
         </div>
       </section>
+
+      <section class="features-section wrap" id="funksjoner">
+        <div class="section-head">
+          <h2>Det du trenger, på ett sted</h2>
+          <p>Kjernefunksjonene i appen — uten rot.</p>
+        </div>
+        <div class="features">
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="1.6" />
+                <path d="M9 8h6M9 12h6M9 16h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </span>
+            <h3>Kontrakt</h3>
+            <p>Leiekontrakten ligger hos både utleier og leietaker. Klar når dere trenger den.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6" />
+                <path d="M12 8v8M9.6 10c.8-.9 1.7-1.3 2.7-1.3 1.6 0 2.7.9 2.7 2.2 0 2.7-5.4 1.5-5.4 4.2 0 1.3 1.2 2.2 2.8 2.2 1.1 0 2-.4 2.7-1.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </span>
+            <h3>Husleie og økonomi</h3>
+            <p>Se husleie, inntekt og utgifter i samme oversikt. Uten å lete i regneark.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M5 8.5A3.5 3.5 0 0 1 8.5 5h5A3.5 3.5 0 0 1 17 8.5v.2A3.5 3.5 0 0 1 20.5 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                <rect x="4" y="11" width="13" height="8" rx="3" stroke="currentColor" stroke-width="1.6" />
+              </svg>
+            </span>
+            <h3>Chat</h3>
+            <p>Snakk med hverandre der utleien allerede er — ikke i en evig e-posttråd.</p>
+          </article>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M4 10.5 12 4l8 6.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                <path d="M9 21v-7h6v7" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <h3>Boliger og vedlikehold</h3>
+            <p>Hold boliger, leieforhold og oppgaver samlet. Mindre å huske utenfor appen.</p>
+          </article>
+        </div>
+      </section>
     </main>
 
     <footer class="site-footer wrap">
@@ -68,5 +126,6 @@
         <a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a>
       </p>
     </footer>
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>
