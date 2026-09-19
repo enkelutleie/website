@@ -8,9 +8,9 @@
   "theme_color": "#2F80ED",
   "icons": [
     {
-      "src": "/brand/house-mascot.png",
-      "type": "image/png",
-      "sizes": "1024x1024"
+      "src": "/brand/house-mascot.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
     }
   ]
 }
