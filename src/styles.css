@@ -71,12 +71,12 @@ a {
   top: 0;
   z-index: 20;
   padding: 0.7rem 0;
+  background: color-mix(in srgb, #f5f9fe 78%, white);
+  backdrop-filter: saturate(1.4) blur(16px);
+  -webkit-backdrop-filter: saturate(1.4) blur(16px);
 }
 
 .site-header.is-scrolled {
-  background: color-mix(in srgb, #f5f9fe 86%, white);
-  backdrop-filter: saturate(1.4) blur(16px);
-  -webkit-backdrop-filter: saturate(1.4) blur(16px);
   box-shadow: 0 1px 0 var(--line);
 }
 
@@ -89,7 +89,7 @@ a {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.55rem;
   color: var(--ink);
   text-decoration: none;
   font-weight: 650;
@@ -100,11 +100,13 @@ a {
 .hero-mascot {
   display: block;
   flex: none;
+  object-fit: contain;
+  background: none;
 }
 
 .brand-mark {
-  width: 2.35rem;
-  height: 2.35rem;
+  width: 2.5rem;
+  height: 2.5rem;
 }
 
 .nav {
@@ -136,9 +138,17 @@ a {
 }
 
 .hero-mascot {
-  width: 4.6rem;
-  height: 4.6rem;
-  margin-bottom: 1rem;
+  width: 5.5rem;
+  height: 5.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.55rem;
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-weight: 620;
+  letter-spacing: -0.01em;
 }
 
 h1 {
@@ -346,7 +356,7 @@ h1 {
     filter: none;
   }
 
-  .site-header.is-scrolled {
+  .site-header {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
