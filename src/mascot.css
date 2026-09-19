@@ -1,0 +1,8 @@
+:root { --mascot: url("/brand/house-mascot.svg"); }
+.brand-mark,
+.hero-mascot {
+  background-image: var(--mascot);
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
