@@ -4,16 +4,11 @@
   "lang": "nb",
   "start_url": "/",
   "display": "browser",
-  "background_color": "#f4f8fd",
+  "background_color": "#f5f9fe",
   "theme_color": "#2F80ED",
   "icons": [
     {
-      "src": "/favicon.png",
-      "type": "image/png",
-      "sizes": "1024x1024"
-    },
-    {
-      "src": "/apple-touch-icon.png",
+      "src": "/brand/house-mascot.png",
       "type": "image/png",
       "sizes": "1024x1024"
     }
