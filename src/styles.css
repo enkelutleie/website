@@ -70,14 +70,15 @@ a {
   position: sticky;
   top: 0;
   z-index: 20;
-  padding: 0.7rem 0;
-  background: color-mix(in srgb, #f5f9fe 78%, white);
-  backdrop-filter: saturate(1.4) blur(16px);
-  -webkit-backdrop-filter: saturate(1.4) blur(16px);
+  padding: 0.65rem 0;
+  background: color-mix(in srgb, #f5f9fe 82%, white);
+  backdrop-filter: saturate(1.4) blur(18px);
+  -webkit-backdrop-filter: saturate(1.4) blur(18px);
 }
 
 .site-header.is-scrolled {
   box-shadow: 0 1px 0 var(--line);
+  background: color-mix(in srgb, #ffffff 88%, #e8f3ff);
 }
 
 .header-bar {
@@ -138,9 +139,9 @@ a {
 }
 
 .hero-mascot {
-  width: 6.75rem;
-  height: 6.75rem;
-  margin-bottom: 0.95rem;
+  width: 7rem;
+  height: 7rem;
+  margin-bottom: 0.85rem;
 }
 
 .eyebrow {
