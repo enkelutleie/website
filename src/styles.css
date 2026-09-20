@@ -47,14 +47,10 @@ a { color: var(--blue-deep); }
   display: inline-flex; align-items: center; gap: 0.55rem;
   color: var(--ink); text-decoration: none; font-weight: 650; letter-spacing: -0.03em;
 }
-.brand-mark, .hero-mascot, .footer-mascot {
+.brand-mark, .hero-mascot {
   display: block; flex: none; object-fit: contain; background: none;
 }
 .brand-mark { width: 2.35rem; height: 2.35rem; }
-.footer-brand {
-  display: inline-flex; align-items: center; gap: 0.5rem;
-}
-.footer-mascot { width: 1.7rem; height: 1.7rem; }
 .nav { display: none; margin-left: auto; margin-right: 0.35rem; gap: 1.1rem; }
 .nav a { color: var(--muted); text-decoration: none; font-weight: 560; font-size: 0.95rem; }
 .nav a:hover { color: var(--ink); }
@@ -97,8 +93,13 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 }
 .feature-icon svg { width: 1.18rem; height: 1.18rem; }
 .site-footer {
-  display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; justify-content: space-between;
-  padding: 0 0 2.2rem; color: var(--muted); font-size: 0.92rem;
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0 2.4rem;
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 .site-footer p { margin: 0; }
 .site-footer a { color: var(--muted); text-decoration: none; }
