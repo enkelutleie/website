@@ -1,6 +1,15 @@
 .brand-mark,
-.hero-mascot {
+.hero-mascot,
+.footer-mascot {
   display: block;
   object-fit: contain;
   background: none;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .brand:hover .brand-mark,
+  .hero-mascot:hover,
+  .footer-brand:hover .footer-mascot {
+    content: url("/brand/house-mascot-happy.png");
+  }
 }

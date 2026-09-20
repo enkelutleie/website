@@ -57,7 +57,7 @@ Dette domenet skal **ikke** hoste Apple Universal Links / AASA. Det ligger på `
 ## Innhold
 
 - Markedsside i samme visuelle språk som iOS-appen: hus-maskot, `#2F80ED` / `#1B3A6B` / `#E8F3FF`, hvite kort
-- App-ikon og hus-maskot i `public/brand/` (header, footer, CTA, favicon og OG)
+- Hus-maskot i `public/brand/` (og `brand-assets/`): `house-mascot.png` (åpne øyne) og `house-mascot-happy.png` (smileøyne). Header, footer, hero, favicon, apple-touch og OG bruker dette paret — ikke SVG-tegninger eller gamle kube-hus.
 - Ekte Staging-skjermbilde av Oversikt i iPhone-rammen på forsiden
 - Egne kort for utleier og leietaker
 - Personvernstub under `/personvern` (MK Product Development AS, `hei@enkelutleie.com`)
