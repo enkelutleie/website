@@ -11,6 +11,11 @@
       "src": "/favicon.svg",
       "type": "image/svg+xml",
       "sizes": "any"
+    },
+    {
+      "src": "/brand/house-mascot.png",
+      "type": "image/png",
+      "sizes": "1024x1024"
     }
   ]
 }
