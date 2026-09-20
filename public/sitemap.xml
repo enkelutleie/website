@@ -6,11 +6,6 @@
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://enkelutleie.com/leieavtale.pdf</loc>
-    <changefreq>yearly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  <url>
     <loc>https://enkelutleie.com/personvern</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
