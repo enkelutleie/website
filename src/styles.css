@@ -97,7 +97,7 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
   justify-items: center;
   text-align: center;
   gap: 0.35rem;
-  padding: 0.5rem 0 2.4rem;
+  padding: 0 0 2.4rem;
   color: var(--muted);
   font-size: 0.92rem;
 }
