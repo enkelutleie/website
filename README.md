@@ -14,6 +14,7 @@ pnpm dev
 `npm install` og `npm run dev` fungerer også.
 
 - Forside: `/`
+- Leieavtale (PDF-mal): `/leieavtale.pdf`
 - Personvern: `/personvern`
 
 ## Bygg
@@ -59,6 +60,7 @@ Dette domenet skal **ikke** hoste Apple Universal Links / AASA. Det ligger på `
 - Markedsside i samme visuelle språk som iOS-appen: hus-maskot, `#2F80ED` / `#1B3A6B` / `#E8F3FF`, hvite kort
 - Hus-maskot i `public/brand/` (og `brand-assets/`): `house-mascot.png` (åpne øyne) og `house-mascot-happy.png` (smileøyne). Header, footer, hero, favicon, apple-touch og OG bruker dette paret — ikke SVG-tegninger eller gamle kube-hus.
 - Ekte Staging-skjermbilde av Oversikt i iPhone-rammen på forsiden
-- Egne kort for utleier og leietaker
+- Feature-kort for økonomi, overtakelse, inn-/utflyttingssjekkliste, leieavtale, chat og boliger
+- Kort norsk husleiekontrakt-mal på `/leieavtale.pdf` (genereres med `pnpm leieavtale`)
 - Personvernstub under `/personvern` (MK Product Development AS, `hei@enkelutleie.com`)
 - `robots.txt`, `sitemap.xml`, Open Graph-meta
