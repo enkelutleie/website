@@ -8,8 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "og": "python3 scripts/generate-og-image.py",
-    "leieavtale": "python3 scripts/generate-leieavtale.py"
+    "og": "python3 scripts/generate-og-image.py"
   },
   "engines": {
     "node": ">=20"
