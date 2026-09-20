@@ -1,0 +1,6 @@
+.brand-mark,
+.hero-mascot {
+  display: block;
+  object-fit: contain;
+  background: none;
+}

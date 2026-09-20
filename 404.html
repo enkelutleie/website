@@ -5,24 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Siden finnes ikke — Enkel Utleie</title>
     <meta name="robots" content="noindex" />
-    <meta name="theme-color" content="#3f6f52" />
-    <link rel="icon" href="/favicon.png" type="image/png" />
+    <meta name="theme-color" content="#2F80ED" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <header class="site-header">
-      <div class="header-bar header-bar-simple">
+    <header class="site-header" data-site-header>
+      <div class="header-bar wrap">
         <a class="brand" href="/">
-          <img class="brand-mark" src="/brand/enkel-utleie-logo.png" width="36" height="36" alt="" />
+          <img class="brand-mark" src="/brand/house-mascot.svg" width="48" height="48" alt="" />
           <span>Enkel Utleie</span>
         </a>
+        <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
       </div>
     </header>
     <main class="wrap page-missing">
-      <img class="cta-mascot" src="/brand/house-mascot.png" alt="" width="180" height="180" />
+      <img class="hero-mascot" src="/brand/house-mascot-happy.svg" alt="" width="88" height="88" />
       <h1>Siden finnes ikke</h1>
-      <p class="lead">Vi fant ikke siden du så etter. Gå tilbake til forsiden for Enkel Utleie.</p>
-      <a class="btn btn-primary" href="/">Til forsiden</a>
+      <p class="lead">Gå tilbake til forsiden.</p>
+      <a class="btn" href="/">Til forsiden</a>
     </main>
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>

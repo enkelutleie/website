@@ -3,34 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Enkel Utleie — full kontroll på utleie av boligen din</title>
+    <title>Enkel Utleie</title>
     <meta
       name="description"
-      content="Få full kontroll på utleie av boligen din. Samle informasjon, økonomi og dialog med leietaker på ett sted. Native iOS-app for private utleiere og leietakere."
+      content="Kontrakt, husleie, chat og vedlikehold i én app. For utleier og leietaker i Norge."
     />
     <link rel="canonical" href="https://enkelutleie.com/" />
-    <meta name="theme-color" content="#3f6f52" />
-    <meta property="og:title" content="Enkel Utleie — full kontroll på utleie av boligen din" />
-    <meta
-      property="og:description"
-      content="Samle informasjon, økonomi og dialog med leietaker på ett sted. Native iOS-app for private utleiere og leietakere."
-    />
+    <meta name="theme-color" content="#2F80ED" />
+    <meta property="og:title" content="Enkel Utleie" />
+    <meta property="og:description" content="Kontrakt, husleie og chat i én app." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://enkelutleie.com/" />
     <meta property="og:locale" content="nb_NO" />
     <meta property="og:site_name" content="Enkel Utleie" />
-    <meta property="og:image" content="https://enkelutleie.com/og-image.png" />
-    <meta property="og:image:alt" content="Enkel Utleie med hus-maskot og app-ikon" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Enkel Utleie — full kontroll på utleie av boligen din" />
-    <meta
-      name="twitter:description"
-      content="Samle informasjon, økonomi og dialog med leietaker på ett sted."
-    />
-    <meta name="twitter:image" content="https://enkelutleie.com/og-image.png" />
-    <link rel="icon" href="/favicon.png" type="image/png" />
+    <meta property="og:image" content="https://enkelutleie.com/brand/oversikt-staging.png" />
+    <meta name="twitter:card" content="summary" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/brand/house-mascot.svg" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
@@ -38,251 +27,119 @@
     <a class="skip-link" href="#innhold">Hopp til innhold</a>
 
     <header class="site-header" data-site-header>
-      <div class="header-bar">
+      <div class="header-bar wrap">
         <a class="brand" href="/">
           <img
             class="brand-mark"
-            src="/brand/enkel-utleie-logo.png"
-            width="36"
-            height="36"
+            src="/brand/house-mascot.svg"
+            width="48"
+            height="48"
             alt=""
           />
           <span>Enkel Utleie</span>
         </a>
-        <nav class="nav" data-nav aria-label="Hovedmeny">
+        <nav class="nav" aria-label="Hovedmeny">
           <a href="#funksjoner">Funksjoner</a>
-          <a href="#slik-fungerer-det">Slik fungerer det</a>
-          <a href="#last-ned">Last ned</a>
         </nav>
-        <div class="header-actions">
-          <!-- App Store-URL: Magnus limer inn ekte lenke her. Ikke finn opp App Store-ID. -->
-          <a class="btn btn-primary btn-compact" href="https://apps.apple.com/">Last ned</a>
-          <button class="menu-toggle" type="button" data-menu-toggle aria-expanded="false" aria-controls="mobilmeny">
-            <span class="sr-only">Meny</span>
-            <span class="menu-bars" aria-hidden="true"></span>
-          </button>
-        </div>
+        <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
       </div>
-      <nav class="mobile-nav" id="mobilmeny" data-mobile-nav hidden aria-label="Mobilmeny">
-        <a href="#funksjoner">Funksjoner</a>
-        <a href="#slik-fungerer-det">Slik fungerer det</a>
-        <a href="#last-ned">Last ned</a>
-        <a class="btn btn-primary" href="https://apps.apple.com/">Last ned i App Store</a>
-      </nav>
     </header>
 
     <main id="innhold">
       <section class="hero wrap">
         <div class="hero-copy">
-          <p class="kicker">Native iOS-app for utleier og leietaker</p>
-          <h1>Full kontroll på <span class="accent">utleien</span> din</h1>
+          <img
+            class="hero-mascot"
+            src="/brand/house-mascot-happy.svg"
+            width="128"
+            height="128"
+            alt="Det smilende huset til Enkel Utleie"
+          />
+          <p class="eyebrow">For utleier og leietaker</p>
+          <h1>Utleie, helt enkelt</h1>
           <p class="lead">
-            Samle all informasjon, økonomi og dialog med leietaker – enkelt, oversiktlig, og på
-            én plass.
+            Kontrakt, husleie, chat og vedlikehold samlet i én app — slik at
+            leieforholdet holder seg ryddig for begge.
           </p>
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="https://apps.apple.com/">
-              Last ned i App Store
-              <span class="btn-arrow" aria-hidden="true">→</span>
-            </a>
-            <a class="btn btn-ghost" href="#funksjoner">Se funksjonene</a>
-          </div>
-          <p class="trust">Laget i Norge av MK Product Development AS</p>
+          <a class="btn" href="https://apps.apple.com/">Last ned i App Store</a>
         </div>
 
         <div class="hero-visual">
-          <span class="phone-nav" aria-hidden="true"><span>‹</span></span>
-          <div class="phone-stage">
-            <div class="phone">
-              <span class="phone-btn phone-btn-silent" aria-hidden="true"></span>
-              <span class="phone-btn phone-btn-vol-up" aria-hidden="true"></span>
-              <span class="phone-btn phone-btn-vol-down" aria-hidden="true"></span>
-              <span class="phone-btn phone-btn-power" aria-hidden="true"></span>
-              <div class="phone-bezel">
-                <div class="phone-screen">
-                  <img
-                    class="phone-shot"
-                    src="/brand/oversikt-staging.png"
-                    width="1206"
-                    height="2622"
-                    alt="Oversikt i Enkel Utleie: velkomst, boliger, leieforhold, chat og økonomi"
-                    fetchpriority="high"
-                    decoding="async"
-                  />
-                </div>
+          <div class="phone">
+            <div class="phone-bezel">
+              <div class="phone-screen">
+                <img
+                  class="phone-shot"
+                  src="/brand/oversikt-staging.png"
+                  width="1206"
+                  height="2622"
+                  alt="Hjemskjermen i Enkel Utleie"
+                  fetchpriority="high"
+                  decoding="async"
+                />
               </div>
             </div>
           </div>
-          <span class="phone-nav" aria-hidden="true"><span>›</span></span>
         </div>
       </section>
 
-      <section class="proof" aria-label="Hva appen samler">
-        <div class="wrap proof-grid">
-          <article class="proof-item">
-            <strong>Kontrakt</strong>
-            <p>Samlet for deg og leietaker</p>
+      <section class="features-section wrap" id="funksjoner">
+        <div class="section-head">
+          <h2>Det dere trenger i leieforholdet</h2>
+          <p>Kjernefunksjonene, kort forklart.</p>
+        </div>
+        <div class="features">
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="1.6" />
+                <path d="M9 8h6M9 12h6M9 16h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </span>
+            <h3>Kontrakt</h3>
+            <p>Lag og se gjennom leiekontrakten sammen. Begge har den tilgjengelig når dere trenger den.</p>
           </article>
-          <article class="proof-item">
-            <strong>Husleie</strong>
-            <p>Inntekt og utgifter i oversikt</p>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6" />
+                <path d="M12 8v8M9.6 10c.8-.9 1.7-1.3 2.7-1.3 1.6 0 2.7.9 2.7 2.2 0 2.7-5.4 1.5-5.4 4.2 0 1.3 1.2 2.2 2.8 2.2 1.1 0 2-.4 2.7-1.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </span>
+            <h3>Husleie</h3>
+            <p>Følg husleie, inntekter og utgifter i samme oversikt. Uten å lete i regneark.</p>
           </article>
-          <article class="proof-item">
-            <strong>Dialog</strong>
-            <p>Meldinger der utleien allerede er</p>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M5 8.5A3.5 3.5 0 0 1 8.5 5h5A3.5 3.5 0 0 1 17 8.5v.2A3.5 3.5 0 0 1 20.5 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                <rect x="4" y="11" width="13" height="8" rx="3" stroke="currentColor" stroke-width="1.6" />
+              </svg>
+            </span>
+            <h3>Chat</h3>
+            <p>Snakk om leieforholdet der det allerede ligger. Meldinger, ikke evige e-posttråder.</p>
           </article>
-        </div>
-      </section>
-
-      <section class="band section" id="funksjoner">
-        <div class="wrap">
-          <div class="section-head">
-            <p class="eyebrow">Funksjoner</p>
-            <h2>Alt du trenger, samlet</h2>
-            <p>Fra kontrakt til husleie og prat med leietaker — uten å bytte app.</p>
-          </div>
-          <div class="features">
-            <article class="feature">
-              <span class="icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="1.6" />
-                  <path d="M9 8h6M9 12h6M9 16h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                </svg>
-              </span>
-              <h3>Kontrakt</h3>
-              <p>Ha leiekontrakten samlet og tilgjengelig — for både deg og leietaker.</p>
-            </article>
-            <article class="feature">
-              <span class="icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6" />
-                  <path d="M12 8v8M9.6 10c.8-.9 1.7-1.3 2.7-1.3 1.6 0 2.7.9 2.7 2.2 0 2.7-5.4 1.5-5.4 4.2 0 1.3 1.2 2.2 2.8 2.2 1.1 0 2-.4 2.7-1.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                </svg>
-              </span>
-              <h3>Husleie og økonomi</h3>
-              <p>Hold oversikt over husleie, innbetalinger og utgifter uten å lete i regneark.</p>
-            </article>
-            <article class="feature">
-              <span class="icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M4 8.5A3.5 3.5 0 0 1 7.5 5h5A3.5 3.5 0 0 1 16 8.5v.2A3.5 3.5 0 0 1 19.5 12H20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                  <rect x="4" y="11" width="13" height="8" rx="3" stroke="currentColor" stroke-width="1.6" />
-                </svg>
-              </span>
-              <h3>Chat</h3>
-              <p>Snakk med leietaker der resten av utleien allerede ligger.</p>
-            </article>
-            <article class="feature">
-              <span class="icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M14 5.5 17 8.5 9.5 16 6 17l1-3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
-                  <path d="M15.5 4.8c1.6-1.6 4.1-.9 4.9 1.1.3.8.2 1.6-.2 2.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                </svg>
-              </span>
-              <h3>Vedlikehold</h3>
-              <p>Følg opp oppgaver, bilder og historikk for boligen — uten løse lapper.</p>
-            </article>
-            <article class="feature">
-              <span class="icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.6" />
-                  <path d="M7 13h4l2-4 2.5 7L18 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </span>
-              <h3>Kjørebok og skatt</h3>
-              <p>Lett å dokumentere det du trenger når skattemeldingen kommer.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="slik-fungerer-det">
-        <div class="wrap">
-          <div class="section-head">
-            <p class="eyebrow">Slik fungerer det</p>
-            <h2>Tre rolige steg</h2>
-            <p>Ingen oppsett utover det du allerede gjør som utleier.</p>
-          </div>
-          <div class="steps">
-            <article class="step">
-              <span class="step-num">01</span>
-              <h3>Last ned appen</h3>
-              <p>Enkel Utleie er en native iOS-app for utleier og leietaker.</p>
-            </article>
-            <article class="step">
-              <span class="step-num">02</span>
-              <h3>Legg til bolig og folk</h3>
-              <p>Samle kontrakt, kontaktinfo og det praktiske rundt leieforholdet.</p>
-            </article>
-            <article class="step">
-              <span class="step-num">03</span>
-              <h3>Hold dialogen i gang</h3>
-              <p>Husleie, vedlikehold og meldinger — uten å lete i e-post og chatter.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="cta-band" id="last-ned">
-        <div class="wrap cta-panel">
-          <img class="cta-mascot" src="/brand/house-mascot.png" alt="" width="200" height="200" />
-          <div class="cta-inner">
-            <p class="eyebrow eyebrow-light">Klar?</p>
-            <h2>Klar for en roligere utleiehverdag?</h2>
-            <p>Last ned Enkel Utleie når appen er i App Store.</p>
-            <ul class="cta-points">
-              <li>Kontrakt, husleie og chat i samme app</li>
-              <li>For både utleier og leietaker</li>
-              <li>Laget i Norge av MK Product Development AS</li>
-            </ul>
-            <a class="btn btn-light" href="https://apps.apple.com/">
-              Last ned i App Store
-              <span class="btn-arrow" aria-hidden="true">→</span>
-            </a>
-            <p class="store-note">Plassholderlenke til App Store inntil den ekte adressen er klar.</p>
-          </div>
+          <article class="feature">
+            <span class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M4 10.5 12 4l8 6.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                <path d="M9 21v-7h6v7" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <h3>Boliger</h3>
+            <p>Hold boliger, leieforhold og vedlikehold samlet. Mindre å huske utenfor appen.</p>
+          </article>
         </div>
       </section>
     </main>
 
-    <footer class="site-footer">
-      <div class="wrap footer-grid">
-        <div class="footer-brand-block">
-          <a class="brand brand-invert" href="/">
-            <img class="brand-mark" src="/brand/enkel-utleie-logo.png" width="32" height="32" alt="" />
-            <span>Enkel Utleie</span>
-          </a>
-          <p>
-            Enkel Utleie gir deg full kontroll på utleien din. Samle all informasjon, økonomi og
-            dialog med leietaker på ett sted.
-          </p>
-        </div>
-        <div>
-          <h3>Produkt</h3>
-          <ul class="footer-links">
-            <li><a href="#funksjoner">Funksjoner</a></li>
-            <li><a href="#slik-fungerer-det">Slik fungerer det</a></li>
-            <li><a href="#last-ned">Last ned</a></li>
-          </ul>
-        </div>
-        <div>
-          <h3>Støtte</h3>
-          <ul class="footer-links">
-            <li><a href="/personvern">Personvern</a></li>
-            <li><a href="mailto:hei@enkelutleie.com">Kontakt</a></li>
-          </ul>
-        </div>
-        <div>
-          <h3>Selskap</h3>
-          <p class="footer-meta">
-            MK Product Development AS<br />
-            <a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a>
-          </p>
-        </div>
-      </div>
-      <div class="wrap footer-bottom">
-        <p>© 2026 Enkel Utleie. Alle rettigheter reservert.</p>
-      </div>
+    <footer class="site-footer wrap">
+      <p>MK Product Development AS</p>
+      <p>
+        <a href="/personvern">Personvern</a>
+        ·
+        <a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a>
+      </p>
     </footer>
     <script type="module" src="/src/main.js"></script>
   </body>
