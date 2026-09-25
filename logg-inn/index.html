@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="nb">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Logg inn — Enkel Utleie</title>
+    <meta name="description" content="Logg inn i webportalen med samme konto som i appen, eller skann en kode." />
+    <meta name="theme-color" content="#2F80ED" />
+    <link rel="icon" href="/favicon.png?v=20260920b" type="image/png" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-bar wrap">
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/brand/house-mascot.png?v=2" width="80" height="80" alt="" />
+          <span>Enkel Utleie</span>
+        </a>
+        <div class="header-actions">
+          <a class="btn btn-header btn-login" href="/logg-inn" aria-current="page">Logg inn</a>
+          <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
+        </div>
+      </div>
+    </header>
+    <main class="wrap login-grid">
+      <section class="login-card">
+        <h1>Logg inn med e-post</h1>
+        <p>Samme konto som i appen. Innlogging mot databasen åpnes når appen er klar — denne siden bytter ikke ut forsiden.</p>
+      </section>
+      <section class="login-card">
+        <h2>Eller skann med appen</h2>
+        <p>Når du er innlogget i appen, skanner du en kort kode. Da får nettleseren din økt, uten nytt passord.</p>
+        <div class="qr" role="img" aria-label="Eksempel på innloggingskode"></div>
+        <p>Ekte kode kommer når iOS kan bekrefte den. Premium følger kontoen, ikke koden.</p>
+      </section>
+    </main>
+    <footer class="site-footer wrap">
+      <p>MK Product Development AS</p>
+      <p><a href="/">Forside</a></p>
+      <p><a href="/personvern">Personvern</a></p>
+      <p><a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a></p>
+    </footer>
+  </body>
+</html>
