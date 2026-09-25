@@ -80,6 +80,37 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
   box-shadow: none;
 }
 .btn-login:hover { background: #d4e8ff; color: var(--navy); }
+.btn-apple, .btn-google, .login-card form .btn {
+  width: 100%;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.btn-apple { background: #12233f; color: #fff; box-shadow: none; }
+.btn-apple:hover { background: #0c1830; color: #fff; }
+.btn-google {
+  margin-top: 0.55rem;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: none;
+}
+.btn-google:hover { background: var(--mist); color: var(--ink); }
+.login-or { margin: 0.9rem 0 0.4rem; color: var(--muted); font-size: 0.92rem; }
+.login-card form { display: grid; gap: 0.35rem; text-align: left; }
+.login-card label { margin-top: 0.35rem; font-size: 0.92rem; font-weight: 620; color: var(--navy); }
+.login-card input {
+  min-height: 2.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--mist);
+  padding: 0 0.8rem;
+  font: inherit;
+  color: var(--ink);
+}
+.login-card form .btn { margin-top: 0.7rem; }
+.login-message { color: #9b3b3b; font-size: 0.95rem; }
+.login-signed-in { margin: 0.2rem 0; font-weight: 650; color: var(--ink); }
 .phone { width: min(100%, 19.25rem); margin-inline: auto; filter: drop-shadow(0 28px 44px rgba(27, 58, 107, 0.18)); }
 .phone-bezel { background: #111217; border-radius: 2.55rem; padding: 0.4rem; }
 .phone-screen { overflow: hidden; border-radius: 2.15rem; background: #eef3fb; line-height: 0; }
