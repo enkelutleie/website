@@ -51,10 +51,10 @@ a { color: var(--blue-deep); }
   display: block; flex: none; object-fit: contain; background: none;
 }
 .brand-mark { width: 2.35rem; height: 2.35rem; }
-.nav { display: none; margin-left: auto; margin-right: 0.35rem; gap: 1.1rem; }
+.nav { display: none; margin-right: 0.35rem; gap: 1.1rem; }
 .nav a { color: var(--muted); text-decoration: none; font-weight: 560; font-size: 0.95rem; }
 .nav a:hover { color: var(--ink); }
-.header-actions { display: flex; align-items: center; gap: 0.45rem; }
+.header-actions { margin-left: auto; display: flex; align-items: center; gap: 0.45rem; }
 .hero { display: grid; gap: 2.4rem; padding: 1.6rem 0 3rem; align-items: center; }
 .hero-copy { max-width: 30rem; }
 .hero-visual { width: min(100%, 22rem); margin-inline: auto; }
@@ -136,7 +136,8 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 .page-missing { min-height: 70vh; display: grid; justify-items: start; align-content: center; padding: 3rem 0; }
 .page-missing .hero-mascot { width: 5.25rem; height: 5.25rem; margin-bottom: 1rem; filter: none; }
 @media (min-width: 640px) {
-  .nav { display: flex; }
+  .nav { display: flex; margin-left: auto; }
+  .nav + .header-actions { margin-left: 0; }
   .features { grid-template-columns: 1fr 1fr; }
   .login-grid { grid-template-columns: 1fr 1fr; align-items: start; }
 }
@@ -147,9 +148,6 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
   .hero { grid-template-columns: 1fr auto; padding: 2.2rem 0 3.4rem; gap: 3.5rem; }
   .hero-visual { width: 20.25rem; }
   .hero-mascot { width: 6.5rem; height: 6.5rem; }
-}
-@media (max-width: 639px) {
-  .header-actions { margin-left: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

@@ -1,2 +1,3 @@
-# Pretty URL for the privacy stub (also served as /personvern/ via the HTML folder).
+# Pretty URLs (also served as folders via the HTML files).
 /personvern /personvern/index.html 200
+/logg-inn /logg-inn/index.html 200

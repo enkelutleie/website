@@ -6,6 +6,9 @@ function prettyPersonvern() {
     if (req.url === "/personvern") {
       req.url = "/personvern/";
     }
+    if (req.url === "/logg-inn") {
+      req.url = "/logg-inn/";
+    }
     next();
   };
 
@@ -19,6 +22,7 @@ function prettyPersonvern() {
     const known =
       path === "/" ||
       path.startsWith("/personvern") ||
+      path.startsWith("/logg-inn") ||
       path.startsWith("/assets/") ||
       path.startsWith("/brand/") ||
       path.startsWith("/src/") ||
@@ -52,6 +56,7 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, "index.html"),
         personvern: resolve(import.meta.dirname, "personvern/index.html"),
+        loggInn: resolve(import.meta.dirname, "logg-inn/index.html"),
         notFound: resolve(import.meta.dirname, "404.html"),
       },
     },
