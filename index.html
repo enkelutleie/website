@@ -24,6 +24,7 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260920b" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="/src/styles.css" />
+    <script src="/auth-state.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#innhold">Hopp til innhold</a>
@@ -37,7 +38,9 @@
           <a href="#funksjoner">Funksjoner</a>
         </nav>
         <div class="header-actions">
-          <a class="btn btn-header btn-login" href="/logg-inn">Logg inn</a>
+          <a class="btn btn-header btn-login" href="/logg-inn" data-when="out">Logg inn</a>
+          <button class="btn-header-link" type="button" data-when="in" data-sign-out>Logg ut</button>
+          <a class="btn btn-header btn-login" href="/portal/" data-when="in">Min side</a>
           <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
         </div>
       </div>
