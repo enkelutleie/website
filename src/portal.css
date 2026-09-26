@@ -10,6 +10,7 @@ html:not([data-auth="in"]) .portal { visibility: hidden; }
   font: inherit; font-weight: 620; cursor: pointer;
 }
 .portal-nav button[aria-current="page"] { background: var(--navy); color: #fff; border-color: var(--navy); }
+.portal-lead { margin: 0 0 0.8rem; color: var(--muted); }
 .portal-form { display: grid; gap: 0.45rem; margin: 0 0 0.9rem; text-align: left; }
 .portal-form label { display: grid; gap: 0.2rem; font-size: 0.9rem; font-weight: 620; color: var(--navy); }
 .portal-form input, .portal-form select, .portal-form textarea {
@@ -47,6 +48,11 @@ html:not([data-auth="in"]) .portal { visibility: hidden; }
   padding: 1.2rem 1.25rem;
 }
 .portal-card h2 { margin: 0 0 0.6rem; font-size: 1.15rem; letter-spacing: -0.02em; }
+.portal-card h3 { margin: 0.9rem 0 0.4rem; font-size: 1rem; }
+.portal-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; margin: 0 0 0.8rem; }
+.portal-actions label { display: grid; gap: 0.2rem; font-size: 0.9rem; font-weight: 620; color: var(--navy); }
+.portal-actions input { min-height: 2.6rem; border: 1px solid var(--line); border-radius: 0.8rem; background: var(--mist); padding: 0.45rem 0.7rem; font: inherit; }
+.portal-detail { display: grid; gap: 0.45rem; margin-top: 0.8rem; }
 .portal-empty p { margin: 0; color: var(--muted); }
 .portal-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 .portal-item { padding: 0.8rem 0.9rem; border-radius: 0.9rem; background: var(--mist); border: 1px solid var(--line); }

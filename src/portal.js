@@ -3,8 +3,8 @@ import { initHeader } from "./header.js";
 import { bindPortalViews } from "./portal-views.js";
 import "./portal.css";
 
-// Read-only overview. Every query runs with the user's own session, so RLS
-// decides what is visible. No writes, no service key.
+// Signed-in portal. Queries and writes use the user's own session, so RLS
+// decides what is allowed. No service key.
 
 const header = document.querySelector("[data-site-header]");
 if (header) {
@@ -138,9 +138,9 @@ const load = async (session) => {
 
   const failed = [propertiesRes, propertyRolesRes, tenancyRolesRes, tenanciesRes, tasksRes].some((res) => res.error);
   const properties = propertiesRes.data ?? [];
+  const tenancies = tenanciesRes.data ?? [];
   state.properties = properties;
   state.tenancies = tenancies;
-  const tenancies = tenanciesRes.data ?? [];
   const propertyRoles = new Map((propertyRolesRes.data ?? []).map((row) => [row.property_id, row.role]));
   const tenantOf = new Set(
     (tenancyRolesRes.data ?? []).filter((row) => row.role === "tenant").map((row) => row.tenancy_id),

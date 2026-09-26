@@ -45,6 +45,9 @@
           <button type="button" data-view="overtakelse">Overtakelse</button>
           <button type="button" data-view="kontrakt">Kontrakt</button>
           <button type="button" data-view="invitasjoner">Invitasjoner</button>
+          <button type="button" data-view="kjorebok">Kjørebok</button>
+          <button type="button" data-view="eiendeler">Eiendeler</button>
+          <button type="button" data-view="husleie">Husleie</button>
           <button type="button" data-view="boligperm">Boligperm</button>
           <button type="button" data-view="dokumenter">Dokumenter</button>
         </nav>
@@ -87,10 +90,27 @@
                 <label>Beløp<input name="amount" type="number" min="1" step="0.01" required /></label>
                 <label>Dato<input name="date" type="date" required /></label>
                 <label>Beskrivelse<input name="description" type="text" maxlength="160" required /></label>
+                <label>Gjentas
+                  <select name="repeat">
+                    <option value="none">Bare én gang</option>
+                    <option value="weekly">Ukentlig</option>
+                    <option value="monthly">Månedlig</option>
+                    <option value="yearly">Årlig</option>
+                  </select>
+                </label>
+                <label>Dag i måneden<input name="day" type="number" min="1" max="31" placeholder="1–31" /></label>
                 <button class="btn" type="submit">Legg til post</button>
               </form>
+              <div class="portal-actions">
+                <label>År<input data-economy-year type="number" min="2000" max="2100" /></label>
+                <button class="btn" type="button" data-economy-year-btn>Årsoppsummering</button>
+                <button class="btn" type="button" data-economy-materialize>Opprett forfalte poster</button>
+              </div>
               <p class="login-message" data-form-message hidden></p>
+              <h3>Poster</h3>
               <ul class="portal-list" data-economy-list></ul>
+              <h3>Faste poster</h3>
+              <ul class="portal-list" data-economy-series></ul>
             </section>
           </section>
 
@@ -107,6 +127,7 @@
               </form>
               <p class="login-message" data-form-message hidden></p>
               <ul class="portal-list" data-maintenance-list></ul>
+              <div class="portal-detail" data-maintenance-detail hidden></div>
             </section>
           </section>
 
@@ -118,6 +139,15 @@
                 <label>Type<select name="kind"><option value="event">Hendelse</option><option value="deadline">Frist</option></select></label>
                 <label>Tittel<input name="title" type="text" maxlength="120" required /></label>
                 <label>Når<input name="when" type="datetime-local" required /></label>
+                <label>Gjentas
+                  <select name="repeat">
+                    <option value="none">Ikke</option>
+                    <option value="weekly">Ukentlig</option>
+                    <option value="monthly">Månedlig</option>
+                    <option value="yearly">Årlig</option>
+                  </select>
+                </label>
+                <label>Til og med<input name="until" type="date" /></label>
                 <button class="btn" type="submit">Legg i kalenderen</button>
               </form>
               <p class="login-message" data-form-message hidden></p>
@@ -159,16 +189,97 @@
           <section data-panel="kontrakt" hidden>
             <section class="portal-card">
               <h2>Kontrakt</h2>
-              <p class="portal-lead">Status fra samme kontrakter som i appen. Signering og PDF blir værende i appen til den flyten er klar for nett.</p>
+              <p class="portal-lead">Utkast og status fra samme kontrakter som i appen. Signering med BankID blir værende i appen.</p>
+              <form class="portal-form" data-contract-form>
+                <label>Leieforhold<select name="tenancy" required></select></label>
+                <label>Start<input name="start" type="date" required /></label>
+                <label>Husleie per måned<input name="rent" type="number" min="1" step="0.01" required /></label>
+                <label>Forfallsdag<input name="payday" type="number" min="1" max="31" value="1" required /></label>
+                <label>Depositum<input name="deposit" type="number" min="0" step="0.01" value="0" /></label>
+                <label>Oppsigelse, måneder<input name="notice" type="number" min="1" max="24" value="3" /></label>
+                <button class="btn" type="submit">Lag utkast</button>
+              </form>
+              <p class="login-message" data-form-message hidden></p>
               <ul class="portal-list" data-contract-list></ul>
+              <div class="portal-detail" data-contract-detail hidden></div>
             </section>
           </section>
 
           <section data-panel="invitasjoner" hidden>
             <section class="portal-card">
               <h2>Invitasjoner</h2>
-              <p class="portal-lead">Invitasjoner som venter på denne kontoen.</p>
+              <p class="portal-lead">Invitasjoner som venter på denne kontoen. En invitasjonskode fra lenken kan også limes inn her.</p>
+              <form class="portal-form" data-invite-accept>
+                <label>Invitasjonskode<input name="token" type="text" autocomplete="off" required /></label>
+                <button class="btn" type="submit">Godta invitasjon</button>
+              </form>
+              <form class="portal-form" data-invite-send>
+                <label>Leieforhold<select name="tenancy" required></select></label>
+                <label>E-post til leietaker<input name="email" type="email" required /></label>
+                <button class="btn" type="submit">Inviter leietaker</button>
+              </form>
+              <p class="login-message" data-form-message hidden></p>
+              <h3>Til deg</h3>
               <ul class="portal-list" data-invite-list></ul>
+              <h3>Medutleier</h3>
+              <ul class="portal-list" data-colandlord-list></ul>
+            </section>
+          </section>
+
+          <section data-panel="kjorebok" hidden>
+            <section class="portal-card">
+              <h2>Kjørebok</h2>
+              <p class="portal-lead">Kjøring i boligens tjeneste. Satsen settes av databasen, ikke av denne siden.</p>
+              <form class="portal-form" data-mileage-form>
+                <label>Bolig<select name="property" required></select></label>
+                <label>Dato<input name="date" type="date" required /></label>
+                <label>Kilometer<input name="km" type="number" min="0.1" step="0.1" required /></label>
+                <label>Fra<input name="from" type="text" maxlength="120" /></label>
+                <label>Til<input name="to" type="text" maxlength="120" /></label>
+                <label>Formål<input name="purpose" type="text" maxlength="160" /></label>
+                <button class="btn" type="submit">Legg til tur</button>
+              </form>
+              <p class="login-message" data-form-message hidden></p>
+              <ul class="portal-list" data-mileage-list></ul>
+            </section>
+          </section>
+
+          <section data-panel="eiendeler" hidden>
+            <section class="portal-card">
+              <h2>Eiendeler</h2>
+              <form class="portal-form" data-asset-form>
+                <label>Bolig<select name="property" required></select></label>
+                <label>Navn<input name="name" type="text" maxlength="120" required /></label>
+                <label>Kategori
+                  <select name="category">
+                    <option value="furnishings">Innbo</option>
+                    <option value="equipment">Utstyr</option>
+                    <option value="improvement">Påkostning</option>
+                    <option value="other">Annet</option>
+                  </select>
+                </label>
+                <label>Kjøpt<input name="date" type="date" required /></label>
+                <label>Beløp<input name="amount" type="number" min="1" step="0.01" required /></label>
+                <label>Levetid, år<input name="years" type="number" min="1" max="50" /></label>
+                <label>Notat<input name="notes" type="text" maxlength="240" /></label>
+                <button class="btn" type="submit">Legg til eiendel</button>
+              </form>
+              <p class="login-message" data-form-message hidden></p>
+              <ul class="portal-list" data-asset-list></ul>
+            </section>
+          </section>
+
+          <section data-panel="husleie" hidden>
+            <section class="portal-card">
+              <h2>Forventet husleie</h2>
+              <p class="portal-lead">Dette er forventede perioder, ikke innbetalinger. En betaling registreres som inntekt under Økonomi.</p>
+              <form class="portal-form" data-rent-form>
+                <label>Leieforhold<select name="tenancy" required></select></label>
+                <button class="btn" type="submit">Vis perioder</button>
+                <button class="btn" type="button" data-rent-generate>Opprett perioder til i dag</button>
+              </form>
+              <p class="login-message" data-form-message hidden></p>
+              <ul class="portal-list" data-rent-list></ul>
             </section>
           </section>
 
@@ -189,12 +300,13 @@
           <section data-panel="dokumenter" hidden>
             <section class="portal-card">
               <h2>Dokumenter</h2>
+              <p class="portal-lead">Ferdige dokumenter du har tilgang til. Opplasting og nedlasting av filer blir værende i appen til nettleseren kan snakke med fil-tjenesten.</p>
               <ul class="portal-list" data-document-list></ul>
             </section>
           </section>
         </div>
       </div>
-      <p class="portal-more">Bilder, kvitteringsskanning, Premium-kjøp og kontraktsignering er fortsatt i appen. Resten her bruker samme database.</p>
+      <p class="portal-more">Bilder, kvitteringsskanning, Premium-kjøp, personverneksport og kontraktsignering er fortsatt i appen. Resten her bruker samme database.</p>
     </main>
     <footer class="site-footer wrap">
       <p>MK Product Development AS</p>
