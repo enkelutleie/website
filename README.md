@@ -48,7 +48,7 @@ npx wrangler pages deploy dist --project-name enkelutleie
 
 ## App Store-lenke
 
-Knappene «Last ned i App Store» peker midlertidig på `https://apps.apple.com/`. Lim inn ekte App Store-URL i `index.html` når den er klar. **Ikke finn opp App Store-ID.**
+Knappene til App Store er tatt bort til den ekte adressen finnes. Ikke lenk til forsiden av App Store, og ikke finn opp en App Store-ID.
 
 ## Universal Links
 

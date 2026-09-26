@@ -22,7 +22,6 @@
           <a class="btn btn-header btn-login" href="/logg-inn" data-when="out">Logg inn</a>
           <button class="btn-header-link" type="button" data-when="in" data-sign-out>Logg ut</button>
           <a class="btn btn-header btn-login" href="/portal/" aria-current="page" data-when="in">Min side</a>
-          <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
         </div>
       </div>
     </header>
@@ -100,7 +99,18 @@
             <section class="portal-card">
               <h2>Økonomi</h2>
               <p class="portal-lead" data-economy-summary>Henter …</p>
-              <form class="portal-form" data-economy-form>
+              <div class="portal-actions">
+                <label>År<input data-economy-year type="number" min="2000" max="2100" /></label>
+                <button class="btn" type="button" data-economy-year-btn>Årsoppsummering</button>
+                <button class="btn" type="button" data-economy-materialize>Opprett forfalte poster</button>
+              </div>
+              <p class="login-message" data-form-message hidden></p>
+              <h3>Poster</h3>
+              <ul class="portal-list" data-economy-list></ul>
+              <h3>Faste poster</h3>
+              <ul class="portal-list" data-economy-series></ul>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Legg til post</button>
+              <form class="portal-form" data-economy-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Type<select name="type"><option value="income">Inntekt</option><option value="expense">Utgift</option></select></label>
                 <label>Kategori<select name="category"></select></label>
@@ -118,23 +128,14 @@
                 <label>Dag i måneden<input name="day" type="number" min="1" max="31" placeholder="1–31" /></label>
                 <button class="btn" type="submit">Legg til post</button>
               </form>
-              <div class="portal-actions">
-                <label>År<input data-economy-year type="number" min="2000" max="2100" /></label>
-                <button class="btn" type="button" data-economy-year-btn>Årsoppsummering</button>
-                <button class="btn" type="button" data-economy-materialize>Opprett forfalte poster</button>
-              </div>
-              <p class="login-message" data-form-message hidden></p>
-              <h3>Poster</h3>
-              <ul class="portal-list" data-economy-list></ul>
-              <h3>Faste poster</h3>
-              <ul class="portal-list" data-economy-series></ul>
             </section>
           </section>
 
           <section data-panel="vedlikehold" hidden>
             <section class="portal-card">
               <h2>Vedlikehold</h2>
-              <form class="portal-form" data-maintenance-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Meld inn sak</button>
+              <form class="portal-form" data-maintenance-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Tittel<input name="title" type="text" maxlength="120" required /></label>
                 <label>Beskrivelse<textarea name="description" rows="2" maxlength="1000"></textarea></label>
@@ -151,7 +152,8 @@
           <section data-panel="kalender" hidden>
             <section class="portal-card">
               <h2>Kalender</h2>
-              <form class="portal-form" data-calendar-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Ny hendelse</button>
+              <form class="portal-form" data-calendar-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Type<select name="kind"><option value="event">Hendelse</option><option value="deadline">Frist</option></select></label>
                 <label>Tittel<input name="title" type="text" maxlength="120" required /></label>
@@ -193,7 +195,8 @@
             <section class="portal-card">
               <h2>Overtakelse</h2>
               <p class="portal-lead">Befaringene som ligger i databasen. Målerstander som bare finnes på telefonen vises ikke her.</p>
-              <form class="portal-form" data-inspection-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Start befaring</button>
+              <form class="portal-form" data-inspection-form hidden>
                 <label>Leieforhold<select name="tenancy" required></select></label>
                 <label>Type<select name="type"><option value="move_in">Innflytting</option><option value="move_out">Utflytting</option></select></label>
                 <button class="btn" type="submit">Start befaring</button>
@@ -207,7 +210,8 @@
             <section class="portal-card">
               <h2>Kontrakt</h2>
               <p class="portal-lead">Utkast, forhåndsvisning og skjermsignatur bruker samme kontrakt som appen. BankID er ikke koblet på.</p>
-              <form class="portal-form" data-contract-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Lag utkast</button>
+              <form class="portal-form" data-contract-form hidden>
                 <label>Leieforhold<select name="tenancy" required></select></label>
                 <label>Start<input name="start" type="date" required /></label>
                 <label>Husleie per måned<input name="rent" type="number" min="1" step="0.01" required /></label>
@@ -230,7 +234,8 @@
                 <label>Invitasjonskode<input name="token" type="text" autocomplete="off" required /></label>
                 <button class="btn" type="submit">Godta invitasjon</button>
               </form>
-              <form class="portal-form" data-invite-send>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Inviter leietaker</button>
+              <form class="portal-form" data-invite-send hidden>
                 <label>Leieforhold<select name="tenancy" required></select></label>
                 <label>E-post til leietaker<input name="email" type="email" required /></label>
                 <button class="btn" type="submit">Inviter leietaker</button>
@@ -247,7 +252,8 @@
             <section class="portal-card">
               <h2>Kjørebok</h2>
               <p class="portal-lead">Kjøring i boligens tjeneste. Satsen settes av databasen, ikke av denne siden.</p>
-              <form class="portal-form" data-mileage-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Legg til tur</button>
+              <form class="portal-form" data-mileage-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Dato<input name="date" type="date" required /></label>
                 <label>Kilometer<input name="km" type="number" min="0.1" step="0.1" required /></label>
@@ -264,7 +270,8 @@
           <section data-panel="eiendeler" hidden>
             <section class="portal-card">
               <h2>Eiendeler</h2>
-              <form class="portal-form" data-asset-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Legg til eiendel</button>
+              <form class="portal-form" data-asset-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Navn<input name="name" type="text" maxlength="120" required /></label>
                 <label>Kategori
@@ -303,7 +310,8 @@
           <section data-panel="boligperm" hidden>
             <section class="portal-card">
               <h2>Boligperm</h2>
-              <form class="portal-form" data-handbook-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Skriv i boligpermen</button>
+              <form class="portal-form" data-handbook-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Punkt<select name="section"></select></label>
                 <label>Tekst<textarea name="body" rows="3" maxlength="4000" required></textarea></label>
@@ -328,13 +336,15 @@
             <section class="portal-card">
               <h2>Dokumenter</h2>
               <p class="portal-lead">PDF-er og kvitteringsfiler lagres i samme dokumenttjeneste som appen. Skanning av kvittering med kamera er fortsatt på telefonen.</p>
-              <form class="portal-form" data-document-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Last opp PDF</button>
+              <form class="portal-form" data-document-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Tittel<input name="title" type="text" maxlength="160" required /></label>
                 <label>PDF<input name="file" type="file" accept="application/pdf,.pdf" required /></label>
                 <button class="btn" type="submit">Last opp PDF</button>
               </form>
-              <form class="portal-form" data-receipt-form>
+              <button class="btn portal-reveal" type="button" data-reveal aria-expanded="false">Last opp bilag</button>
+              <form class="portal-form" data-receipt-form hidden>
                 <label>Bolig<select name="property" required></select></label>
                 <label>Tittel<input name="title" type="text" maxlength="160" required /></label>
                 <label>Type
@@ -372,9 +382,8 @@
       </button>
     </nav>
     <footer class="site-footer wrap">
-      <p>MK Product Development AS</p>
-      <p><a href="/">Forside</a></p>
-      <p><a href="/personvern">Personvern</a></p>
+      <p>MK Product Development AS · org.nr 938 439 834</p>
+      <p><a href="/">Forside</a> · <a href="/personvern">Personvern</a></p>
       <p><a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a></p>
     </footer>
     <script type="module" src="/src/portal.js"></script>

@@ -339,6 +339,15 @@ export function bindPortalViews(supabase, context) {
     accountDrill = false;
     syncMobileChrome();
   });
+  root.querySelectorAll("[data-reveal]").forEach((button) => {
+    const form = button.nextElementSibling;
+    button.addEventListener("click", () => {
+      if (!form || form.tagName !== "FORM") return;
+      form.hidden = !form.hidden;
+      button.setAttribute("aria-expanded", form.hidden ? "false" : "true");
+      if (!form.hidden) form.querySelector("input, select, textarea")?.focus();
+    });
+  });
   window.matchMedia("(max-width: 859px)").addEventListener("change", () => syncMobileChrome());
   root.querySelector("[data-economy-form] select[name=type]")?.addEventListener("change", syncCategories);
   const forProperty = (query) => {

@@ -32,6 +32,8 @@ html:not([data-auth="in"]) .portal { visibility: hidden; }
 .portal[data-property] .portal-form label:has(select[name="property"]) { display: none; }
 .portal-lead { margin: 0 0 0.8rem; color: var(--muted); }
 .portal-form { display: grid; gap: 0.45rem; margin: 0 0 0.9rem; text-align: left; }
+.portal-form[hidden] { display: none; }
+.portal-reveal { margin: 0 0 0.8rem; border: 0; cursor: pointer; }
 .portal-form label { display: grid; gap: 0.2rem; font-size: 0.9rem; font-weight: 620; color: var(--navy); }
 .portal-form input, .portal-form select, .portal-form textarea {
   min-height: 2.6rem; border: 1px solid var(--line); border-radius: 0.8rem;

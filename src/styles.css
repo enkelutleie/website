@@ -115,6 +115,15 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 .phone-bezel { background: #111217; border-radius: 2.55rem; padding: 0.4rem; }
 .phone-screen { overflow: hidden; border-radius: 2.15rem; background: #eef3fb; line-height: 0; }
 .phone-shot { width: 100%; height: auto; }
+.hero-note { margin: 0.9rem 0 0; max-width: 34rem; color: var(--muted); font-size: 0.98rem; }
+.steps { display: grid; gap: 0.85rem; margin: 0 0 3rem; }
+.step {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 1.3rem;
+  padding: 1.15rem 1.2rem 1.2rem;
+}
+.step-no { margin: 0 0 0.35rem; color: var(--blue); font-size: 0.82rem; font-weight: 720; letter-spacing: 0.04em; }
+.step h3 { margin: 0 0 0.28rem; font-size: 1.05rem; letter-spacing: -0.02em; }
+.step p { margin: 0; color: var(--muted); font-size: 0.98rem; }
 .features-section { padding: 0 0 4rem; }
 .section-head { max-width: 32rem; margin-bottom: 1.25rem; }
 .section-head h2 { margin: 0 0 0.3rem; font-size: clamp(1.45rem, 3vw, 1.8rem); letter-spacing: -0.04em; }
@@ -193,6 +202,7 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 }
 @media (min-width: 980px) {
   .features { grid-template-columns: 1fr 1fr 1fr; }
+  .steps { grid-template-columns: 1fr 1fr 1fr; }
 }
 @media (min-width: 880px) {
   .hero { grid-template-columns: 1fr auto; padding: 2.2rem 0 3.4rem; gap: 3.5rem; }
