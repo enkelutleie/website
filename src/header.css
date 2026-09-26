@@ -1,0 +1,27 @@
+/* Signed-in header. public/auth-state.js sets html[data-auth] before first paint. */
+html[data-auth="in"] [data-when="out"],
+html:not([data-auth="in"]) [data-when="in"] { display: none; }
+.btn-header-link {
+  border: 0; background: none; padding: 0.3rem 0.2rem; cursor: pointer;
+  font: inherit; font-size: 0.9rem; font-weight: 560; color: var(--muted);
+  text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px;
+  white-space: nowrap;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+.btn-header-link:hover { color: var(--navy); text-decoration-color: currentColor; }
+.btn-header-link:disabled { opacity: 0.6; cursor: default; }
+@media (max-width: 639px) {
+  .btn-header-link { padding-inline: 0.1rem; font-size: clamp(0.72rem, 0.48rem + 1.4vw, 0.9rem); }
+}
+/* Signed in there are three header actions; keep brand and buttons on one line down to 320 px. */
+@media (max-width: 379px) {
+  html[data-auth="in"] .header-bar { gap: 0.25rem; }
+  html[data-auth="in"] .brand { gap: 0.25rem; font-size: 0.8rem; }
+  html[data-auth="in"] .brand-mark { width: 1.6rem; height: 1.6rem; }
+  html[data-auth="in"] .header-actions { gap: 0.2rem; }
+  html[data-auth="in"] .btn-header { padding-inline: 0.5rem; font-size: 0.74rem; }
+  html[data-auth="in"] .btn-header-link { font-size: 0.72rem; padding-inline: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-header-link { transition: none; }
+}

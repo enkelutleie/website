@@ -1,0 +1,41 @@
+/* Signed-out visitors are sent to /logg-inn/; never flash the portal for them. */
+html:not([data-auth="in"]) .portal { visibility: hidden; }
+
+.portal { display: grid; gap: 1rem; padding: 1.5rem 0 3rem; max-width: 46rem; }
+.portal-head { display: flex; align-items: center; gap: 0.9rem; }
+.portal-head h1 { margin: 0; font-size: clamp(1.9rem, 6vw, 2.6rem); overflow-wrap: anywhere; }
+.portal-head .eyebrow { margin-bottom: 0.2rem; }
+.portal-mascot { width: 4rem; height: 4rem; flex: none; object-fit: contain; }
+.portal-status { margin: 0; color: var(--muted); }
+.portal-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; }
+.portal-stats[hidden], .portal-card[hidden] { display: none; }
+.portal-stat {
+  display: grid; gap: 0.1rem; padding: 0.9rem 0.8rem;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 1.1rem;
+}
+.portal-stat-value { font-size: 1.7rem; font-weight: 720; letter-spacing: -0.03em; color: var(--navy); line-height: 1.1; }
+.portal-stat-label { font-size: 0.86rem; color: var(--muted); }
+.portal-card {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 1.3rem;
+  padding: 1.2rem 1.25rem;
+}
+.portal-card h2 { margin: 0 0 0.6rem; font-size: 1.15rem; letter-spacing: -0.02em; }
+.portal-empty p { margin: 0; color: var(--muted); }
+.portal-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.portal-item { padding: 0.8rem 0.9rem; border-radius: 0.9rem; background: var(--mist); border: 1px solid var(--line); }
+.portal-item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; }
+.portal-item-title { margin: 0; font-weight: 650; color: var(--ink); overflow-wrap: anywhere; }
+.portal-item-sub, .portal-item-meta { margin: 0.1rem 0 0; color: var(--muted); font-size: 0.93rem; }
+.portal-chip {
+  flex: none; padding: 0.1rem 0.55rem; border-radius: 999px;
+  background: var(--sky); color: var(--navy); font-size: 0.8rem; font-weight: 620;
+}
+.portal-more {
+  margin: 0; padding: 0.85rem 1rem; border-radius: 1rem;
+  background: var(--sky); color: var(--navy); font-size: 0.97rem;
+}
+@media (max-width: 639px) {
+  .portal-stat { padding: 0.75rem 0.6rem; }
+  .portal-stat-value { font-size: 1.45rem; }
+  .portal-stat-label { font-size: 0.8rem; }
+}
