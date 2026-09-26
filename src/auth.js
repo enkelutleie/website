@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabase, setAuthState } from "./supabase.js";
+import { initHeader } from "./header.js";
 import "./login.css";
 
 const header = document.querySelector("[data-site-header]");
@@ -7,24 +8,12 @@ if (header) {
   onScroll();
   window.addEventListener("scroll", onScroll, { passive: true });
 }
+initHeader();
 
 const root = document.querySelector("[data-auth]");
 if (root) {
-  const supabase = createClient(
-    "https://ginrgzxyimdmwvnuolgq.supabase.co",
-    "sb_publishable_GQvu82usWD_Ynh1su-as9w_KmymXlcf",
-    {
-      auth: {
-        // The OAuth return (?code=… or ?error=…) is handled explicitly below,
-        // so a failed exchange is shown instead of silently resetting the page.
-        detectSessionInUrl: false,
-        flowType: "pkce",
-        persistSession: true,
-      },
-    },
-  );
-
   const redirectTo = "https://enkelutleie.com/logg-inn/";
+  const portal = "/portal/";
   const message = root.querySelector("[data-auth-message]");
   const form = root.querySelector("[data-email-form]");
   const panel = root.querySelector("[data-auth-panel]");
@@ -48,41 +37,24 @@ if (root) {
     return "Innloggingen kunne ikke fullføres. Prøv igjen.";
   };
 
-  const accountLabel = (user) => {
-    const email = user?.email ?? "";
-    if (!email) return null;
-    if (/@privaterelay\.appleid\.com$/i.test(email)) return null;
-    return email;
+  // Short in-between state, then on to the portal (Apple, Google and e-mail alike).
+  let leaving = false;
+  const goToPortal = () => {
+    if (leaving) return;
+    leaving = true;
+    setAuthState(true);
+    panel.innerHTML = "";
+    const note = document.createElement("p");
+    note.className = "login-signed-in";
+    note.setAttribute("role", "status");
+    note.textContent = "Du er logget inn. Sender deg til Min side …";
+    panel.append(note);
+    location.replace(portal);
   };
 
-  const showSession = (session) => {
-    const email = accountLabel(session.user);
-    const viaApple = session.user?.app_metadata?.provider === "apple";
-    panel.innerHTML = "";
-    const title = document.createElement("p");
-    title.className = "login-signed-in";
-    if (email) {
-      title.textContent = `Du er logget inn som ${email}.`;
-    } else if (viaApple) {
-      title.textContent = "Du er logget inn med Apple (skjult e-post).";
-    } else {
-      title.textContent = "Du er logget inn.";
-    }
-    const note = document.createElement("p");
-    note.className = "login-note";
-    note.textContent = "Webportalen kommer snart. Frem til da bruker du appen.";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "btn btn-login";
-    button.textContent = "Logg ut";
-    button.addEventListener("click", async () => {
-      button.disabled = true;
-      await supabase.auth.signOut();
-      location.assign("/logg-inn/");
-    });
-    panel.append(title, note, button);
-    panel.classList.add("is-signed-in");
-    say("");
+  const showForm = () => {
+    setAuthState(false);
+    root.classList.remove("is-checking");
   };
 
   root.querySelectorAll("[data-provider]").forEach((button) => {
@@ -114,7 +86,7 @@ if (root) {
       say(norwegian(error));
       return;
     }
-    showSession(result.session);
+    goToPortal();
   });
 
   // Return from Apple/Google: read ?code= / ?error= (and #error=), then clean the URL.
@@ -128,29 +100,26 @@ if (root) {
     history.replaceState(history.state, "", location.pathname);
   }
 
-  let shown = false;
-  const render = (session) => {
-    if (session && !shown) {
-      shown = true;
-      showSession(session);
-    }
-  };
-
   if (returnError) {
+    showForm();
     say(norwegian({ message: returnError }));
   } else if (code) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (error || !data.session) {
+      showForm();
       say(norwegian(error));
     } else {
-      render(data.session);
+      goToPortal();
     }
   }
 
-  supabase.auth.onAuthStateChange((event, session) => {
-    if (event === "SIGNED_IN" || event === "INITIAL_SESSION") render(session);
-  });
-
-  const { data } = await supabase.auth.getSession();
-  render(data.session);
+  if (!leaving) {
+    // Already signed in when opening /logg-inn/: go straight to the portal.
+    const { data } = await supabase.auth.getSession();
+    if (data.session) {
+      goToPortal();
+    } else {
+      showForm();
+    }
+  }
 }
