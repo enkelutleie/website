@@ -50,6 +50,7 @@
           <button type="button" data-view="husleie">Husleie</button>
           <button type="button" data-view="boligperm">Boligperm</button>
           <button type="button" data-view="dokumenter">Dokumenter</button>
+          <button type="button" data-view="data">Mine data</button>
         </nav>
 
         <div class="portal-views">
@@ -189,7 +190,7 @@
           <section data-panel="kontrakt" hidden>
             <section class="portal-card">
               <h2>Kontrakt</h2>
-              <p class="portal-lead">Utkast og status fra samme kontrakter som i appen. Signering med BankID blir værende i appen.</p>
+              <p class="portal-lead">Utkast, forhåndsvisning og skjermsignatur bruker samme kontrakt som appen. BankID er ikke koblet på.</p>
               <form class="portal-form" data-contract-form>
                 <label>Leieforhold<select name="tenancy" required></select></label>
                 <label>Start<input name="start" type="date" required /></label>
@@ -297,16 +298,47 @@
             </section>
           </section>
 
+          <section data-panel="data" hidden>
+            <section class="portal-card">
+              <h2>Mine data</h2>
+              <p class="portal-lead">Samme personverneksport som i appen. Du får en zip-fil med det kontoen har lagret.</p>
+              <button class="btn" type="button" data-privacy-request>Be om kopi</button>
+              <p class="login-message" data-form-message hidden></p>
+              <div class="portal-detail" data-privacy-status></div>
+            </section>
+          </section>
+
           <section data-panel="dokumenter" hidden>
             <section class="portal-card">
               <h2>Dokumenter</h2>
-              <p class="portal-lead">Ferdige dokumenter du har tilgang til. Opplasting og nedlasting av filer blir værende i appen til nettleseren kan snakke med fil-tjenesten.</p>
+              <p class="portal-lead">PDF-er og kvitteringsfiler lagres i samme dokumenttjeneste som appen. Skanning av kvittering med kamera er fortsatt på telefonen.</p>
+              <form class="portal-form" data-document-form>
+                <label>Bolig<select name="property" required></select></label>
+                <label>Tittel<input name="title" type="text" maxlength="160" required /></label>
+                <label>PDF<input name="file" type="file" accept="application/pdf,.pdf" required /></label>
+                <button class="btn" type="submit">Last opp PDF</button>
+              </form>
+              <form class="portal-form" data-receipt-form>
+                <label>Bolig<select name="property" required></select></label>
+                <label>Tittel<input name="title" type="text" maxlength="160" required /></label>
+                <label>Type
+                  <select name="kind">
+                    <option value="receipt">Kvittering</option>
+                    <option value="invoice">Faktura</option>
+                    <option value="credit_note">Kreditnota</option>
+                    <option value="other">Annet</option>
+                  </select>
+                </label>
+                <label>Fil<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" required /></label>
+                <button class="btn" type="submit">Last opp bilag</button>
+              </form>
+              <p class="login-message" data-form-message hidden></p>
               <ul class="portal-list" data-document-list></ul>
             </section>
           </section>
         </div>
       </div>
-      <p class="portal-more">Bilder, kvitteringsskanning, Premium-kjøp, personverneksport og kontraktsignering er fortsatt i appen. Resten her bruker samme database.</p>
+      <p class="portal-more">Premium kjøpes i App Store. Målerstander, nøkler og fradragsmerker lagres fortsatt bare på telefonen, så de kan ikke deles mellom nett og app før appen skriver dem til databasen. Kvitteringsskanning med kamera er også på telefonen. Alt annet her bruker samme database.</p>
     </main>
     <footer class="site-footer wrap">
       <p>MK Product Development AS</p>

@@ -59,7 +59,19 @@ const when = (value) => {
   return date.toLocaleDateString("nb-NO", { day: "numeric", month: "short", year: "numeric" });
 };
 const explain = (error) => {
-  const text = error?.message ?? "";
+  const text = error?.outcome || error?.message || "";
+  const known = {
+    forbidden: "Du har ikke tilgang til den handlingen.",
+    not_authenticated: "Logg inn på nytt.",
+    unauthenticated: "Logg inn på nytt.",
+    invalid_request: "Noe mangler i skjemaet.",
+    temporary_failure: "Tjenesten svarte ikke. Prøv igjen.",
+    temporarily_unavailable: "Tjenesten svarte ikke. Prøv igjen.",
+    verification_failed: "Filen ble ikke godkjent. Bruk en ekte PDF, JPEG eller PNG.",
+    not_available: "Eksporten er ikke klar ennå.",
+    version_conflict: "Kontrakten er endret. Åpne den på nytt.",
+  }[text];
+  if (known) return known;
   if (/permission|not authorized|42501|row-level|policy/i.test(text)) return "Du har ikke tilgang til den handlingen.";
   return "Handlingen kunne ikke lagres.";
 };
@@ -123,6 +135,21 @@ const action = (label, onClick) => {
 };
 const yearBounds = (year) => ({ start: `${year}-01-01`, end: `${Number(year) + 1}-01-01` });
 const minorOf = (value) => Math.round(Number(value) * 100);
+const mimeOf = (file) => {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  return "";
+};
+const saveBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+};
 
 export function bindPortalViews(supabase, context) {
   const root = document.querySelector("[data-portal]");
@@ -200,10 +227,42 @@ export function bindPortalViews(supabase, context) {
       kjorebok: mileage,
       eiendeler: assets,
       husleie: expectedRent,
+      data: privacy,
     }[name];
     if (run) await run();
   }
   const reload = (name) => load(name, true);
+
+  async function edge(name, body) {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      const error = new Error("not_authenticated");
+      error.outcome = "not_authenticated";
+      throw error;
+    }
+    const response = await fetch(`/api/edge/${name}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const type = response.headers.get("Content-Type") ?? "";
+    if (type.includes("application/zip") || type.includes("application/octet-stream") || type.includes("application/pdf")) {
+      if (!response.ok) {
+        const error = new Error("download_failed");
+        error.outcome = "temporary_failure";
+        throw error;
+      }
+      return { blob: await response.blob(), disposition: response.headers.get("Content-Disposition") ?? "" };
+    }
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const error = new Error(payload?.outcome || "failed");
+      error.outcome = payload?.outcome;
+      throw error;
+    }
+    return payload;
+  }
 
   async function economy() {
     const panel = root.querySelector('[data-panel="okonomi"]');
@@ -397,20 +456,132 @@ export function bindPortalViews(supabase, context) {
 
   async function documents() {
     const list = root.querySelector("[data-document-list]");
-    const { data, error } = await supabase
-      .from("documents")
-      .select("id, property_id, title, created_at")
-      .eq("status", "ready")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    if (error) return fail(list);
-    fill(
-      list,
-      data ?? [],
-      (item) => row(item.title || "Dokument", when(item.created_at), context.propertyName(item.property_id)),
-      "Ingen dokumenter å vise. Opplasting krever fortsatt appen.",
-    );
+    const properties = context.properties();
+    const rows = [];
+    let failed = false;
+    for (const property of properties) {
+      const { data, error } = await supabase.rpc("list_property_documents", { requested_property_id: property.id });
+      if (error) failed = true;
+      for (const item of data ?? []) {
+        if (item.status === "ready") rows.push(item);
+      }
+    }
+    if (failed && !rows.length) return fail(list);
+    const panel = root.querySelector('[data-panel="dokumenter"]');
+    fill(list, rows, (item) => {
+      const line = row(item.title || "Dokument", when(item.created_at), context.propertyName(item.property_id));
+      if (item.storage_path) {
+        line.append(action("Last ned", async () => {
+          const { data, error } = await supabase.storage.from("documents").download(item.storage_path);
+          if (error || !data) return say(panel, "Filen kunne ikke lastes ned.");
+          saveBlob(data, item.original_file_name || "dokument");
+        }));
+      }
+      line.append(action("Slett", async () => {
+        try {
+          await edge("document-lifecycle", { action: "delete", document_id: item.id });
+          say(panel, "Dokumentet er slettet.");
+          reload("dokumenter");
+        } catch (error) {
+          say(panel, explain(error));
+        }
+      }));
+      return line;
+    }, "Ingen dokumenter å vise.");
+  }
+
+  async function uploadFile(form, kind) {
+    const panel = form.closest("[data-panel]");
+    const file = form.file.files?.[0];
+    const mime = file ? mimeOf(file) : "";
+    if (!form.property.value) return say(panel, "Velg en bolig.");
+    if (!file || !mime || file.size < 1 || file.size > 10_000_000) return say(panel, "Velg en PDF, JPEG eller PNG under 10 MB.");
+    if (kind === "pdf" && mime !== "application/pdf") return say(panel, "Dokumentet må være en PDF.");
+    const button = form.querySelector("button[type=submit]");
+    if (button) button.disabled = true;
+    try {
+      const reserved = await edge("document-lifecycle", kind === "pdf"
+        ? {
+            action: "reserve",
+            property_id: form.property.value,
+            reservation_key: crypto.randomUUID(),
+            title: form.title.value.trim(),
+            original_file_name: file.name,
+            file_size_bytes: file.size,
+          }
+        : {
+            action: "reserve_financial_evidence",
+            property_id: form.property.value,
+            reservation_key: crypto.randomUUID(),
+            title: form.title.value.trim(),
+            original_file_name: file.name,
+            file_size_bytes: file.size,
+            source_mime_type: mime,
+            evidence_kind: form.kind.value,
+            source_kind: "files",
+          });
+      if (reserved?.status !== "ready") {
+        const bucket = reserved?.upload?.bucket || "documents";
+        const { error: uploadError } = await supabase.storage.from(bucket).upload(reserved.storage_path, file, {
+          contentType: reserved?.upload?.content_type || mime,
+          upsert: false,
+        });
+        if (uploadError) throw uploadError;
+        await edge("document-lifecycle", kind === "pdf"
+          ? { action: "finalize", document_id: reserved.document_id }
+          : {
+              action: "finalize_financial_evidence",
+              document_id: reserved.document_id,
+              evidence_kind: form.kind.value,
+              source_kind: "files",
+            });
+      }
+      say(panel, "Filen er lagret.");
+      form.title.value = "";
+      form.file.value = "";
+      reload("dokumenter");
+    } catch (error) {
+      say(panel, explain(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  const PRIVACY_STATE = {
+    processing: "Vi gjør klar eksporten.",
+    ready: "Eksporten er klar.",
+    failed: "Eksporten feilet.",
+    expired: "Eksporten er utløpt.",
+    downloaded: "Eksporten er lastet ned.",
+  };
+
+  async function privacy() {
+    const box = root.querySelector("[data-privacy-status]");
+    const panel = root.querySelector('[data-panel="data"]');
+    const caseId = sessionStorage.getItem("eu-privacy-case");
+    box.replaceChildren();
+    if (!caseId) return;
+    const { data, error } = await supabase.rpc("get_my_privacy_export_delivery_status", { requested_case_id: caseId });
+    if (error) return say(panel, explain(error));
+    const status = data?.[0];
+    const text = document.createElement("p");
+    text.className = "portal-lead";
+    text.textContent = PRIVACY_STATE[status?.state] || "Status er ukjent.";
+    box.append(text);
+    if (status?.state === "ready") {
+      box.append(action("Last ned", async () => {
+        try {
+          const file = await edge("privacy-export-delivery", { action: "download", case_id: caseId });
+          saveBlob(file.blob, "enkel-utleie-persondata.zip");
+          await edge("privacy-export-delivery", { action: "confirm_saved", case_id: caseId });
+          sessionStorage.removeItem("eu-privacy-case");
+          say(panel, "Eksporten er lastet ned.");
+          privacy();
+        } catch (downloadError) {
+          say(panel, explain(downloadError));
+        }
+      }));
+    }
   }
 
   async function conversations() {
@@ -584,6 +755,96 @@ export function bindPortalViews(supabase, context) {
         say(panel, cancelError ? explain(cancelError) : "Utkastet er avbrutt.");
         if (!cancelError) reload("kontrakt");
       }));
+    }
+    if (version?.id && (agreement?.status === "draft" || agreement?.status === "ready_for_review")) {
+      box.append(action("Forhåndsvis PDF", async () => {
+        try {
+          const result = await edge("contract-pdf", {
+            agreement_id: id,
+            version_id: version.id,
+            revision: Number(agreement.draft_revision),
+            intent: "preview",
+          });
+          const binary = atob(result.pdf_base64 || "");
+          const bytes = new Uint8Array(binary.length);
+          for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+          saveBlob(new Blob([bytes], { type: "application/pdf" }), result.filename || "Leiekontrakt.pdf");
+        } catch (previewError) {
+          say(panel, explain(previewError));
+        }
+      }));
+    }
+    if (agreement?.status === "ready_for_review" && version?.id) {
+      const form = document.createElement("form");
+      form.className = "portal-form";
+      form.innerHTML = `<label>Navn<input name="signer" type="text" maxlength="120" required></label><label>Sted<input name="place" type="text" maxlength="80"></label><label>Dato<input name="date" type="date" required></label>`;
+      const canvas = document.createElement("canvas");
+      canvas.className = "sign-pad";
+      canvas.width = 600;
+      canvas.height = 180;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = "#1B3A6B";
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      let drawing = false;
+      let dirty = false;
+      const point = (event) => {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: ((event.clientX - rect.left) * canvas.width) / rect.width,
+          y: ((event.clientY - rect.top) * canvas.height) / rect.height,
+        };
+      };
+      canvas.addEventListener("pointerdown", (event) => {
+        drawing = true;
+        dirty = true;
+        const next = point(event);
+        ctx.beginPath();
+        ctx.moveTo(next.x, next.y);
+        canvas.setPointerCapture(event.pointerId);
+      });
+      canvas.addEventListener("pointermove", (event) => {
+        if (!drawing) return;
+        const next = point(event);
+        ctx.lineTo(next.x, next.y);
+        ctx.stroke();
+      });
+      canvas.addEventListener("pointerup", () => { drawing = false; });
+      const submit = document.createElement("button");
+      submit.className = "btn";
+      submit.type = "submit";
+      submit.textContent = "Signer og lagre PDF";
+      form.append(canvas, submit);
+      form.date.value = new Date().toISOString().slice(0, 10);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!dirty) return say(panel, "Tegn signaturen i feltet.");
+        const jpeg = canvas.toDataURL("image/jpeg", 0.72).split(",")[1] || "";
+        try {
+          const result = await edge("contract-pdf", {
+            agreement_id: id,
+            version_id: version.id,
+            revision: Number(agreement.draft_revision),
+            intent: "deliver",
+            landlord_ink: {
+              jpeg_base64: jpeg,
+              width: canvas.width,
+              height: canvas.height,
+              signer_name: form.signer.value.trim(),
+              place: form.place.value.trim(),
+              date: form.date.value,
+            },
+          });
+          say(panel, result?.outcome === "ready" ? "Kontrakten er signert og lagret." : "Signaturen er sendt.");
+          reload("kontrakt");
+          openContract(id, panel);
+        } catch (signError) {
+          say(panel, explain(signError));
+        }
+      });
+      box.append(form);
     }
   }
 
@@ -921,10 +1182,16 @@ export function bindPortalViews(supabase, context) {
     const invitationId = (Array.isArray(data) ? data[0] : data)?.invitation_id;
     form.email.value = "";
     if (!invitationId) return say(panel, "Invitasjonen er opprettet.");
-    const delivery = await supabase.functions.invoke("send-tenancy-invitation", {
-      body: { invitation_id: invitationId, request_id: crypto.randomUUID(), action: "send" },
-    });
-    say(panel, delivery.error ? "Invitasjonen er lagret. E-posten må sendes fra appen." : "Invitasjonen er sendt.");
+    try {
+      await edge("send-tenancy-invitation", {
+        invitation_id: invitationId,
+        request_id: crypto.randomUUID(),
+        action: "send",
+      });
+      say(panel, "Invitasjonen er sendt.");
+    } catch {
+      say(panel, "Invitasjonen er lagret. E-posten kunne ikke sendes herfra.");
+    }
   });
 
   root.querySelector("[data-mileage-form]")?.addEventListener("submit", async (event) => {
@@ -988,5 +1255,28 @@ export function bindPortalViews(supabase, context) {
     });
     say(panel, error ? explain(error) : "Forventede perioder er oppdatert. De er ikke innbetalinger.");
     if (!error) reload("husleie");
+  });
+
+  root.querySelector("[data-document-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await uploadFile(event.currentTarget, "pdf");
+  });
+
+  root.querySelector("[data-receipt-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await uploadFile(event.currentTarget, "evidence");
+  });
+
+  root.querySelector("[data-privacy-request]")?.addEventListener("click", async () => {
+    const panel = root.querySelector('[data-panel="data"]');
+    try {
+      const result = await edge("privacy-export-delivery", { action: "request" });
+      if (!result?.case_id) throw new Error("temporary_failure");
+      sessionStorage.setItem("eu-privacy-case", result.case_id);
+      say(panel, "Forespørselen er sendt.");
+      await privacy();
+    } catch (error) {
+      say(panel, explain(error));
+    }
   });
 }

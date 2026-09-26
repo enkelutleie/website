@@ -53,6 +53,7 @@ html:not([data-auth="in"]) .portal { visibility: hidden; }
 .portal-actions label { display: grid; gap: 0.2rem; font-size: 0.9rem; font-weight: 620; color: var(--navy); }
 .portal-actions input { min-height: 2.6rem; border: 1px solid var(--line); border-radius: 0.8rem; background: var(--mist); padding: 0.45rem 0.7rem; font: inherit; }
 .portal-detail { display: grid; gap: 0.45rem; margin-top: 0.8rem; }
+.sign-pad { width: 100%; max-width: 36rem; height: 8rem; border: 1px solid var(--line); border-radius: 0.8rem; background: #fff; touch-action: none; }
 .portal-empty p { margin: 0; color: var(--muted); }
 .portal-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 .portal-item { padding: 0.8rem 0.9rem; border-radius: 0.9rem; background: var(--mist); border: 1px solid var(--line); }
