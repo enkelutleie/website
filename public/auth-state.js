@@ -4,7 +4,7 @@
 (function () {
   var state = "out";
   try {
-    var raw = window.localStorage.getItem("sb-ginrgzxyimdmwvnuolgq-auth-token");
+    var raw = window.localStorage.getItem("sb-jfrorhixjsuomwtjwqla-auth-token");
     var session = raw ? JSON.parse(raw) : null;
     if (session && session.refresh_token) state = "in";
   } catch (error) {

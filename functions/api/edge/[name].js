@@ -1,4 +1,4 @@
-// Same-origin door to Staging edge functions. The browser cannot call them
+// Same-origin door to Production edge functions. The browser cannot call them
 // directly because those responses omit Access-Control-Allow-Origin. This
 // forwards only the caller's own token. It never adds a service key.
 
@@ -9,8 +9,8 @@ const ALLOWED = new Set([
   "send-tenancy-invitation",
 ]);
 
-const SUPABASE_URL = "https://ginrgzxyimdmwvnuolgq.supabase.co";
-const PUBLISHABLE_KEY = "sb_publishable_GQvu82usWD_Ynh1su-as9w_KmymXlcf";
+const SUPABASE_URL = "https://jfrorhixjsuomwtjwqla.supabase.co";
+const PUBLISHABLE_KEY = "sb_publishable_26XRJpYFKZBVlotEX-qiMQ_FBGuZCnB";
 const MAX_BODY = 1_500_000;
 
 const json = (body, status) =>

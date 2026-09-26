@@ -1,10 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
-// The one Supabase client for the website (Staging). Imported by /logg-inn/,
-// /portal/ and, lazily, by the header's "Logg ut" on the other pages.
+// The one Supabase client for the website (Production, same project as the app).
+// Imported by /logg-inn/, /portal/ and, lazily, by the header's "Logg ut".
 export const supabase = createClient(
-  "https://ginrgzxyimdmwvnuolgq.supabase.co",
-  "sb_publishable_GQvu82usWD_Ynh1su-as9w_KmymXlcf",
+  "https://jfrorhixjsuomwtjwqla.supabase.co",
+  "sb_publishable_26XRJpYFKZBVlotEX-qiMQ_FBGuZCnB",
   {
     auth: {
       // The OAuth return (?code=… or ?error=…) is handled explicitly in
