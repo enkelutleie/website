@@ -36,7 +36,15 @@
       </section>
 
       <div class="portal-shell">
-        <nav class="portal-nav" aria-label="Deler av portalen">
+        <aside class="property-rail" aria-label="Boliger">
+          <p class="rail-heading">Boliger</p>
+          <div data-property-rail></div>
+          <p class="rail-heading">Konto</p>
+          <button type="button" data-view="invitasjoner">Invitasjoner</button>
+          <button type="button" data-view="data">Mine data</button>
+        </aside>
+        <div class="portal-main">
+        <nav class="portal-tabs" aria-label="I valgt bolig" hidden>
           <button type="button" data-view="oversikt" aria-current="page">Oversikt</button>
           <button type="button" data-view="okonomi">Økonomi</button>
           <button type="button" data-view="samtaler">Samtaler</button>
@@ -44,13 +52,11 @@
           <button type="button" data-view="kalender">Kalender</button>
           <button type="button" data-view="overtakelse">Overtakelse</button>
           <button type="button" data-view="kontrakt">Kontrakt</button>
-          <button type="button" data-view="invitasjoner">Invitasjoner</button>
+          <button type="button" data-view="husleie">Husleie</button>
           <button type="button" data-view="kjorebok">Kjørebok</button>
           <button type="button" data-view="eiendeler">Eiendeler</button>
-          <button type="button" data-view="husleie">Husleie</button>
           <button type="button" data-view="boligperm">Boligperm</button>
           <button type="button" data-view="dokumenter">Dokumenter</button>
-          <button type="button" data-view="data">Mine data</button>
         </nav>
 
         <div class="portal-views">
@@ -71,7 +77,7 @@
               </div>
             </section>
             <section class="portal-card" data-portal-list hidden>
-              <h2>Boligene dine</h2>
+              <h2>Valgt bolig</h2>
               <ul class="portal-list" data-portal-properties></ul>
             </section>
             <section class="portal-card portal-empty" data-portal-empty hidden>
@@ -336,6 +342,7 @@
               <ul class="portal-list" data-document-list></ul>
             </section>
           </section>
+        </div>
         </div>
       </div>
       <p class="portal-more">Premium kjøpes i App Store. Målerstander, nøkler og fradragsmerker lagres fortsatt bare på telefonen, så de kan ikke deles mellom nett og app før appen skriver dem til databasen. Kvitteringsskanning med kamera er også på telefonen. Alt annet her bruker samme database.</p>

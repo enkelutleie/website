@@ -13,13 +13,55 @@ if (header) {
   window.addEventListener("scroll", onScroll, { passive: true });
 }
 initHeader();
-bindPortalViews(supabase, {
+const state = { properties: [], tenancies: [], propertyId: null, roles: new Map(), tenantOf: new Set() };
+let portalApi = null;
+
+const renderOverview = () => {
+  const list = $("[data-portal-properties]");
+  if (!list) return;
+  list.replaceChildren();
+  const property = state.properties.find((item) => item.id === state.propertyId);
+  const card = $("[data-portal-list]");
+  const empty = $("[data-portal-empty]");
+  if (!property) {
+    if (card) card.hidden = true;
+    if (empty && !state.properties.length) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+  const own = state.tenancies.filter((item) => item.property_id === property.id);
+  const role = state.roles.get(property.id);
+  const roleLabel =
+    role === "owner" ? "Utleier" : role === "co_landlord" ? "Medutleier" : own.some((item) => state.tenantOf.has(item.id)) ? "Leietaker" : null;
+  list.append(renderProperty(property, roleLabel, own));
+  if (card) card.hidden = false;
+  $("[data-stat=tenancies]").textContent = String(own.filter((item) => item.status === "active").length);
+  supabase
+    .from("maintenance_requests")
+    .select("id", { count: "exact", head: true })
+    .eq("property_id", property.id)
+    .in("status", OPEN_TASK_STATUSES)
+    .then((tasks) => {
+      $("[data-stat=tasks]").textContent = tasks.error ? "–" : String(tasks.count ?? 0);
+    });
+};
+
+portalApi = bindPortalViews(supabase, {
   propertyName: (id) => {
     const property = state.properties.find((item) => item.id === id);
     return property ? addressOf(property).line : "";
   },
+  propertyPlace: (id) => {
+    const property = state.properties.find((item) => item.id === id);
+    return property ? addressOf(property).place : "";
+  },
   properties: () => state.properties,
   tenancies: () => state.tenancies,
+  selectedId: () => state.propertyId,
+  select: (id) => {
+    state.propertyId = id;
+  },
+  onSelect: () => renderOverview(),
 });
 
 const root = document.querySelector("[data-portal]");
@@ -49,8 +91,6 @@ const formatDate = (value) => {
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleDateString("nb-NO", { day: "numeric", month: "short", year: "numeric" });
 };
-
-const state = { properties: [], tenancies: [] };
 
 const addressOf = (property) => {
   const line = [property.address_line1, property.address_line2].filter(Boolean).join(", ");
@@ -141,10 +181,13 @@ const load = async (session) => {
   const tenancies = tenanciesRes.data ?? [];
   state.properties = properties;
   state.tenancies = tenancies;
-  const propertyRoles = new Map((propertyRolesRes.data ?? []).map((row) => [row.property_id, row.role]));
-  const tenantOf = new Set(
+  state.roles = new Map((propertyRolesRes.data ?? []).map((row) => [row.property_id, row.role]));
+  state.tenantOf = new Set(
     (tenancyRolesRes.data ?? []).filter((row) => row.role === "tenant").map((row) => row.tenancy_id),
   );
+  if (!state.propertyId || !properties.some((item) => item.id === state.propertyId)) {
+    state.propertyId = properties[0]?.id ?? null;
+  }
 
   done();
 
@@ -160,24 +203,15 @@ const load = async (session) => {
   $("[data-stat=tenancies]").textContent = String(tenancies.filter((t) => t.status === "active").length);
   $("[data-stat=tasks]").textContent = tasksRes.error ? "–" : String(tasksRes.count ?? 0);
   $("[data-portal-stats]").hidden = false;
+  portalApi?.refresh();
+  renderOverview();
 
   if (!properties.length) {
     showEmpty(
       "Ingen boliger her ennå",
       "Når du legger til en bolig eller blir invitert til et leieforhold i appen, dukker det opp her.",
     );
-    return;
   }
-
-  const list = $("[data-portal-properties]");
-  for (const property of properties) {
-    const own = tenancies.filter((t) => t.property_id === property.id);
-    const role = propertyRoles.get(property.id);
-    const roleLabel =
-      role === "owner" ? "Utleier" : role === "co_landlord" ? "Medutleier" : own.some((t) => tenantOf.has(t.id)) ? "Leietaker" : null;
-    list.append(renderProperty(property, roleLabel, own));
-  }
-  $("[data-portal-list]").hidden = false;
 };
 
 if (root) {

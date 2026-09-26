@@ -156,10 +156,21 @@ export function bindPortalViews(supabase, context) {
   if (!root) return;
   const loaded = new Set();
   let chatId = null;
+  let current = "oversikt";
+  const accountViews = new Set(["invitasjoner", "data"]);
 
-  const propertyChoices = () => context.properties().map((item) => [item.id, context.propertyName(item.id)]);
-  const tenancyChoices = () =>
-    context.tenancies().map((item) => [item.id, `${context.propertyName(item.property_id) || "Leieforhold"} · ${item.status}`]);
+  const propertyChoices = () => {
+    const selected = context.selectedId?.();
+    const all = context.properties().map((item) => [item.id, context.propertyName(item.id)]);
+    return selected ? all.filter(([id]) => id === selected) : all;
+  };
+  const tenancyChoices = () => {
+    const selected = context.selectedId?.();
+    return context
+      .tenancies()
+      .filter((item) => !selected || item.property_id === selected)
+      .map((item) => [item.id, `${context.propertyName(item.property_id) || "Leieforhold"} · ${item.status}`]);
+  };
 
   const fillChoices = () => {
     const properties = propertyChoices();
@@ -195,21 +206,84 @@ export function bindPortalViews(supabase, context) {
   };
 
   const show = (name) => {
+    current = name;
     fillChoices();
-    root.querySelectorAll("[data-view]").forEach((button) => {
+    root.querySelectorAll(".portal-tabs [data-view], .property-rail [data-view]").forEach((button) => {
       if (button.dataset.view === name) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     });
     root.querySelectorAll("[data-panel]").forEach((panel) => {
       panel.hidden = panel.dataset.panel !== name;
     });
-    if (name !== "oversikt") load(name);
+    const tabs = root.querySelector(".portal-tabs");
+    if (tabs) tabs.hidden = !context.selectedId?.() || accountViews.has(name);
+    if (!accountViews.has(name) && !context.selectedId?.()) return;
+    if (name !== "oversikt") load(name, true);
+    else context.onSelect?.();
   };
 
-  root.querySelectorAll("[data-view]").forEach((button) => {
+  const paintRail = () => {
+    const rail = root.querySelector("[data-property-rail]");
+    if (!rail) return;
+    const selected = context.selectedId?.();
+    rail.replaceChildren();
+    const properties = context.properties();
+    if (!properties.length) {
+      const empty = document.createElement("p");
+      empty.className = "portal-lead";
+      empty.textContent = "Ingen boliger ennå";
+      rail.append(empty);
+      return;
+    }
+    for (const property of properties) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.propertyId = property.id;
+      if (property.id === selected) {
+        button.setAttribute("aria-current", "true");
+        const mark = document.createElement("span");
+        mark.className = "rail-kicker";
+        mark.textContent = "Valgt";
+        button.append(mark);
+      }
+      const address = document.createElement("span");
+      address.className = "rail-address";
+      address.textContent = context.propertyName(property.id);
+      button.append(address);
+      const place = context.propertyPlace?.(property.id);
+      if (place) {
+        const line = document.createElement("span");
+        line.className = "rail-place";
+        line.textContent = place;
+        button.append(line);
+      }
+      button.addEventListener("click", () => chooseProperty(property.id));
+      rail.append(button);
+    }
+    const tabs = root.querySelector(".portal-tabs");
+    if (tabs) tabs.hidden = !selected || accountViews.has(current);
+    if (selected) root.dataset.property = selected;
+    else delete root.dataset.property;
+  };
+
+  const chooseProperty = (id) => {
+    context.select?.(id);
+    loaded.clear();
+    chatId = null;
+    paintRail();
+    context.onSelect?.();
+    if (accountViews.has(current)) show("oversikt");
+    else show(current || "oversikt");
+  };
+
+  root.querySelectorAll(".portal-tabs [data-view], .property-rail [data-view]").forEach((button) => {
     button.addEventListener("click", () => show(button.dataset.view));
   });
   root.querySelector("[data-economy-form] select[name=type]")?.addEventListener("change", syncCategories);
+  const forProperty = (query) => {
+    const id = context.selectedId?.();
+    return id ? query.eq("property_id", id) : query;
+  };
 
   async function load(name, force) {
     if (!force && loaded.has(name)) return;
@@ -268,12 +342,14 @@ export function bindPortalViews(supabase, context) {
     const panel = root.querySelector('[data-panel="okonomi"]');
     const summary = root.querySelector("[data-economy-summary]");
     const list = root.querySelector("[data-economy-list]");
-    const { data, error } = await supabase
-      .from("financial_transactions")
-      .select("id, property_id, transaction_type, category, amount_minor, transaction_date, description")
-      .is("voided_at", null)
-      .order("transaction_date", { ascending: false })
-      .limit(100);
+    const { data, error } = await forProperty(
+      supabase
+        .from("financial_transactions")
+        .select("id, property_id, transaction_type, category, amount_minor, transaction_date, description")
+        .is("voided_at", null)
+        .order("transaction_date", { ascending: false })
+        .limit(100),
+    );
     if (error) return fail(list, summary);
     const rows = data ?? [];
     const income = rows.filter((item) => item.transaction_type === "income").reduce((sum, item) => sum + Number(item.amount_minor), 0);
@@ -324,11 +400,13 @@ export function bindPortalViews(supabase, context) {
 
   async function maintenance() {
     const list = root.querySelector("[data-maintenance-list]");
-    const { data, error } = await supabase
-      .from("maintenance_requests")
-      .select("id, property_id, title, description, status, priority")
-      .order("updated_at", { ascending: false })
-      .limit(50);
+    const { data, error } = await forProperty(
+      supabase
+        .from("maintenance_requests")
+        .select("id, property_id, title, description, status, priority")
+        .order("updated_at", { ascending: false })
+        .limit(50),
+    );
     if (error) return fail(list);
     const panel = root.querySelector('[data-panel="vedlikehold"]');
     fill(list, data ?? [], (item) => {
@@ -412,11 +490,13 @@ export function bindPortalViews(supabase, context) {
 
   async function calendar() {
     const list = root.querySelector("[data-calendar-list]");
-    const { data, error } = await supabase
-      .from("property_calendar_items")
-      .select("id, property_id, title, starts_at, due_at, status")
-      .order("starts_at", { ascending: true })
-      .limit(50);
+    const { data, error } = await forProperty(
+      supabase
+        .from("property_calendar_items")
+        .select("id, property_id, title, starts_at, due_at, status")
+        .order("starts_at", { ascending: true })
+        .limit(50),
+    );
     if (error) return fail(list);
     const panel = root.querySelector('[data-panel="kalender"]');
     const statusLabel = { active: "Aktiv", completed: "Fullført", cancelled: "Avbrutt" };
@@ -440,11 +520,9 @@ export function bindPortalViews(supabase, context) {
 
   async function handbook() {
     const list = root.querySelector("[data-handbook-list]");
-    const { data, error } = await supabase
-      .from("property_handbook_sections")
-      .select("id, property_id, section_key, body")
-      .eq("is_enabled", true)
-      .order("section_key");
+    const { data, error } = await forProperty(
+      supabase.from("property_handbook_sections").select("id, property_id, section_key, body").eq("is_enabled", true).order("section_key"),
+    );
     if (error) return fail(list);
     fill(
       list,
@@ -456,7 +534,8 @@ export function bindPortalViews(supabase, context) {
 
   async function documents() {
     const list = root.querySelector("[data-document-list]");
-    const properties = context.properties();
+    const selected = context.selectedId?.();
+    const properties = context.properties().filter((item) => !selected || item.id === selected);
     const rows = [];
     let failed = false;
     for (const property of properties) {
@@ -589,7 +668,9 @@ export function bindPortalViews(supabase, context) {
     await supabase.rpc("provision_my_chat_conversations");
     const { data, error } = await supabase.rpc("list_my_chat_conversations");
     if (error) return fail(list);
-    fill(list, data ?? [], (item) => {
+    const selected = context.selectedId?.();
+    const rows = (data ?? []).filter((item) => !selected || item.property_id === selected);
+    fill(list, rows, (item) => {
       const line = row(item.property_display_name || "Samtale", item.unread_count ? `${item.unread_count} ulest` : item.unit_display_label || "", "");
       line.addEventListener("click", () => openChat(item.conversation_id));
       return line;
@@ -628,10 +709,9 @@ export function bindPortalViews(supabase, context) {
 
   async function inspections() {
     const list = root.querySelector("[data-inspection-list]");
-    const { data, error } = await supabase
-      .from("inspections")
-      .select("id, property_id, tenancy_id, type, status, updated_at")
-      .order("created_at", { ascending: false });
+    const { data, error } = await forProperty(
+      supabase.from("inspections").select("id, property_id, tenancy_id, type, status, updated_at").order("created_at", { ascending: false }),
+    );
     if (error) return fail(list);
     const panel = root.querySelector('[data-panel="overtakelse"]');
     fill(list, data ?? [], (item) => {
@@ -694,7 +774,8 @@ export function bindPortalViews(supabase, context) {
 
   async function contracts() {
     const list = root.querySelector("[data-contract-list]");
-    const properties = context.properties();
+    const selected = context.selectedId?.();
+    const properties = context.properties().filter((item) => !selected || item.id === selected);
     const rows = [];
     let failed = false;
     for (const property of properties) {
@@ -1279,4 +1360,6 @@ export function bindPortalViews(supabase, context) {
       say(panel, explain(error));
     }
   });
+
+  return { refresh: paintRail };
 }
