@@ -1,7 +1,22 @@
 /* Signed-out visitors are sent to /logg-inn/; never flash the portal for them. */
 html:not([data-auth="in"]) .portal { visibility: hidden; }
 
-.portal { display: grid; gap: 1rem; padding: 1.5rem 0 3rem; max-width: 46rem; }
+.portal { display: grid; gap: 1rem; padding: 1.5rem 0 3rem; max-width: 72rem; }
+.portal-shell { display: grid; gap: 1rem; align-items: start; }
+.portal-nav { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.portal-nav button {
+  border: 1px solid var(--line); background: var(--paper); color: var(--navy);
+  border-radius: 999px; min-height: 2.3rem; padding: 0.3rem 0.8rem;
+  font: inherit; font-weight: 620; cursor: pointer;
+}
+.portal-nav button[aria-current="page"] { background: var(--navy); color: #fff; border-color: var(--navy); }
+.portal-lead { margin: 0 0 0.8rem; color: var(--muted); }
+.portal-views { min-width: 0; }
+@media (min-width: 860px) {
+  .portal-shell { grid-template-columns: 11.5rem minmax(0, 1fr); }
+  .portal-nav { flex-direction: column; align-items: stretch; }
+  .portal-nav button { text-align: left; }
+}
 .portal-head { display: flex; align-items: center; gap: 0.9rem; }
 .portal-head h1 { margin: 0; font-size: clamp(1.9rem, 6vw, 2.6rem); overflow-wrap: anywhere; }
 .portal-head .eyebrow { margin-bottom: 0.2rem; }

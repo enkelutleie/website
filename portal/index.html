@@ -35,34 +35,81 @@
         </div>
       </section>
 
-      <p class="portal-status" data-portal-status role="status">Henter oversikten …</p>
+      <div class="portal-shell">
+        <nav class="portal-nav" aria-label="Deler av portalen">
+          <button type="button" data-view="oversikt" aria-current="page">Oversikt</button>
+          <button type="button" data-view="okonomi">Økonomi</button>
+          <button type="button" data-view="vedlikehold">Vedlikehold</button>
+          <button type="button" data-view="kalender">Kalender</button>
+          <button type="button" data-view="boligperm">Boligperm</button>
+          <button type="button" data-view="dokumenter">Dokumenter</button>
+        </nav>
 
-      <section class="portal-stats" data-portal-stats aria-label="Oversikt" hidden>
-        <div class="portal-stat">
-          <span class="portal-stat-value" data-stat="properties">0</span>
-          <span class="portal-stat-label">Boliger</span>
+        <div class="portal-views">
+          <section data-panel="oversikt">
+            <p class="portal-status" data-portal-status role="status">Henter oversikten …</p>
+            <section class="portal-stats" data-portal-stats aria-label="Oversikt" hidden>
+              <div class="portal-stat">
+                <span class="portal-stat-value" data-stat="properties">0</span>
+                <span class="portal-stat-label">Boliger</span>
+              </div>
+              <div class="portal-stat">
+                <span class="portal-stat-value" data-stat="tenancies">0</span>
+                <span class="portal-stat-label">Aktive leieforhold</span>
+              </div>
+              <div class="portal-stat">
+                <span class="portal-stat-value" data-stat="tasks">0</span>
+                <span class="portal-stat-label">Åpne oppgaver</span>
+              </div>
+            </section>
+            <section class="portal-card" data-portal-list hidden>
+              <h2>Boligene dine</h2>
+              <ul class="portal-list" data-portal-properties></ul>
+            </section>
+            <section class="portal-card portal-empty" data-portal-empty hidden>
+              <h2 data-portal-empty-title>Ingen boliger her ennå</h2>
+              <p data-portal-empty-text>Når du legger til en bolig eller blir invitert til et leieforhold i appen, dukker det opp her.</p>
+            </section>
+          </section>
+
+          <section data-panel="okonomi" hidden>
+            <section class="portal-card">
+              <h2>Økonomi</h2>
+              <p class="portal-lead" data-economy-summary>Henter …</p>
+              <ul class="portal-list" data-economy-list></ul>
+            </section>
+          </section>
+
+          <section data-panel="vedlikehold" hidden>
+            <section class="portal-card">
+              <h2>Vedlikehold</h2>
+              <ul class="portal-list" data-maintenance-list></ul>
+            </section>
+          </section>
+
+          <section data-panel="kalender" hidden>
+            <section class="portal-card">
+              <h2>Kalender</h2>
+              <ul class="portal-list" data-calendar-list></ul>
+            </section>
+          </section>
+
+          <section data-panel="boligperm" hidden>
+            <section class="portal-card">
+              <h2>Boligperm</h2>
+              <ul class="portal-list" data-handbook-list></ul>
+            </section>
+          </section>
+
+          <section data-panel="dokumenter" hidden>
+            <section class="portal-card">
+              <h2>Dokumenter</h2>
+              <ul class="portal-list" data-document-list></ul>
+            </section>
+          </section>
         </div>
-        <div class="portal-stat">
-          <span class="portal-stat-value" data-stat="tenancies">0</span>
-          <span class="portal-stat-label">Aktive leieforhold</span>
-        </div>
-        <div class="portal-stat">
-          <span class="portal-stat-value" data-stat="tasks">0</span>
-          <span class="portal-stat-label">Åpne oppgaver</span>
-        </div>
-      </section>
-
-      <section class="portal-card" data-portal-list hidden>
-        <h2>Boligene dine</h2>
-        <ul class="portal-list" data-portal-properties></ul>
-      </section>
-
-      <section class="portal-card portal-empty" data-portal-empty hidden>
-        <h2 data-portal-empty-title>Ingen boliger her ennå</h2>
-        <p data-portal-empty-text>Når du legger til en bolig eller blir invitert til et leieforhold i appen, dukker det opp her.</p>
-      </section>
-
-      <p class="portal-more">Flere funksjoner kommer. Frem til da kan du gjøre alt i appen.</p>
+      </div>
+      <p class="portal-more">Fase 1 leser det som allerede finnes. Nye poster, chat, signering og bilder er senere faser, og skjer fortsatt i appen.</p>
     </main>
     <footer class="site-footer wrap">
       <p>MK Product Development AS</p>
