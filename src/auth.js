@@ -63,6 +63,10 @@ if (root) {
   root.querySelectorAll("[data-provider]").forEach((button) => {
     button.addEventListener("click", async () => {
       say("");
+      if (button.dataset.provider === "apple") {
+        say("Apple på nettsiden mangler OAuth-hemmelighet i Staging. Appen bruker Apple direkte og virker uten den. Bruk Google, eller e-post og passord, til hemmeligheten er lagt inn.");
+        return;
+      }
       button.disabled = true;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: button.dataset.provider,
