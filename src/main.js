@@ -1,3 +1,5 @@
+import { initHeader } from "./header.js";
+
 const header = document.querySelector("[data-site-header]");
 const toggle = document.querySelector("[data-menu-toggle]");
 const mobileNav = document.querySelector("[data-mobile-nav]");
@@ -25,3 +27,5 @@ if (toggle && mobileNav) {
     link.addEventListener("click", () => setOpen(false));
   });
 }
+
+initHeader();

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="nb">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Min side — Enkel Utleie</title>
+    <meta name="description" content="Oversikt over boligene og leieforholdene dine i Enkel Utleie." />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#2F80ED" />
+    <link rel="icon" href="/favicon.png?v=20260920b" type="image/png" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script src="/auth-state.js"></script>
+  </head>
+  <body>
+    <header class="site-header" data-site-header>
+      <div class="header-bar wrap">
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/brand/house-mascot.png?v=2" width="80" height="80" alt="" />
+          <span>Enkel Utleie</span>
+        </a>
+        <div class="header-actions">
+          <a class="btn btn-header btn-login" href="/logg-inn" data-when="out">Logg inn</a>
+          <button class="btn-header-link" type="button" data-when="in" data-sign-out>Logg ut</button>
+          <a class="btn btn-header btn-login" href="/portal/" aria-current="page" data-when="in">Min side</a>
+          <a class="btn btn-header" href="https://apps.apple.com/">Last ned</a>
+        </div>
+      </div>
+    </header>
+    <main class="wrap portal" data-portal aria-busy="true">
+      <section class="portal-head">
+        <img class="portal-mascot" src="/brand/house-mascot-happy.png" width="160" height="160" alt="" />
+        <div>
+          <p class="eyebrow">Min side</p>
+          <h1 data-portal-greeting>Hei!</h1>
+        </div>
+      </section>
+
+      <p class="portal-status" data-portal-status role="status">Henter oversikten …</p>
+
+      <section class="portal-stats" data-portal-stats aria-label="Oversikt" hidden>
+        <div class="portal-stat">
+          <span class="portal-stat-value" data-stat="properties">0</span>
+          <span class="portal-stat-label">Boliger</span>
+        </div>
+        <div class="portal-stat">
+          <span class="portal-stat-value" data-stat="tenancies">0</span>
+          <span class="portal-stat-label">Aktive leieforhold</span>
+        </div>
+        <div class="portal-stat">
+          <span class="portal-stat-value" data-stat="tasks">0</span>
+          <span class="portal-stat-label">Åpne oppgaver</span>
+        </div>
+      </section>
+
+      <section class="portal-card" data-portal-list hidden>
+        <h2>Boligene dine</h2>
+        <ul class="portal-list" data-portal-properties></ul>
+      </section>
+
+      <section class="portal-card portal-empty" data-portal-empty hidden>
+        <h2 data-portal-empty-title>Ingen boliger her ennå</h2>
+        <p data-portal-empty-text>Når du legger til en bolig eller blir invitert til et leieforhold i appen, dukker det opp her.</p>
+      </section>
+
+      <p class="portal-more">Flere funksjoner kommer. Frem til da kan du gjøre alt i appen.</p>
+    </main>
+    <footer class="site-footer wrap">
+      <p>MK Product Development AS</p>
+      <p><a href="/">Forside</a></p>
+      <p><a href="/personvern">Personvern</a></p>
+      <p><a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a></p>
+    </footer>
+    <script type="module" src="/src/portal.js"></script>
+  </body>
+</html>

@@ -1,7 +1,3 @@
-.login-card [data-auth-panel].is-signed-in {
-  background: var(--sky);
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  padding: 1rem 1.1rem 1.1rem;
-}
-.login-note { margin: 0.35rem 0 0.9rem; color: var(--navy); font-size: 0.95rem; }
+/* While a stored session is being confirmed, keep the form out of sight
+   (no flash of the login form before the redirect to /portal/). */
+html[data-auth="in"] .login-card.is-checking [data-auth-panel] { visibility: hidden; }
