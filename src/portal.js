@@ -13,9 +13,13 @@ if (header) {
   window.addEventListener("scroll", onScroll, { passive: true });
 }
 initHeader();
-bindPortalViews(supabase, (id) => {
-  const property = state.properties.find((item) => item.id === id);
-  return property ? addressOf(property).line : "";
+bindPortalViews(supabase, {
+  propertyName: (id) => {
+    const property = state.properties.find((item) => item.id === id);
+    return property ? addressOf(property).line : "";
+  },
+  properties: () => state.properties,
+  tenancies: () => state.tenancies,
 });
 
 const root = document.querySelector("[data-portal]");
@@ -46,7 +50,7 @@ const formatDate = (value) => {
   return date.toLocaleDateString("nb-NO", { day: "numeric", month: "short", year: "numeric" });
 };
 
-const state = { properties: [] };
+const state = { properties: [], tenancies: [] };
 
 const addressOf = (property) => {
   const line = [property.address_line1, property.address_line2].filter(Boolean).join(", ");
@@ -135,6 +139,7 @@ const load = async (session) => {
   const failed = [propertiesRes, propertyRolesRes, tenancyRolesRes, tenanciesRes, tasksRes].some((res) => res.error);
   const properties = propertiesRes.data ?? [];
   state.properties = properties;
+  state.tenancies = tenancies;
   const tenancies = tenanciesRes.data ?? [];
   const propertyRoles = new Map((propertyRolesRes.data ?? []).map((row) => [row.property_id, row.role]));
   const tenantOf = new Set(
