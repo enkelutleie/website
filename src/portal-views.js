@@ -158,6 +158,42 @@ export function bindPortalViews(supabase, context) {
   let chatId = null;
   let current = "oversikt";
   const accountViews = new Set(["invitasjoner", "data"]);
+  let mobileTab = "hjem";
+  let accountDrill = false;
+  const narrow = () => window.matchMedia("(max-width: 859px)").matches;
+
+  const syncMobileChrome = () => {
+    const phone = narrow();
+    const page = document.documentElement;
+    if (!phone) {
+      delete page.dataset.mobile;
+      delete page.dataset.accountOpen;
+    } else {
+      page.dataset.mobile = mobileTab;
+      if (mobileTab === "konto" && accountDrill) page.dataset.accountOpen = "true";
+      else delete page.dataset.accountOpen;
+    }
+    document.querySelectorAll("[data-mobile-tab]").forEach((button) => {
+      if (phone && button.dataset.mobileTab === mobileTab) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    });
+    const banner = root.querySelector("[data-mobile-property]");
+    const address = root.querySelector("[data-mobile-address]");
+    const placeEl = root.querySelector("[data-mobile-place]");
+    const id = context.selectedId?.();
+    if (!banner || !address) return;
+    if (!id) {
+      banner.hidden = true;
+      return;
+    }
+    address.textContent = context.propertyName(id) || "Bolig";
+    const place = context.propertyPlace?.(id) || "";
+    if (placeEl) {
+      placeEl.textContent = place;
+      placeEl.hidden = !place;
+    }
+    banner.hidden = false;
+  };
 
   const propertyChoices = () => {
     const selected = context.selectedId?.();
@@ -207,6 +243,13 @@ export function bindPortalViews(supabase, context) {
 
   const show = (name) => {
     current = name;
+    if (accountViews.has(name)) {
+      mobileTab = "konto";
+      accountDrill = true;
+    } else {
+      accountDrill = false;
+      if (mobileTab === "konto") mobileTab = "hjem";
+    }
     fillChoices();
     root.querySelectorAll(".portal-tabs [data-view], .property-rail [data-view]").forEach((button) => {
       if (button.dataset.view === name) button.setAttribute("aria-current", "page");
@@ -217,6 +260,7 @@ export function bindPortalViews(supabase, context) {
     });
     const tabs = root.querySelector(".portal-tabs");
     if (tabs) tabs.hidden = !context.selectedId?.() || accountViews.has(name);
+    syncMobileChrome();
     if (!accountViews.has(name) && !context.selectedId?.()) return;
     if (name !== "oversikt") load(name, true);
     else context.onSelect?.();
@@ -224,52 +268,55 @@ export function bindPortalViews(supabase, context) {
 
   const paintRail = () => {
     const rail = root.querySelector("[data-property-rail]");
-    if (!rail) return;
     const selected = context.selectedId?.();
-    rail.replaceChildren();
-    const properties = context.properties();
-    if (!properties.length) {
-      const empty = document.createElement("p");
-      empty.className = "portal-lead";
-      empty.textContent = "Ingen boliger ennå";
-      rail.append(empty);
-      return;
-    }
-    for (const property of properties) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.propertyId = property.id;
-      if (property.id === selected) {
-        button.setAttribute("aria-current", "true");
-        const mark = document.createElement("span");
-        mark.className = "rail-kicker";
-        mark.textContent = "Valgt";
-        button.append(mark);
+    if (rail) {
+      rail.replaceChildren();
+      const properties = context.properties();
+      if (!properties.length) {
+        const empty = document.createElement("p");
+        empty.className = "portal-lead";
+        empty.textContent = "Ingen boliger ennå";
+        rail.append(empty);
+      } else {
+        for (const property of properties) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.propertyId = property.id;
+          if (property.id === selected) {
+            button.setAttribute("aria-current", "true");
+            const mark = document.createElement("span");
+            mark.className = "rail-kicker";
+            mark.textContent = "Valgt";
+            button.append(mark);
+          }
+          const address = document.createElement("span");
+          address.className = "rail-address";
+          address.textContent = context.propertyName(property.id);
+          button.append(address);
+          const place = context.propertyPlace?.(property.id);
+          if (place) {
+            const line = document.createElement("span");
+            line.className = "rail-place";
+            line.textContent = place;
+            button.append(line);
+          }
+          button.addEventListener("click", () => chooseProperty(property.id));
+          rail.append(button);
+        }
       }
-      const address = document.createElement("span");
-      address.className = "rail-address";
-      address.textContent = context.propertyName(property.id);
-      button.append(address);
-      const place = context.propertyPlace?.(property.id);
-      if (place) {
-        const line = document.createElement("span");
-        line.className = "rail-place";
-        line.textContent = place;
-        button.append(line);
-      }
-      button.addEventListener("click", () => chooseProperty(property.id));
-      rail.append(button);
     }
     const tabs = root.querySelector(".portal-tabs");
     if (tabs) tabs.hidden = !selected || accountViews.has(current);
     if (selected) root.dataset.property = selected;
     else delete root.dataset.property;
+    syncMobileChrome();
   };
 
   const chooseProperty = (id) => {
     context.select?.(id);
     loaded.clear();
     chatId = null;
+    if (narrow()) mobileTab = "hjem";
     paintRail();
     context.onSelect?.();
     if (accountViews.has(current)) show("oversikt");
@@ -279,6 +326,20 @@ export function bindPortalViews(supabase, context) {
   root.querySelectorAll(".portal-tabs [data-view], .property-rail [data-view]").forEach((button) => {
     button.addEventListener("click", () => show(button.dataset.view));
   });
+  document.querySelectorAll("[data-mobile-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      mobileTab = button.dataset.mobileTab;
+      accountDrill = false;
+      if (mobileTab === "hjem" && accountViews.has(current)) show("oversikt");
+      else syncMobileChrome();
+    });
+  });
+  root.querySelector("[data-mobile-back]")?.addEventListener("click", () => {
+    mobileTab = "konto";
+    accountDrill = false;
+    syncMobileChrome();
+  });
+  window.matchMedia("(max-width: 859px)").addEventListener("change", () => syncMobileChrome());
   root.querySelector("[data-economy-form] select[name=type]")?.addEventListener("change", syncCategories);
   const forProperty = (query) => {
     const id = context.selectedId?.();
