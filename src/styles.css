@@ -37,6 +37,7 @@ a { color: var(--blue-deep); }
   background: color-mix(in srgb, #f5f9fe 78%, white);
   backdrop-filter: saturate(1.4) blur(18px);
   -webkit-backdrop-filter: saturate(1.4) blur(18px);
+  transition: background-color 200ms ease-out, box-shadow 200ms ease-out;
 }
 .site-header.is-scrolled {
   box-shadow: 0 1px 0 var(--line);
@@ -72,6 +73,13 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
   box-shadow: 0 8px 20px rgba(47, 128, 237, 0.22);
 }
 .btn:hover { background: var(--blue-deep); color: #fff; }
+.btn, .btn-login, .btn-apple, .btn-google, .nav a, .site-footer a {
+  transition: background-color 160ms ease-out, color 160ms ease-out,
+    border-color 160ms ease-out, box-shadow 160ms ease-out;
+}
+.btn:active, .btn-login:active, .btn-apple:active, .btn-google:active {
+  transform: scale(0.98);
+}
 .btn-header { min-height: 2.35rem; padding: 0.4rem 1rem; font-size: 0.95rem; box-shadow: none; }
 .btn-login {
   background: var(--sky);
@@ -200,6 +208,10 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
   .hero-mascot { width: 6.5rem; height: 6.5rem; }
 }
 @media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+  .btn:active, .btn-login:active, .btn-apple:active, .btn-google:active {
+    transform: none;
+  }
   html { scroll-behavior: auto; }
   .phone { filter: none; }
   .site-header { backdrop-filter: none; -webkit-backdrop-filter: none; }
