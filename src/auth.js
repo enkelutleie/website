@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import "./login.css";
 
 const header = document.querySelector("[data-site-header]");
 if (header) {
@@ -14,7 +15,9 @@ if (root) {
     "sb_publishable_GQvu82usWD_Ynh1su-as9w_KmymXlcf",
     {
       auth: {
-        detectSessionInUrl: true,
+        // The OAuth return (?code=… or ?error=…) is handled explicitly below,
+        // so a failed exchange is shown instead of silently resetting the page.
+        detectSessionInUrl: false,
         flowType: "pkce",
         persistSession: true,
       },
@@ -37,26 +40,48 @@ if (root) {
     if (/invalid login credentials/i.test(raw)) return "Feil e-post eller passord.";
     if (/email not confirmed/i.test(raw)) return "E-posten er ikke bekreftet ennå.";
     if (/redirect/i.test(raw)) return "Apple eller Google godtok ikke returadressen. Prøv e-post og passord.";
+    if (/code verifier|code challenge|flow state|auth code|pkce/i.test(raw)) {
+      return "Innloggingen ble startet i en annen fane eller nettleser, eller den er allerede brukt. Prøv igjen her.";
+    }
+    if (/access_denied|user_cancelled/i.test(raw)) return "Innloggingen ble avbrutt. Prøv igjen.";
+    if (/external code|external provider/i.test(raw)) return "Apple eller Google kunne ikke fullføre innloggingen. Prøv igjen.";
     return "Innloggingen kunne ikke fullføres. Prøv igjen.";
   };
 
+  const accountLabel = (user) => {
+    const email = user?.email ?? "";
+    if (!email) return null;
+    if (/@privaterelay\.appleid\.com$/i.test(email)) return null;
+    return email;
+  };
+
   const showSession = (session) => {
-    const email = session.user.email ?? "kontoen din";
+    const email = accountLabel(session.user);
+    const viaApple = session.user?.app_metadata?.provider === "apple";
     panel.innerHTML = "";
     const title = document.createElement("p");
     title.className = "login-signed-in";
-    title.textContent = `Du er logget inn som ${email}.`;
+    if (email) {
+      title.textContent = `Du er logget inn som ${email}.`;
+    } else if (viaApple) {
+      title.textContent = "Du er logget inn med Apple (skjult e-post).";
+    } else {
+      title.textContent = "Du er logget inn.";
+    }
     const note = document.createElement("p");
-    note.textContent = "Samme Staging-konto som i appen. Forsiden er uendret.";
+    note.className = "login-note";
+    note.textContent = "Webportalen kommer snart. Frem til da bruker du appen.";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "btn btn-login";
     button.textContent = "Logg ut";
     button.addEventListener("click", async () => {
+      button.disabled = true;
       await supabase.auth.signOut();
       location.assign("/logg-inn/");
     });
     panel.append(title, note, button);
+    panel.classList.add("is-signed-in");
     say("");
   };
 
@@ -92,10 +117,40 @@ if (root) {
     showSession(result.session);
   });
 
-  const params = new URLSearchParams(location.search);
-  const authError = params.get("error_description");
-  if (authError) say(norwegian({ message: authError }));
+  // Return from Apple/Google: read ?code= / ?error= (and #error=), then clean the URL.
+  const query = new URLSearchParams(location.search);
+  const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const code = query.get("code");
+  const returnError =
+    query.get("error_description") ?? hash.get("error_description") ?? query.get("error") ?? hash.get("error");
+
+  if (code || returnError || hash.has("access_token")) {
+    history.replaceState(history.state, "", location.pathname);
+  }
+
+  let shown = false;
+  const render = (session) => {
+    if (session && !shown) {
+      shown = true;
+      showSession(session);
+    }
+  };
+
+  if (returnError) {
+    say(norwegian({ message: returnError }));
+  } else if (code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error || !data.session) {
+      say(norwegian(error));
+    } else {
+      render(data.session);
+    }
+  }
+
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event === "SIGNED_IN" || event === "INITIAL_SESSION") render(session);
+  });
 
   const { data } = await supabase.auth.getSession();
-  if (data.session) showSession(data.session);
+  render(data.session);
 }
