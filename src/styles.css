@@ -136,10 +136,25 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 .feature h3 { margin: 0 0 0.28rem; font-size: 1.05rem; letter-spacing: -0.02em; }
 .feature p { margin: 0; color: var(--muted); font-size: 0.98rem; }
 .feature-icon {
-  display: grid; place-items: center; width: 2.3rem; height: 2.3rem;
-  margin-bottom: 0.7rem; border-radius: 0.72rem; background: var(--sky); color: var(--navy);
+  display: grid; place-items: center; width: 2.7rem; height: 2.7rem;
+  margin-bottom: 0.75rem; border-radius: 999px;
+  background: var(--icon-bg, var(--sky)); color: var(--icon, var(--blue));
 }
-.feature-icon svg { width: 1.18rem; height: 1.18rem; }
+.feature-icon svg { width: 1.28rem; height: 1.28rem; }
+.icon-home { --icon-bg: #e8f3ff; --icon: #2f80ed; }
+.icon-book { --icon-bg: #e5f6ea; --icon: #1f8a4c; }
+.icon-docs { --icon-bg: #f3e8ff; --icon: #7a4cc2; }
+.icon-cal { --icon-bg: #e8f0ff; --icon: #3d6bd6; }
+.icon-fix { --icon-bg: #fff4d6; --icon: #d89a00; }
+.icon-people { --icon-bg: #e7f1ff; --icon: #2f80ed; }
+.icon-contract { --icon-bg: #e8f3ff; --icon: #1b63d1; }
+.icon-hand { --icon-bg: #e5f7f4; --icon: #0e8a78; }
+.icon-in { --icon-bg: #e5f6ea; --icon: #1f8a4c; }
+.icon-out { --icon-bg: #fdecec; --icon: #d4535a; }
+.icon-money { --icon-bg: #e8f3ff; --icon: #2f80ed; }
+.icon-car { --icon-bg: #fff1e6; --icon: #e07a2f; }
+.icon-box { --icon-bg: #f4e9ff; --icon: #8a4fd0; }
+.icon-chat { --icon-bg: #e8f3ff; --icon: #2f80ed; }
 .site-footer {
   display: grid;
   justify-items: center;
