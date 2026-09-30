@@ -124,7 +124,16 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 .step-no { margin: 0 0 0.35rem; color: var(--blue); font-size: 0.82rem; font-weight: 720; letter-spacing: 0.04em; }
 .step h3 { margin: 0 0 0.28rem; font-size: 1.05rem; letter-spacing: -0.02em; }
 .step p { margin: 0; color: var(--muted); font-size: 0.98rem; }
-.features-section { padding: 0 0 4rem; }
+.features-section { padding: 0 0 2.2rem; }
+.lease-band { padding: 0 0 4rem; }
+.lease-card {
+  display: grid; gap: 0.55rem; max-width: 40rem;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 1.3rem;
+  padding: 1.35rem 1.3rem 1.45rem;
+}
+.lease-card h2 { margin: 0; font-size: clamp(1.45rem, 3vw, 1.8rem); letter-spacing: -0.04em; }
+.lease-card p { margin: 0; color: var(--muted); }
+.lease-card .btn { margin-top: 0.35rem; justify-self: start; }
 .section-head { max-width: 32rem; margin-bottom: 1.25rem; }
 .section-head h2 { margin: 0 0 0.3rem; font-size: clamp(1.45rem, 3vw, 1.8rem); letter-spacing: -0.04em; }
 .section-head p { margin: 0; color: var(--muted); }
