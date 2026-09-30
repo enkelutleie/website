@@ -424,8 +424,16 @@ export function bindPortalViews(supabase, context) {
     const rows = data ?? [];
     const income = rows.filter((item) => item.transaction_type === "income").reduce((sum, item) => sum + Number(item.amount_minor), 0);
     const expense = rows.filter((item) => item.transaction_type === "expense").reduce((sum, item) => sum + Number(item.amount_minor), 0);
+    const tiles = root.querySelector("[data-economy-tiles]");
+    const incomeEl = root.querySelector("[data-economy-income]");
+    const expenseEl = root.querySelector("[data-economy-expense]");
+    if (tiles && incomeEl && expenseEl) {
+      tiles.hidden = rows.length === 0;
+      incomeEl.textContent = money(income);
+      expenseEl.textContent = money(expense);
+    }
     summary.textContent = rows.length
-      ? `Inntekt ${money(income)} · utgift ${money(expense)} · resultat ${money(income - expense)}`
+      ? `Resultat ${money(income - expense)}`
       : "Ingen økonomiposter ennå.";
     fill(list, rows, (item) => {
       const line = row(
@@ -1077,6 +1085,8 @@ export function bindPortalViews(supabase, context) {
 
   function fail(list, summary) {
     if (summary) summary.textContent = "Kunne ikke hentes.";
+    const tiles = root.querySelector("[data-economy-tiles]");
+    if (tiles && summary?.matches("[data-economy-summary]")) tiles.hidden = true;
     fill(list, [], null, "Prøv å laste siden på nytt. Ingenting er endret.");
   }
 

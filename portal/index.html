@@ -6,7 +6,7 @@
     <title>Min side — Enkel Utleie</title>
     <meta name="description" content="Oversikt over boligene og leieforholdene dine i Enkel Utleie." />
     <meta name="robots" content="noindex" />
-    <meta name="theme-color" content="#2F80ED" />
+    <meta name="theme-color" content="#E8F3FF" />
     <link rel="icon" href="/favicon.png?v=20260920b" type="image/png" />
     <link rel="stylesheet" href="/src/styles.css" />
     <script src="/auth-state.js"></script>
@@ -49,9 +49,11 @@
         <div class="portal-main">
         <button type="button" class="mobile-back" data-mobile-back>Tilbake</button>
         <div class="mobile-property" data-mobile-property hidden>
-          <p class="mobile-kicker">Valgt bolig</p>
-          <p data-mobile-address></p>
-          <p data-mobile-place></p>
+          <div class="mobile-property-copy">
+            <p data-mobile-address></p>
+            <p data-mobile-place></p>
+          </div>
+          <img class="mobile-mascot" src="/brand/house-mascot-happy.png" width="112" height="112" alt="" />
         </div>
         <nav class="portal-tabs" aria-label="I valgt bolig" hidden>
           <button type="button" data-view="oversikt" aria-current="page">Oversikt</button>
@@ -99,6 +101,16 @@
             <section class="portal-card">
               <h2>Økonomi</h2>
               <p class="portal-lead" data-economy-summary>Henter …</p>
+              <div class="money-row" data-economy-tiles hidden>
+                <div class="money-tile money-in">
+                  <span>Inntekt</span>
+                  <strong data-economy-income></strong>
+                </div>
+                <div class="money-tile money-out">
+                  <span>Utgift</span>
+                  <strong data-economy-expense></strong>
+                </div>
+              </div>
               <div class="portal-actions">
                 <label>År<input data-economy-year type="number" min="2000" max="2100" /></label>
                 <button class="btn" type="button" data-economy-year-btn>Årsoppsummering</button>
