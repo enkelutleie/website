@@ -14,6 +14,7 @@ pnpm dev
 `npm install` og `npm run dev` fungerer også.
 
 - Forside: `/`
+- Om oss: `/om-oss`
 - Personvern: `/personvern`
 
 ## Bygg

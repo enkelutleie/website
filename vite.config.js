@@ -12,6 +12,9 @@ function prettyPersonvern() {
     if (req.url === "/portal") {
       req.url = "/portal/";
     }
+    if (req.url === "/om-oss") {
+      req.url = "/om-oss/";
+    }
     next();
   };
 
@@ -27,6 +30,7 @@ function prettyPersonvern() {
       path.startsWith("/personvern") ||
       path.startsWith("/logg-inn") ||
       path.startsWith("/portal") ||
+      path.startsWith("/om-oss") ||
       path.startsWith("/assets/") ||
       path.startsWith("/brand/") ||
       path.startsWith("/src/") ||
@@ -60,6 +64,7 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, "index.html"),
         personvern: resolve(import.meta.dirname, "personvern/index.html"),
+        omOss: resolve(import.meta.dirname, "om-oss/index.html"),
         loggInn: resolve(import.meta.dirname, "logg-inn/index.html"),
         portal: resolve(import.meta.dirname, "portal/index.html"),
         notFound: resolve(import.meta.dirname, "404.html"),
