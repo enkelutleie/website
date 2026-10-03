@@ -15,6 +15,7 @@ pnpm dev
 
 - Forside: `/`
 - Om oss: `/om-oss`
+- Spørsmål og svar: `/sporsmal-svar`
 - Personvern: `/personvern`
 
 ## Bygg
