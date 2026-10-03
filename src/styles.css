@@ -81,6 +81,81 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
   box-shadow: none;
 }
 .btn-login:hover { background: #d4e8ff; color: var(--navy); }
+a.btn-header.btn-login[data-when="out"] {
+  background: #2F80ED;
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(47, 128, 237, 0.28);
+}
+a.btn-header.btn-login[data-when="out"]:hover { background: var(--blue-deep); color: #fff; }
+button.btn {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 620;
+  line-height: inherit;
+}
+.video-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+}
+.video-modal[hidden] { display: none; }
+.video-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 35, 63, 0.72);
+}
+.video-modal-dialog {
+  position: relative;
+  width: min(100%, 56rem);
+  margin: 0;
+  padding: 3.15rem 0.75rem 0.75rem;
+  border-radius: 1.05rem;
+  background: #1B3A6B;
+  box-shadow: 0 24px 64px rgba(18, 35, 63, 0.38);
+}
+.video-modal-close {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: #1B3A6B;
+  font-family: inherit;
+  font-size: 1.75rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+.video-modal-close:hover { background: #E8F3FF; color: #1B3A6B; }
+.video-modal-player {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 0.7rem;
+  background: #0b1220;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .video-modal:not([hidden]) .video-modal-dialog { animation: video-modal-in 140ms ease-out; }
+}
+@keyframes video-modal-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 .btn-apple, .btn-google, .login-card form .btn {
   width: 100%;
   border: 0;
@@ -271,4 +346,5 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
   html { scroll-behavior: auto; }
   .phone { filter: none; }
   .site-header { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .video-modal, .video-modal-dialog, .video-modal-backdrop { animation: none; transition: none; }
 }
