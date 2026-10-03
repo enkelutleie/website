@@ -162,6 +162,7 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 .icon-box { --icon-bg: #f4e9ff; --icon: #8a4fd0; }
 .icon-chat { --icon-bg: #e8f3ff; --icon: #2f80ed; }
 .icon-about { --icon-bg: #e8f3ff; --icon: #1b3a6b; }
+.icon-faq { --icon-bg: #e8f3ff; --icon: #2f80ed; }
 .site-footer {
   display: grid;
   justify-items: center;
@@ -178,6 +179,40 @@ h1 { margin: 0 0 0.75rem; font-size: clamp(2.35rem, 7vw, 3.55rem); line-height: 
 .legal h1 { font-size: 2rem; }
 .legal h2 { margin: 1.8rem 0 0.4rem; font-size: 1.1rem; }
 .legal p, .legal-lead { color: var(--muted); }
+
+.faq { display: grid; gap: 0.65rem; margin: 1.4rem 0 0; }
+.faq-item {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+.faq-item summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--navy);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  padding: 0.95rem 2.6rem 0.95rem 1.05rem;
+  position: relative;
+}
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item summary::marker { content: ""; }
+.faq-item summary::after {
+  content: "";
+  position: absolute;
+  right: 1.15rem;
+  top: 50%;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid var(--blue);
+  border-bottom: 2px solid var(--blue);
+  transform: translateY(-70%) rotate(45deg);
+}
+.faq-item[open] summary::after { transform: translateY(-30%) rotate(225deg); }
+.faq-answer { margin: 0; padding: 0 1.05rem 1rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .faq-item summary::after { transition: transform 160ms ease; }
+}
 .login-grid { display: grid; gap: 1rem; padding: 1.5rem 0 4rem; }
 .login-card {
   background: var(--paper); border: 1px solid var(--line); border-radius: 1.3rem;
