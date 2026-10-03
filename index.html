@@ -52,7 +52,7 @@
           <p class="hero-slogan">Tryggere utleie, enklere hverdag</p>
           <h1>Utleie, helt enkelt</h1>
           <p class="lead">Bedre oversikt og et enklere leieforhold for begge parter. Alt samlet på ett sted, fra innflytting til utflytting.</p>
-          <a class="btn" href="/logg-inn">Logg inn</a>
+          <button class="btn" type="button" data-open-demo>Se hvordan det fungerer</button>
           <p class="hero-note">Samme konto i appen og på nett. iPhone-appen er ikke i App Store ennå.</p>
         </div>
         <div class="hero-visual">
@@ -184,6 +184,15 @@
       <p><a href="/">Forside</a> · <a href="/om-oss/">Om oss</a> · <a href="/sporsmal-svar/">Spørsmål & svar</a> · <a href="/personvern">Personvern</a></p>
       <p><a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a></p>
     </footer>
+    <div class="video-modal" data-video-modal hidden>
+      <div class="video-modal-backdrop" data-video-close></div>
+      <div class="video-modal-dialog" role="dialog" aria-modal="true" aria-label="Se hvordan det fungerer">
+        <button class="video-modal-close" type="button" data-video-close aria-label="Lukk">
+          <span aria-hidden="true">&times;</span>
+        </button>
+        <video class="video-modal-player" controls playsinline preload="metadata" src="/brand/slik-fungerer-det.mp4"></video>
+      </div>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
