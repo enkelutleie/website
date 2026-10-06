@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Enkel Utleie — utleie, helt enkelt</title>
+    <title>Enkel Utleie — kommer snart</title>
     <meta name="description" content="Økonomi, overtakelse, innflyttingssjekkliste og utflyttingssjekkliste. Samme konto i appen og på nett." />
     <link rel="canonical" href="https://enkelutleie.com/" />
     <meta name="theme-color" content="#2F80ED" />
@@ -23,176 +23,20 @@
     <link rel="icon" href="/favicon.ico?v=20260920b" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260920b" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="/src/styles.css" />
-    <script src="/auth-state.js"></script>
+    <link rel="stylesheet" href="/src/coming-soon.css" />
   </head>
-  <body>
-    <a class="skip-link" href="#innhold">Hopp til innhold</a>
-    <header class="site-header" data-site-header>
-      <div class="header-bar wrap">
-        <a class="brand" href="/">
-          <img class="brand-mark" src="/brand/house-mascot.png?v=2" width="80" height="80" alt="" />
-          <span>Enkel Utleie</span>
-        </a>
-        <nav class="nav" aria-label="Hovedmeny">
-          <a href="#slik">Slik fungerer det</a>
-          <a href="#funksjoner">Funksjoner</a>
-        </nav>
-        <div class="header-actions">
-          <a class="btn btn-header btn-login" href="/logg-inn" data-when="out">Logg inn</a>
-          <button class="btn-header-link" type="button" data-when="in" data-sign-out>Logg ut</button>
-          <a class="btn btn-header btn-login" href="/portal/" data-when="in">Min side</a>
-        </div>
-      </div>
-    </header>
-    <main id="innhold">
-      <section class="hero wrap">
-        <div class="hero-copy">
-          <img class="hero-mascot" src="/brand/house-mascot.png?v=2" width="160" height="160" alt="Det smilende huset til Enkel Utleie" />
-          <p class="hero-slogan">Tryggere utleie, enklere hverdag</p>
-          <h1>Utleie, helt enkelt</h1>
-          <p class="lead">Bedre oversikt og et enklere leieforhold for begge parter. Alt samlet på ett sted, fra innflytting til utflytting.</p>
-          <button class="btn" type="button" data-open-demo>Se hvordan det fungerer</button>
-          <p class="hero-note">Samme konto i appen og på nett. iPhone-appen kommer snart i App Store.</p>
-        </div>
-        <div class="hero-visual">
-          <div class="phone">
-            <div class="phone-bezel">
-              <div class="phone-screen">
-                <img class="phone-shot" src="/brand/oversikt-staging.png" width="1206" height="2622" alt="Hjemskjermen i Enkel Utleie" fetchpriority="high" decoding="async" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-      <section class="wrap" id="slik">
-        <div class="section-head">
-          <h2>Slik kommer du i gang</h2>
-          <p>Enkel Utleie er laget for å være enkelt fra første stund.</p>
-        </div>
-        <div class="steps">
-          <article class="step">
-            <p class="step-no">01</p>
-            <h3>Opprett konto</h3>
-            <p>Kom raskt i gang med Apple, Google eller e-post.</p>
-          </article>
-          <article class="step">
-            <p class="step-no">02</p>
-            <h3>Legg til boligen</h3>
-            <p>Opprett boligen din og samle det som hører til leieforholdet på ett sted.</p>
-          </article>
-          <article class="step">
-            <p class="step-no">03</p>
-            <h3>Inviter leietaker</h3>
-            <p>Send en invitasjon til leietakeren, så er dere klare til å bruke Enkel Utleie sammen.</p>
-          </article>
-        </div>
-      </section>
-      <section class="features-section wrap" id="funksjoner">
-        <div class="section-head">
-          <h2>Det dere trenger i leieforholdet</h2>
-          <p>Samme funksjoner som på forsiden i appen, knyttet til boligen.</p>
-        </div>
-        <div class="features">
-          <article class="feature">
-            <span class="feature-icon icon-home" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5.2v-6.2H10.2V21H5a1 1 0 0 1-1-1v-9.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
-            <h3>Om boligen</h3>
-            <p>Adresse, bilde og det som hører til boligen. Boligperm og dokumenter ligger her.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-book" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M6.2 4.5h9.2A2.6 2.6 0 0 1 18 7.1V19.5H8.2A2 2 0 0 0 6.2 17.5V4.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M6.2 17.5A2 2 0 0 1 8.2 15.5H18" stroke="currentColor" stroke-width="1.7"/></svg></span>
-            <h3>Boligperm</h3>
-            <p>Wi-Fi, nøkler, søppel, husregler og det leietakeren trenger å vite.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-docs" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M7 3.8h7.2L19 8.6V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.7"/><path d="M14 3.8V8.6H19M8.5 12.2h7M8.5 15.4h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-            <h3>Dokumenter</h3>
-            <p>PDF-er og maler samlet på boligen, ikke i en egen e-postmappe.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-cal" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5.2" width="16" height="14.5" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M4 9.4h16M8 3.8v3M16 3.8v3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-            <h3>Kalender</h3>
-            <p>Frister og hendelser for den boligen som er valgt.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-fix" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M14.2 5.2a3.2 3.2 0 0 0-4.3 4.3L4.6 14.8a1.6 1.6 0 0 0 0 2.3l2.3 2.3a1.6 1.6 0 0 0 2.3 0l5.3-5.3a3.2 3.2 0 0 0 4.3-4.3l-2.4 2.4-2.2-2.2 2.4-2.4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
-            <h3>Vedlikehold</h3>
-            <p>Saker, kommentarer og status, synlig for den som bor der og den som leier ut.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-people" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="9" r="2.4" stroke="currentColor" stroke-width="1.7"/><circle cx="16" cy="10" r="2" stroke="currentColor" stroke-width="1.7"/><path d="M4.8 18.2c.6-2.2 2.3-3.4 4.2-3.4s3.6 1.2 4.2 3.4M13.2 14.9c1.4-.2 2.8.3 3.6 1.6.5.8.9 1.6 1.1 2.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-            <h3>Leieforhold</h3>
-            <p>Personer, leieavtale og overtakelse, samlet for boligen.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-contract" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="6" y="3.6" width="12" height="16.8" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M9 8.2h6M9 11.6h6M9.2 15.2 11 17l3.8-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-            <h3>Kontrakt</h3>
-            <p>Utkast og signering når du er logget inn. Samme kontrakt i appen og på nett.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-hand" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M8 11.2V6.8a1.3 1.3 0 0 1 2.6 0V11M10.6 10.2V5.6a1.3 1.3 0 0 1 2.6 0v5.2M13.2 10.4V7.2a1.3 1.3 0 0 1 2.6 0v6.2c0 3.2-1.6 5.6-4.6 5.6-2.4 0-4-1.3-4.6-3.1L6 13.4a1.3 1.3 0 0 1 2.4-.8L8 11.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-            <h3>Overtakelse</h3>
-            <p>Selve overtakelsen, med fremdrift begge kan følge.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-in" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="4.5" width="15" height="15" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8.2 12.1 10.4 14.3 15.8 8.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-            <h3>Innflyttingssjekkliste</h3>
-            <p>Egen liste for det som skal gjennomgås når noen flytter inn.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-out" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="4.5" width="15" height="15" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8.4 8.4 15.6 15.6M15.6 8.4 8.4 15.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-            <h3>Utflyttingssjekkliste</h3>
-            <p>Egen liste for det som skal gjennomgås når noen flytter ut.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-money" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7"/><path d="M12 8v8M9.6 10c.8-.9 1.7-1.3 2.7-1.3 1.6 0 2.7.9 2.7 2.2 0 2.7-5.4 1.5-5.4 4.2 0 1.3 1.2 2.2 2.8 2.2 1.1 0 2-.4 2.7-1.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-            <h3>Økonomi</h3>
-            <p>Inntekt, utgift, netto og estimert skatt for den valgte boligen.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-car" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4.5 14.2 6.2 9.2A2 2 0 0 1 8 8h8a2 2 0 0 1 1.8 1.2l1.7 5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 15.2h16v2.2a1.4 1.4 0 0 1-1.4 1.4h-1.2a1.6 1.6 0 0 1-3.2 0H9.8a1.6 1.6 0 0 1-3.2 0H5.4A1.4 1.4 0 0 1 4 17.4v-2.2Z" stroke="currentColor" stroke-width="1.7"/></svg></span>
-            <h3>Kjørebok</h3>
-            <p>Kjøring i boligens tjeneste, samlet per bolig.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4.5 8.2 12 4.6l7.5 3.6v7.6L12 19.4l-7.5-3.6V8.2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 12.2 4.6 8.4M12 12.2l7.4-3.8M12 12.2V19" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
-            <h3>Eiendeler</h3>
-            <p>Innbo og utstyr registrert på boligen, med verdi og levetid.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-chat" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M6 16.8 4.6 19.2A1 1 0 0 0 5.5 20.6H17a3 3 0 0 0 3-3V8.2a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v6.2a3 3 0 0 0 2 2.4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
-            <h3>Chat</h3>
-            <p>Meldinger der leieforholdet allerede ligger. Ikke en ny e-posttråd.</p>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-about" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7"/><path d="M12 11.2V16M12 8.2v.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-            <h3>Om oss</h3>
-            <p>Enkel Utleie startet med et problem vi tror mange utleiere kjenner seg igjen i.</p>
-            <a class="feature-more" href="/om-oss/">Les mer →</a>
-          </article>
-          <article class="feature">
-            <span class="feature-icon icon-faq" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5.2 16.2 4.4 18.8a.9.9 0 0 0 .8 1.2H15a2.6 2.6 0 0 0 2.6-2.6V8.4A2.6 2.6 0 0 0 15 5.8H7.4A2.6 2.6 0 0 0 4.8 8.4v5.6c0 .8.4 1.6 1 2.1Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9.1 10.1a2.15 2.15 0 1 1 3.5 1.7c-.6.4-1 .9-1 1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M11.6 15.6v.15" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
-            <h3>Spørsmål & svar</h3>
-            <p>Vanlige spørsmål om appen er samlet her, for både utleier og leietaker.</p>
-            <a class="feature-more" href="/sporsmal-svar/">Se mer →</a>
-          </article>
-        </div>
-      </section>
+  <body class="cs">
+    <!-- Midlertidig «Kommer snart»-forside. Full landingsside ligger i landing-full.html (se README). -->
+    <main class="cs-main">
+      <img class="cs-mascot" src="/brand/house-mascot.png?v=2" width="160" height="160" alt="Det smilende huset til Enkel Utleie" />
+      <p class="cs-brand">Enkel Utleie</p>
+      <p class="cs-slogan">Tryggere utleie, enklere hverdag</p>
+      <h1 class="cs-title">Kommer snart</h1>
+      <p class="cs-lead">Vi gjør de siste forberedelsene.</p>
+      <p class="cs-contact"><a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a></p>
     </main>
-    <footer class="site-footer wrap">
+    <footer class="cs-footer">
       <p>MK Product Development AS · org.nr 938 439 834</p>
-      <p><a href="/">Forside</a> · <a href="/om-oss/">Om oss</a> · <a href="/sporsmal-svar/">Spørsmål & svar</a> · <a href="/personvern">Personvern</a></p>
-      <p><a href="mailto:hei@enkelutleie.com">hei@enkelutleie.com</a></p>
     </footer>
-    <div class="video-modal" data-video-modal hidden>
-      <div class="video-modal-backdrop" data-video-close></div>
-      <div class="video-modal-dialog" role="dialog" aria-modal="true" aria-label="Se hvordan det fungerer">
-        <button class="video-modal-close" type="button" data-video-close aria-label="Lukk">
-          <span aria-hidden="true">&times;</span>
-        </button>
-        <video class="video-modal-player" controls playsinline preload="metadata" src="/brand/slik-fungerer-det.mp4"></video>
-      </div>
-    </div>
-    <script type="module" src="/src/main.js"></script>
   </body>
 </html>
