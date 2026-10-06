@@ -26,6 +26,18 @@ pnpm build
 
 Ferdig statisk output ligger i `dist/`. Forhåndsvis med `pnpm preview`.
 
+## Midlertidig «Kommer snart»-forside
+
+Forsiden (`index.html`) er midlertidig byttet ut med en enkel «Kommer snart»-side (`src/coming-soon.css`). Den fulle landingssiden er bevart urørt i `landing-full.html` (ikke med i Vite-bygget, så den rutes ikke og indekseres ikke). `/om-oss` og `/sporsmal-svar` sendes midlertidig til `/` med 302 i `public/_redirects`, og er fjernet fra `public/sitemap.xml`. `/personvern`, `/logg-inn` og `/portal/` fungerer som før.
+
+Slik gjenoppretter du den fulle siden:
+
+1. `git mv -f landing-full.html index.html` og slett `src/coming-soon.css`.
+2. I `public/_redirects`: fjern 302-blokken og legg tilbake `/om-oss /om-oss/index.html 200` og `/sporsmal-svar /sporsmal-svar/index.html 200`.
+3. Legg `/om-oss` og `/sporsmal-svar` tilbake i `public/sitemap.xml`.
+
+Eller enklere: `git revert -m 1 <merge-commit>` for denne endringen.
+
 ## Cloudflare Pages
 
 Koble GitHub-repositoriet `enkelutleie/website` til et Pages-prosjekt.

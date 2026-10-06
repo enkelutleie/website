@@ -2,5 +2,14 @@
 /personvern /personvern/index.html 200
 /logg-inn /logg-inn/index.html 200
 /portal /portal/index.html 200
-/om-oss /om-oss/index.html 200
-/sporsmal-svar /sporsmal-svar/index.html 200
+
+# MIDLERTIDIG («Kommer snart»): skjul markedsundersider. 302 slik at det er lett å reversere.
+# For å gjenopprette: slett blokken under og legg tilbake de to 200-linjene:
+#   /om-oss /om-oss/index.html 200
+#   /sporsmal-svar /sporsmal-svar/index.html 200
+/om-oss / 302
+/om-oss/ / 302
+/om-oss/* / 302
+/sporsmal-svar / 302
+/sporsmal-svar/ / 302
+/sporsmal-svar/* / 302
