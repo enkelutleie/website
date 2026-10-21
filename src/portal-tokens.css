@@ -1,0 +1,58 @@
+/* Design tokens mirrored from the iOS app (Enkel Utleie design system). */
+:root {
+  --brand: #2f80ed;
+  --brand-dark: #1b3a6b;
+  --brand-soft: rgba(47, 128, 237, 0.12);
+  --brand-border: rgba(47, 128, 237, 0.28);
+  --brand-wash: #c4e0ff;
+  --brand-mild: #4f93ef;
+  --canvas: #e8f3ff;
+  --surface: #ffffff;
+  --soft-surface: rgba(232, 243, 255, 0.72);
+  --contract-surface: #eaf4ff;
+  --ink: #1b3a6b;
+  --secondary-ink: rgba(27, 58, 107, 0.68);
+  --success: #34c759;
+  --danger: #ff3b30;
+  --warning: #ff9500;
+  --tax: #af52de;
+  --success-soft: rgba(52, 199, 89, 0.14);
+  --danger-soft: rgba(255, 59, 48, 0.14);
+  --warning-soft: rgba(255, 149, 0, 0.14);
+  --tax-soft: rgba(175, 82, 222, 0.14);
+  --success-icon-bg: rgba(52, 199, 89, 0.12);
+  --danger-icon-bg: rgba(255, 59, 48, 0.12);
+  --tax-icon-bg: rgba(175, 82, 222, 0.12);
+  --warning-icon-bg: rgba(255, 149, 0, 0.12);
+  --band-start: #daebff;
+  --band-end: #d8e9ff;
+
+  --shadow-card: 0 3px 10px rgba(27, 58, 107, 0.08);
+  --shadow-light: 0 2px 8px rgba(27, 58, 107, 0.08);
+  --shadow-elevated: 0 4px 12px rgba(27, 58, 107, 0.1);
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --fs-large-title: 34px; --lh-large-title: 41px;
+  --fs-title: 28px; --lh-title: 34px;
+  --fs-headline: 17px;
+  --fs-body: 15px;
+  --fs-subheadline: 15px;
+  --fs-footnote: 13px;
+  --fs-caption: 12px;
+
+  --radius-xl: 28px;
+  --radius-lg: 24px;
+  --radius-card: 22px;
+  --radius-md: 16px;
+  --radius-sm: 12px;
+
+  --space-xs: 8px;
+  --space-s: 10px;
+  --space-m: 12px;
+  --space-l: 16px;
+
+  --button-min-height: 44px;
+  --press-opacity: 0.82;
+  --press-scale: 0.99;
+  --ease: 160ms ease-out;
+}
