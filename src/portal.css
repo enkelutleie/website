@@ -169,3 +169,24 @@ svg { flex: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* Modals and forms (actions). Same tokens and components as the rest of the portal. */
+.pt-modal { border: 0; padding: 0; background: transparent; max-width: min(560px, calc(100vw - 32px)); width: 100%; }
+.pt-modal::backdrop { background: rgba(27, 58, 107, 0.32); }
+.pt-modal-card { background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-elevated); padding: 24px; display: flex; flex-direction: column; gap: var(--space-l); max-height: calc(100vh - 64px); overflow-y: auto; color: var(--ink); font-family: var(--font); font-size: var(--fs-body); }
+.pt-modal-card .pt-card-head { margin-bottom: 0; }
+.pt-form { display: flex; flex-direction: column; gap: var(--space-m); }
+.pt-field { display: flex; flex-direction: column; gap: 6px; }
+.pt-field-label { font-size: var(--fs-footnote); font-weight: 600; color: var(--secondary-ink); }
+.pt-field-help { font-size: var(--fs-caption); color: var(--secondary-ink); }
+.pt-input { font: inherit; font-size: var(--fs-subheadline); color: var(--ink); background: var(--soft-surface); border: 1px solid var(--brand-border); border-radius: var(--radius-sm); padding: 10px 12px; min-height: var(--button-min-height); width: 100%; }
+.pt-textarea { min-height: 96px; resize: vertical; line-height: 1.4; }
+.pt-form-error { color: var(--danger); font-size: var(--fs-footnote); font-weight: 600; }
+.pt-modal-actions { display: flex; justify-content: flex-end; gap: var(--space-s); }
+.pt-btn:disabled { opacity: 0.55; cursor: default; }
+.pt-row .pt-btn-small { flex: none; }
+.pt-card > .pt-links:first-of-type { margin-top: 0; margin-bottom: var(--space-m); }
+.pt-tile .pt-links { margin-top: auto; }
+.pt-photo { width: 100%; max-height: 320px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: var(--space-l); }
+.pt-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50; margin: 0; background: var(--brand-dark); color: #fff; font-family: var(--font); font-size: var(--fs-subheadline); padding: 12px 20px; border-radius: 999px; box-shadow: var(--shadow-elevated); }
+.pt-empty .pt-btn { margin-top: var(--space-s); }
