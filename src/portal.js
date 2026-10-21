@@ -764,11 +764,13 @@ const PAGES = {
           const pdf = await act.previewAgreementPdf(a);
           b.disabled = false;
           b.textContent = "Vis PDF";
-          if (pdf.error) return act.toast("PDF-en kunne ikke lages akkurat nå.");
+          if (!pdf.url) return act.toast(pdf.message);
           const link = document.createElement("a");
           link.href = pdf.url;
           link.download = pdf.filename;
+          document.body.append(link);
           link.click();
+          link.remove();
           setTimeout(() => URL.revokeObjectURL(pdf.url), 60_000);
         }));
       }
