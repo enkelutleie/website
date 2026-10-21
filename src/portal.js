@@ -1,8 +1,9 @@
 import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
+import * as act from "./portal-actions.js";
 
-// Desktop portal. Read-only: every query runs with the user's own session, so RLS
-// decides what is visible. Nothing here inserts, updates or deletes data.
+// Desktop portal. Every query and write runs with the user's own session, so RLS
+// and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
 
 const root = document.querySelector("[data-portal]");
 const content = root?.querySelector("[data-content]");
@@ -129,13 +130,13 @@ const transactions = (pid) =>
   cached(`tx:${pid}`, async () => {
     const yearStart = `${new Date().getFullYear()}-01-01`;
     return supabase.from("financial_transactions")
-      .select("id, transaction_type, category, amount_minor, transaction_date, description")
+      .select("id, transaction_type, category, amount_minor, transaction_date, description, counterparty, maintenance_request_id, updated_at")
       .eq("property_id", pid).is("voided_at", null).gte("transaction_date", yearStart)
       .order("transaction_date", { ascending: false }).limit(1000);
   });
 const calendarItems = (pid) =>
   cached(`cal:${pid}`, async () =>
-    supabase.from("property_calendar_items").select("id, title, starts_at, due_at, status")
+    supabase.from("property_calendar_items").select("id, title, description, item_type, category, all_day, starts_at, due_at, status")
       .eq("property_id", pid).order("starts_at", { ascending: true }).limit(200));
 const handbook = (pid) =>
   cached(`hb:${pid}`, async () =>
@@ -255,8 +256,23 @@ const calendarCard = async (pid, full = false) => {
     const main = h("div", "pt-row-main");
     main.append(h("strong", null, i.title || "Hendelse"), h("span", null, dateText(i.starts_at || i.due_at)));
     li.append(icon("calendar"), main);
+    if (full && isManager(pid) && i.status === "active") {
+      li.append(
+        button("Endre", "pt-btn-soft pt-btn-small", () => calendarForm(pid, i)),
+        button("Fullfør", "pt-btn-secondary pt-btn-small", async () => {
+          const err = rpcError(await act.completeCalendarItem(i.id));
+          if (err) act.toast(err); else refresh("Hendelsen er fullført.");
+        }),
+        button("Avlys", "pt-btn-quiet-destructive pt-btn-small", async () => {
+          if (!(await act.confirmAction({ title: "Avlyse hendelsen?", text: `«${i.title || "Hendelse"}» blir avlyst for alle på boligen.`, confirmLabel: "Avlys" }))) return;
+          const err = rpcError(await act.cancelCalendarItem(i.id));
+          if (err) act.toast(err); else refresh("Hendelsen er avlyst.");
+        }),
+      );
+    }
     list.append(li);
   }
+  if (isManager(pid)) c.append(actionsRow(button("+ Ny hendelse", "pt-btn-primary pt-btn-small", () => calendarForm(pid))));
   if (res.error) c.append(inline("Kalenderen kunne ikke hentes akkurat nå."));
   else if (!upcoming.length) c.append(inline("Ingen kommende hendelser."));
   else c.append(list);
@@ -268,6 +284,7 @@ const tenancyCard = async (pid) => {
   const own = state.tenancies.filter((t) => t.property_id === pid);
   if (!own.length) {
     c.append(inline("Ingen leieforhold på denne boligen ennå."));
+    if (isManager(pid)) c.append(actionsRow(button("Inviter leietaker", "pt-btn-primary pt-btn-small", () => inviteForm(pid))));
     return c;
   }
   const res = await tenancyPeople(pid);
@@ -296,15 +313,19 @@ const tenancyCard = async (pid) => {
       list.append(li);
     });
     sub.append(list);
+    if (isManager(pid) && !tenants.length) sub.append(actionsRow(button("Inviter leietaker", "pt-btn-soft pt-btn-small", () => inviteForm(pid, t))));
     c.append(sub);
   }
+  if (isManager(pid)) c.append(actionsRow(button("Nytt leieforhold", "pt-btn-secondary pt-btn-small", () => inviteForm(pid))));
   return c;
 };
 
 const propertiesTable = () => {
   const c = card(isLandlord() ? "Boliger" : "Min bolig", "building");
+  const canCreate = isLandlord() || !state.tenantOf.size;
+  if (canCreate) c.append(actionsRow(button("Ny bolig", "pt-btn-primary pt-btn-small", () => propertyForm())));
   if (!state.properties.length) {
-    c.append(inline("Ingen boliger ennå. Når du legger til en bolig eller blir invitert i appen, dukker den opp her."));
+    c.append(inline("Ingen boliger ennå."));
     return c;
   }
   const wrap = h("div", "pt-table-wrap");
@@ -340,10 +361,16 @@ const propertiesTable = () => {
 
 const transactionList = async (pid) => {
   const c = card("Transaksjoner i år", "banknote");
+  if (isManager(pid)) {
+    c.append(actionsRow(
+      button("Ny inntekt", "pt-btn-primary pt-btn-small", () => transactionForm(pid, "income")),
+      button("Ny utgift", "pt-btn-secondary pt-btn-small", () => transactionForm(pid, "expense")),
+    ));
+  }
   const res = await transactions(pid);
   if (res.error) return c.append(inline("Transaksjonene kunne ikke hentes.")), c;
   const rows = res.data ?? [];
-  if (!rows.length) return c.append(inline("Ingen transaksjoner ennå. Inntekter og utgifter registreres i appen.")), c;
+  if (!rows.length) return c.append(inline("Ingen transaksjoner ennå.")), c;
   const list = h("ul", "pt-list");
   for (const r of rows.slice(0, 100)) {
     const inc = r.transaction_type === "income";
@@ -352,11 +379,250 @@ const transactionList = async (pid) => {
     main.append(h("strong", null, r.description || CATEGORY[r.category] || (inc ? "Inntekt" : "Utgift")), h("span", null, [dateText(r.transaction_date), CATEGORY[r.category]].filter(Boolean).join(" · ")));
     li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
       h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
+    if (isManager(pid)) {
+      li.append(
+        button("Endre", "pt-btn-soft pt-btn-small", () => transactionForm(pid, r.transaction_type, r)),
+        button("Slett", "pt-btn-quiet-destructive pt-btn-small", async () => {
+          if (!(await act.confirmAction({ title: "Slette posten?", text: `${inc ? "Inntekten" : "Utgiften"} på ${money(r.amount_minor)} blir annullert, som i appen.`, confirmLabel: "Slett" }))) return;
+          const err = rpcError(await act.voidTransaction(r.id));
+          if (err) act.toast(err); else refresh("Posten er slettet.");
+        }),
+      );
+    }
     list.append(li);
   }
   c.append(list);
   return c;
 };
+
+const button = (label, cls, onClick) => {
+  const b = h("button", `pt-btn ${cls}`, label);
+  b.type = "button";
+  b.addEventListener("click", onClick);
+  return b;
+};
+const actionsRow = (...buttons) => {
+  const row = h("div", "pt-links");
+  row.append(...buttons.filter(Boolean));
+  return row;
+};
+const isManager = (pid = state.propertyId) => ["owner", "co_landlord"].includes(state.roles.get(pid));
+const isOwner = (pid = state.propertyId) => state.roles.get(pid) === "owner";
+let session = null;
+const refresh = async (message) => {
+  state.cache.clear();
+  await load(session, true);
+  if (message) act.toast(message);
+};
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const rpcError = (res) => (res?.error ? act.explain(res.error) : null);
+
+/* ---------- forms ---------- */
+const transactionForm = (pid, type, row) => {
+  const cats = type === "income" ? act.INCOME_CATEGORIES : act.EXPENSE_CATEGORIES;
+  const activeTenancy = state.tenancies.find((t) => t.property_id === pid && t.status === "active");
+  return act.openForm({
+    title: row ? "Endre post" : type === "income" ? "Ny inntekt" : "Ny utgift",
+    submitLabel: row ? "Lagre endringer" : "Lagre",
+    fields: [
+      { name: "category", label: "Kategori", type: "select", options: cats, value: row?.category && cats.some(([v]) => v === row.category) ? row.category : cats[0][0], required: true },
+      { name: "amount", label: "Beløp (kr)", type: "money", value: row ? act.kronerOf(row.amount_minor) : "", required: true, help: "For eksempel 12 500,00" },
+      { name: "date", label: "Dato", type: "date", value: row?.transaction_date ?? todayISO(), required: true },
+      { name: "description", label: "Beskrivelse", type: "text", value: row?.description ?? "", maxLength: 500 },
+      { name: "counterparty", label: type === "income" ? "Betalt av" : "Betalt til", type: "text", value: row?.counterparty ?? "", maxLength: 200 },
+      ...(row ? [] : [{ name: "recurrence", label: "Gjentakelse", type: "select", options: act.RECURRENCE, value: "none", required: true }]),
+    ],
+    onChange: (inputs) => {
+      if (!row && inputs.category.value === "rent" && !inputs.recurrence.dataset.touched) inputs.recurrence.value = "monthly";
+      inputs.recurrence?.addEventListener("change", () => { inputs.recurrence.dataset.touched = "1"; }, { once: true });
+    },
+    onSubmit: async (v) => {
+      const amountMinor = act.minorOf(v.amount);
+      if (!amountMinor || amountMinor <= 0) return "Skriv et gyldig beløp større enn 0.";
+      const values = { ...v, type, amountMinor, recurrence: v.recurrence ?? "none" };
+      const res = row ? await act.updateTransaction(row, values) : await act.createTransaction(pid, values, activeTenancy?.id);
+      if (res.error) return act.explain(res.error);
+      await refresh(row ? "Posten er oppdatert." : "Posten er lagret.");
+      return null;
+    },
+  });
+};
+
+const propertyForm = (p) => {
+  const use = p?.rental_profile?.home_use;
+  return act.openForm({
+    title: p ? "Rediger informasjon" : "Ny bolig",
+    submitLabel: p ? "Lagre endringer" : "Opprett bolig",
+    fields: [
+      { name: "address", label: "Adresse", type: "text", value: p?.address_line1 ?? "", required: true, maxLength: 160 },
+      { name: "unit", label: "Leilighet / enhet", type: "text", value: p?.unit_identifier ?? "", maxLength: 30, help: "For eksempel H0201" },
+      { name: "postal", label: "Postnummer", type: "text", value: p?.postal_code ?? "", required: true, maxLength: 4 },
+      { name: "city", label: "Poststed", type: "text", value: p?.city ?? "", required: true, maxLength: 100 },
+      ...(p ? [] : [{ name: "housingKind", label: "Type bolig", type: "select", options: act.HOUSING_KINDS, value: "standard", required: true, help: "Bofellesskap med rom opprettes i appen." }]),
+      { name: "use", label: "Hva leies ut", type: "select", options: act.RENTAL_USE, value: act.RENTAL_USE.some(([v]) => v === use) ? use : "other_home", required: true },
+      { name: "finn", label: "Finn-kode", type: "text", value: p?.finn_code ?? "", maxLength: 12 },
+      ...(p ? [{ name: "account", label: "Kontonummer for husleie", type: "text", value: p.payment_account_override ?? "", maxLength: 20, help: "Tomt betyr kontonummeret fra profilen din." }] : []),
+    ],
+    onSubmit: async (v) => {
+      const invalid = act.validateProperty(v);
+      if (invalid) return invalid;
+      if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
+      if (!p) {
+        const managed = [...state.roles.values()].filter((r) => r === "owner" || r === "co_landlord").length;
+        if (managed >= 4) return "Du kan ha opptil fire boliger. Arkiver en bolig i appen for å legge til en ny.";
+        const res = await act.createProperty(state.user.id, v);
+        if (res.error) return act.explain(res.error);
+        const id = res.data?.[0]?.id;
+        if (id) try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
+        await refresh("Boligen er opprettet.");
+        location.hash = "#om-boligen";
+        return null;
+      }
+      const res = await act.updateProperty(p, v);
+      if (res.error) return act.explain(res.error);
+      await refresh("Informasjonen er lagret.");
+      return null;
+    },
+  });
+};
+
+const photoForm = (p) =>
+  act.openForm({
+    title: "Last opp bilde",
+    intro: "Bildet lagres i boligens album, som i appen. Det gjøres om til JPEG før opplasting.",
+    submitLabel: "Last opp",
+    fields: [{ name: "file", label: "Bilde", type: "file", accept: "image/*", required: true }],
+    onSubmit: async (v) => {
+      if (!v.file?.type?.startsWith("image/")) return "Velg en bildefil.";
+      const err = await act.uploadPropertyPhoto(p.id, state.user.id, v.file);
+      if (err) return err;
+      await refresh("Bildet er lastet opp.");
+      return null;
+    },
+  });
+
+const inviteForm = (pid, tenancy) =>
+  act.openForm({
+    title: tenancy ? "Inviter leietaker" : "Nytt leieforhold",
+    intro: "Leietakeren får en e-post med invitasjon og godtar den i appen.",
+    submitLabel: "Send invitasjon",
+    fields: [
+      { name: "email", label: "Leietakers e-post", type: "email", required: true, maxLength: 254 },
+      ...(tenancy ? [] : [
+        { name: "start", label: "Startdato", type: "date", value: todayISO(), required: true },
+        { name: "end", label: "Sluttdato", type: "date", help: "Tomt betyr løpende leieforhold." },
+        { name: "rent", label: "Månedlig husleie (kr)", type: "money" },
+        { name: "payday", label: "Forfallsdag (1–31)", type: "number", min: 1, max: 31 },
+        { name: "deposit", label: "Depositum (kr)", type: "money" },
+      ]),
+    ],
+    onSubmit: async (v) => {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email)) return "Skriv en gyldig e-postadresse.";
+      let res;
+      if (tenancy) {
+        res = await act.inviteToExisting(tenancy.id, v.email);
+      } else {
+        const rentMinor = v.rent ? act.minorOf(v.rent) : null;
+        const depositMinor = v.deposit ? act.minorOf(v.deposit) : null;
+        if (v.rent && rentMinor == null) return "Skriv en gyldig husleie.";
+        if (v.deposit && depositMinor == null) return "Skriv et gyldig depositum.";
+        if (v.payday && !(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Forfallsdagen må være mellom 1 og 31.";
+        if (v.end && v.end < v.start) return "Sluttdatoen må være etter startdatoen.";
+        res = await act.inviteNewTenancy(pid, { ...v, rentMinor, depositMinor });
+      }
+      if (res.error) return act.explain(res.error);
+      await refresh(res.sent ? "Invitasjonen er sendt." : "Invitasjonen er lagret, men e-posten kunne ikke sendes. Send den på nytt fra appen.");
+      return null;
+    },
+  });
+
+const contractForm = (pid) => {
+  const tenancies = state.tenancies.filter((t) => t.property_id === pid);
+  return act.openForm({
+    title: "Ny leiekontrakt",
+    intro: "Utkastet lagres med samme felter som i appen. Signering skjer i appen.",
+    submitLabel: "Lagre utkast",
+    fields: [
+      { name: "tenancy", label: "Leieforhold", type: "select", required: true, options: tenancies.map((t) => [t.id, `${TENANCY_LABEL[t.status] ?? t.status}${t.start_date ? ` · fra ${dateText(t.start_date)}` : ""}`]) },
+      { name: "termType", label: "Varighet", type: "select", options: [["indefinite", "Løpende"], ["fixed", "Fast periode"]], value: "indefinite", required: true },
+      { name: "start", label: "Startdato", type: "date", value: tenancies[0]?.start_date ?? todayISO(), required: true },
+      { name: "end", label: "Sluttdato", type: "date", hidden: true },
+      { name: "rent", label: "Månedlig husleie (kr)", type: "money", required: true },
+      { name: "payday", label: "Forfallsdag (1–31)", type: "number", min: 1, max: 31, value: "1", required: true },
+      { name: "deposit", label: "Depositum (kr)", type: "money", value: "0", help: "Maks seks måneders husleie." },
+      { name: "notice", label: "Oppsigelsestid (måneder)", type: "number", min: 1, max: 12, value: "3", required: true },
+      { name: "account", label: "Kontonummer for husleie", type: "text", maxLength: 20 },
+      { name: "special", label: "Særlige avtaler", type: "textarea", maxLength: 4000 },
+    ],
+    onChange: (inputs, show) => show("end", inputs.termType.value === "fixed"),
+    onSubmit: async (v) => {
+      const tenancy = tenancies.find((t) => t.id === v.tenancy);
+      if (!tenancy) return "Velg et leieforhold.";
+      const rentMinor = act.minorOf(v.rent);
+      const depositMinor = act.minorOf(v.deposit || "0");
+      if (!rentMinor) return "Skriv en gyldig husleie.";
+      if (depositMinor == null) return "Skriv et gyldig depositum.";
+      if (depositMinor > rentMinor * 6) return "Depositumet kan ikke være mer enn seks måneders husleie.";
+      if (v.termType === "fixed" && (!v.end || v.end <= v.start)) return "Velg en sluttdato etter startdatoen.";
+      if (!(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Forfallsdagen må være mellom 1 og 31.";
+      if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
+      const res = await act.createAgreementDraft(tenancy, { ...v, rentMinor, depositMinor });
+      if (res.message) return res.message;
+      if (res.error) return act.explain(res.error);
+      await refresh("Utkastet er lagret.");
+      return null;
+    },
+  });
+};
+
+const localParts = (value) => {
+  if (!value) return { date: todayISO(), time: "09:00" };
+  const d = new Date(value);
+  return {
+    date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+    time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+  };
+};
+const calendarForm = (pid, item) => {
+  const when = localParts(item?.starts_at || item?.due_at);
+  return act.openForm({
+    title: item ? "Endre hendelse" : "Ny hendelse",
+    submitLabel: item ? "Lagre endringer" : "Legg i kalenderen",
+    fields: [
+      { name: "title", label: "Tittel", type: "text", value: item?.title ?? "", required: true, maxLength: 200 },
+      { name: "kind", label: "Type", type: "select", options: [["event", "Hendelse"], ["deadline", "Frist"]], value: item?.item_type ?? "event", required: true },
+      { name: "category", label: "Kategori", type: "select", options: act.CALENDAR_CATEGORIES, value: item?.category ?? "other", required: true },
+      { name: "date", label: "Dato", type: "date", value: when.date, required: true },
+      { name: "allDay", label: "Hele dagen", type: "select", options: [["false", "Nei"], ["true", "Ja"]], value: item?.all_day ? "true" : "false", required: true },
+      { name: "time", label: "Klokkeslett", type: "time", value: when.time },
+      { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 2000, rows: 3 },
+    ],
+    onChange: (inputs, show) => show("time", inputs.allDay.value !== "true"),
+    onSubmit: async (v) => {
+      const res = item ? await act.updateCalendarItem(item.id, v) : await act.createCalendarItem(pid, v);
+      if (res.error) return act.explain(res.error);
+      await refresh(item ? "Hendelsen er oppdatert." : "Lagt i kalenderen.");
+      return null;
+    },
+  });
+};
+
+const handbookForm = (pid, key, label, body) =>
+  act.openForm({
+    title: label,
+    intro: "Teksten blir synlig for leietakerne i boligpermen.",
+    submitLabel: "Lagre",
+    fields: [{ name: "body", label: "Innhold", type: "textarea", value: body ?? "", maxLength: 4000, rows: 8, required: true }],
+    onSubmit: async (v) => {
+      const res = await act.saveHandbookSection(pid, key, v.body);
+      if (res.error) return act.explain(res.error);
+      await refresh("Boligpermen er oppdatert.");
+      return null;
+    },
+  });
 
 const noProperty = () => emptyPage("building", "Ingen bolig valgt", "Når du har en bolig i appen, kan du se den her.");
 
@@ -402,7 +668,28 @@ const PAGES = {
       links.append(l);
     });
     c.append(dl, links);
-    return [band(), c, await tenancyCard(p.id)];
+    const out = [band()];
+    const photo = await act.coverPhotoUrl(p.id).catch(() => null);
+    if (photo) {
+      const img = document.createElement("img");
+      img.className = "pt-photo";
+      img.src = photo;
+      img.alt = `Bilde av ${a.line}`;
+      c.prepend(img);
+    }
+    if (isManager(p.id)) {
+      c.append(actionsRow(
+        button("Rediger informasjon", "pt-btn-soft pt-btn-small", () => propertyForm(p)),
+        button("Last opp bilde", "pt-btn-secondary pt-btn-small", () => photoForm(p)),
+      ));
+    }
+    if (p.finn_code) {
+      const d = h("div");
+      dl.append(d);
+      d.append(h("dt", null, "Finn-kode"), h("dd", null, p.finn_code));
+    }
+    out.push(c, await tenancyCard(p.id));
+    return out;
   },
   async boligperm() {
     const p = property();
@@ -411,13 +698,14 @@ const PAGES = {
     const bodies = new Map((res.data ?? []).filter((s) => s.body?.trim()).map((s) => [s.section_key, s.body.trim()]));
     const intro = h("section", "pt-card");
     intro.append(h("p", "pt-muted", isLandlord()
-      ? "Boligpermen samler praktisk informasjon om boligen for leietakeren. Innholdet fylles ut i appen."
+      ? "Boligpermen samler praktisk informasjon om boligen for leietakeren. Trykk Rediger på et kort for å fylle det ut."
       : "All informasjon om boligen, samlet på ett sted."));
     if (res.error) intro.append(inline("Boligpermen kunne ikke hentes akkurat nå."));
     const tiles = h("section", "pt-tiles");
     for (const [key, label, ic, tone] of HANDBOOK_TILES) {
       const t = h("article", "pt-tile");
       t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), h("p", null, bodies.get(key) ?? "Ikke fylt ut"));
+      if (isManager(p.id)) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(p.id, key, label, bodies.get(key)))));
       tiles.append(t);
     }
     return [intro, tiles];
@@ -441,7 +729,61 @@ const PAGES = {
     return [emptyPage("handover", "Overtakelse", "Overtakelsen fylles ut i appen. Oversikten kommer på nettsiden."), tiles];
   },
   async "inn-utflytting"() { return [emptyPage("checklist", "Inn-/utflytting", "Innflytting, utflytting og depositumsoppgjør kommer på nettsiden. Til da gjøres dette i appen.")]; },
-  async leiekontrakt() { return [emptyPage("contract", "Leiekontrakt", "Leiekontrakten lages, leses og signeres i appen. Visning på nettsiden kommer.")]; },
+  async leiekontrakt() {
+    const p = property();
+    if (!p) return [noProperty()];
+    if (!isManager(p.id)) return [emptyPage("contract", "Leiekontrakt", "Du leser og signerer leiekontrakten i appen.")];
+    const c = card("Leiekontrakter", "contract");
+    const hasTenancy = state.tenancies.some((t) => t.property_id === p.id);
+    c.append(actionsRow(hasTenancy
+      ? button("Opprett leiekontrakt", "pt-btn-primary pt-btn-small", () => contractForm(p.id))
+      : button("Inviter leietaker først", "pt-btn-secondary pt-btn-small", () => inviteForm(p.id))));
+    const res = await act.listAgreements(p.id);
+    if (res.error) {
+      c.append(inline("Kontraktene kunne ikke hentes akkurat nå."));
+      return [c];
+    }
+    const rows = res.data ?? [];
+    if (!rows.length) {
+      c.append(inline("Ingen leiekontrakter ennå."));
+      return [c];
+    }
+    const STATUS = { draft: "Utkast", ready_for_review: "Klar til gjennomgang", awaiting_signatures: "Venter på signatur", signed: "Signert", cancelled: "Avbrutt", rejected: "Avvist" };
+    const list = h("ul", "pt-list");
+    for (const a of rows) {
+      const li = h("li", "pt-row");
+      const main = h("div", "pt-row-main");
+      const t = state.tenancies.find((x) => x.id === a.tenancy_id);
+      main.append(h("strong", null, "Leiekontrakt"), h("span", null, t?.start_date ? `Leieforhold fra ${dateText(t.start_date)}` : "Leieforhold"));
+      li.append(icon("contract"), main, h("span", `pt-chip${a.agreement_status === "signed" ? " is-success" : ""}`, STATUS[a.agreement_status] ?? a.agreement_status));
+      if (a.current_version_id) {
+        li.append(button("Vis PDF", "pt-btn-soft pt-btn-small", async (e) => {
+          const b = e.currentTarget;
+          b.disabled = true;
+          b.textContent = "Lager PDF …";
+          const pdf = await act.previewAgreementPdf(a);
+          b.disabled = false;
+          b.textContent = "Vis PDF";
+          if (pdf.error) return act.toast("PDF-en kunne ikke lages akkurat nå.");
+          const link = document.createElement("a");
+          link.href = pdf.url;
+          link.download = pdf.filename;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(pdf.url), 60_000);
+        }));
+      }
+      if (a.agreement_status === "draft") {
+        li.append(button("Klar til gjennomgang", "pt-btn-primary pt-btn-small", async () => {
+          if (!(await act.confirmAction({ title: "Klar til gjennomgang?", text: "Utkastet låses for gjennomgang. Signering gjøres i appen.", confirmLabel: "Fortsett", destructive: false }))) return;
+          const err = rpcError(await act.markAgreementReady(a));
+          if (err) act.toast(err); else refresh("Kontrakten er klar til gjennomgang.");
+        }));
+      }
+      list.append(li);
+    }
+    c.append(list);
+    return [c];
+  },
   async dokumenter() { return [emptyPage("folder", isLandlord() ? "Dokumenter og maler" : "Delte dokumenter", "Dokumentene kommer på nettsiden. Til da finner du dem i appen.")]; },
   async meldinger() { return [emptyPage("chat", "Meldinger", "Samtaler med utleier og leietaker kommer på nettsiden. Til da bruker du chatten i appen.")]; },
   async historikk() { return [emptyPage("history", "Historikk", "Tidligere leieforhold og hendelser kommer på nettsiden.")]; },
@@ -530,7 +872,10 @@ const renderSelect = () => {
   }
   sel.value = state.propertyId;
   sel.disabled = state.properties.length < 2;
-  sel.addEventListener("change", () => selectProperty(sel.value));
+  if (!sel.dataset.bound) {
+    sel.dataset.bound = "1";
+    sel.addEventListener("change", () => selectProperty(sel.value));
+  }
 };
 
 const logOut = async () => {
@@ -541,12 +886,23 @@ const firstNameOf = (profile, user) =>
   profile?.first_name?.trim() || profile?.display_name?.trim() ||
   user?.user_metadata?.full_name?.trim() || user?.user_metadata?.name?.trim() || null;
 
-const load = async (session) => {
+const premiumGate = (unknown) => {
+  root.querySelector("[data-nav]").replaceChildren();
+  root.querySelector("[data-page-title]").textContent = "Enkel Utleie Premium";
+  const c = emptyPage("house", "Nettportalen er en del av Premium",
+    unknown
+      ? "Vi fikk ikke sjekket abonnementet ditt akkurat nå. Prøv å laste siden på nytt om litt."
+      : "Aktiver Premium i Enkel Utleie-appen på iPhone, så får du tilgang til nettportalen med samme konto.");
+  c.append(button("Logg ut", "pt-btn-secondary", logOut));
+  content.replaceChildren(c);
+};
+
+const load = async (session, isRefresh = false) => {
   const user = session.user;
   state.user = user;
   const [profileRes, propertiesRes, propertyRolesRes, tenancyRolesRes, tenanciesRes, tasksRes] = await Promise.all([
     supabase.from("profiles").select("first_name, display_name").eq("id", user.id).maybeSingle(),
-    supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier")
+    supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override")
       .eq("lifecycle_status", "active").order("created_at", { ascending: false }),
     supabase.from("property_members").select("property_id, role").eq("user_id", user.id).is("valid_until", null),
     supabase.from("tenancy_members").select("tenancy_id, role").eq("user_id", user.id).is("valid_until", null),
@@ -563,6 +919,21 @@ const load = async (session) => {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
   }
+  // Premium gate: as in the app, landlords need Premium; tenants use the app for free.
+  if (!isRefresh) {
+    const managesAny = [...state.roles.values()].some((r) => r === "owner" || r === "co_landlord");
+    const tenantOnly = !managesAny && state.tenantOf.size > 0;
+    if (!tenantOnly) {
+      const premium = await act.hasPremium();
+      if (!premium.ok) {
+        root.querySelector("[data-user-name]").textContent = state.name || "Min side";
+        root.querySelector("[data-avatar]").textContent = (state.name || "?").charAt(0).toUpperCase();
+        root.setAttribute("aria-busy", "false");
+        premiumGate(premium.unknown);
+        return;
+      }
+    }
+  }
   let saved = null;
   try { saved = sessionStorage.getItem("pt-property"); } catch { /* ignore */ }
   state.propertyId = state.properties.some((p) => p.id === saved) ? saved : state.properties[0]?.id ?? null;
@@ -578,7 +949,7 @@ const load = async (session) => {
     content.replaceChildren(emptyPage("info", "Vi fikk ikke hentet oversikten", "Prøv å laste siden på nytt om litt. Alt er tilgjengelig i appen i mellomtiden."));
     return;
   }
-  window.addEventListener("hashchange", render);
+  if (!isRefresh) window.addEventListener("hashchange", render);
   await render();
 };
 
@@ -597,6 +968,10 @@ if (root) {
           setAuthState(false);
           toLogin();
         }
+      });
+      session = data.session;
+      supabase.auth.onAuthStateChange((_event, next) => {
+        if (next) session = next;
       });
       try {
         await load(data.session);
