@@ -436,13 +436,42 @@ export const markAgreementReady = (a) =>
     expected_draft_revision: a.draft_revision,
   });
 
+const PDF_OUTCOME_TEXT = {
+  unauthenticated: "Økten er utløpt. Logg inn på nytt og prøv igjen.",
+  forbidden: "Bare utleier kan hente PDF av dette utkastet.",
+  version_conflict: "Kontrakten er endret eller har en status som ikke kan forhåndsvises. Last siden på nytt.",
+  invalid_request: "Forespørselen om PDF var ugyldig. Last siden på nytt og prøv igjen.",
+  template_unavailable: "Kontraktsmalen er ikke tilgjengelig akkurat nå.",
+  temporary_failure: "PDF-tjenesten svarte ikke. Prøv igjen om litt.",
+};
+
+// contract-pdf with intent "preview" answers JSON { outcome: "preview", filename, pdf_base64 }
+// (handler.mjs), allowed for agreements in draft or ready_for_review, as in the app.
 export async function previewAgreementPdf(a) {
+  const revision = Number(a.draft_revision);
+  if (!a.agreement_id || !a.current_version_id || !Number.isSafeInteger(revision) || revision < 1) {
+    return { message: "Kontrakten mangler versjon. Last siden på nytt." };
+  }
   const { data, error } = await supabase.functions.invoke("contract-pdf", {
-    body: { agreement_id: a.agreement_id, version_id: a.current_version_id, revision: a.draft_revision, intent: "preview" },
+    body: { agreement_id: a.agreement_id, version_id: a.current_version_id, revision, intent: "preview" },
   });
-  if (error || !data?.pdf_base64) return { error: error || new Error(data?.outcome || "Ingen PDF") };
-  const bytes = Uint8Array.from(atob(data.pdf_base64), (c) => c.charCodeAt(0));
-  return { url: URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })), filename: data.filename || "leiekontrakt.pdf" };
+  if (error) {
+    let outcome = null;
+    try { outcome = (await error.context?.json?.())?.outcome ?? null; } catch { /* no readable body */ }
+    if (outcome) return { message: PDF_OUTCOME_TEXT[outcome] ?? "PDF-en kunne ikke lages akkurat nå." };
+    // FunctionsFetchError: the browser blocked or lost the request (e.g. missing CORS headers on the function).
+    if (error.name === "FunctionsFetchError" || error.name === "FunctionsRelayError") {
+      return { message: "Nettleseren fikk ikke kontakt med PDF-tjenesten. PDF-en kan foreløpig hentes i appen." };
+    }
+    return { message: "PDF-en kunne ikke lages akkurat nå." };
+  }
+  const payload = typeof data === "string" ? (() => { try { return JSON.parse(data); } catch { return null; } })() : data;
+  if (!payload?.pdf_base64) return { message: PDF_OUTCOME_TEXT[payload?.outcome] ?? "Tjenesten returnerte ingen PDF." };
+  const binary = atob(payload.pdf_base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  if (String.fromCharCode(...bytes.slice(0, 4)) !== "%PDF") return { message: "Tjenesten returnerte ikke en gyldig PDF." };
+  return { url: URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })), filename: payload.filename || "leiekontrakt.pdf" };
 }
 
 /* ---------- Kalender (CalendarController.swift) ---------- */
