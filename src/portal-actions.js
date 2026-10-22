@@ -324,11 +324,17 @@ export async function uploadPropertyPhoto(propertyId, userId, file) {
   if (error) return explain(error);
   let gallery = (collections ?? []).find((c) => c.kind === "general" && c.status === "active");
   if (!gallery) {
+    // Insert without RETURNING, then read back, as the app does (ImageController.ensureGalleryCollection).
+    // insert().select() is rejected by RLS on the returned row (42501) even though the insert is allowed.
     const created = await supabase.from("image_collections").insert({
       property_id: propertyId, tenancy_id: null, kind: "general", title: "Boligbilder", created_by: userId,
-    }).select("id, kind, status");
+    });
     if (created.error) return explain(created.error);
-    gallery = first(created.data);
+    const reread = await supabase.from("image_collections")
+      .select("id, kind, status").eq("property_id", propertyId).order("created_at", { ascending: true });
+    if (reread.error) return explain(reread.error);
+    gallery = (reread.data ?? []).find((c) => c.kind === "general" && c.status === "active");
+    if (!gallery) return "Bildealbumet kunne ikke opprettes. Prøv igjen.";
   }
   const reservation = await imageLifecycle({
     action: "reserve", property_id: propertyId, collection_id: gallery.id,
