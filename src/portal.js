@@ -152,10 +152,7 @@ const tenancyPeople = (pid) =>
       .in("tenancy_id", ids).is("valid_until", null);
     if (members.error) return members;
     const userIds = [...new Set((members.data ?? []).map((m) => m.user_id))];
-    const profiles = userIds.length
-      ? await supabase.from("profiles").select("id, first_name, display_name").in("id", userIds)
-      : { data: [] };
-    const names = new Map((profiles.data ?? []).map((p) => [p.id, p.display_name?.trim() || p.first_name?.trim() || null]));
+    const names = await act.linkedContactNames(userIds);
     return { data: (members.data ?? []).map((m) => ({ ...m, name: names.get(m.user_id) ?? null })) };
   });
 
