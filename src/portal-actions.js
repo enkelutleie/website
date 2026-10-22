@@ -393,6 +393,21 @@ export async function inviteToExisting(tenancyId, email) {
   return { sent: !sent.error };
 }
 
+/* ---------- Navn (list_linked_profile_contacts, samme RPC som iOS) ---------- */
+export async function linkedContactNames(userIds) {
+  const names = new Map();
+  const ids = [...new Set(userIds)].filter(Boolean);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.rpc("list_linked_profile_contacts", { requested_user_ids: ids.slice(i, i + 100) });
+    if (error) break;
+    for (const c of data ?? []) {
+      const name = c.display_name?.trim() || c.email?.trim() || null;
+      if (name) names.set(c.user_id, name);
+    }
+  }
+  return names;
+}
+
 /* ---------- Leiekontrakt (ContractSigningFoundation.swift, contract-pdf) ---------- */
 export const listAgreements = (propertyId) =>
   supabase.rpc("list_my_property_rental_agreements", { requested_property_id: propertyId });
