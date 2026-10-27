@@ -2,6 +2,7 @@
 /personvern /personvern/index.html 200
 /logg-inn /logg-inn/index.html 200
 /portal /portal/index.html 200
+/slett-konto /slett-konto/index.html 200
 
 # MIDLERTIDIG («Kommer snart»): skjul markedsundersider. 302 slik at det er lett å reversere.
 # For å gjenopprette: slett blokken under og legg tilbake de to 200-linjene:
