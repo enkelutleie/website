@@ -6,6 +6,9 @@ function prettyPersonvern() {
     if (req.url === "/personvern") {
       req.url = "/personvern/";
     }
+    if (req.url === "/slett-konto") {
+      req.url = "/slett-konto/";
+    }
     if (req.url === "/logg-inn") {
       req.url = "/logg-inn/";
     }
@@ -31,6 +34,7 @@ function prettyPersonvern() {
     const known =
       path === "/" ||
       path.startsWith("/personvern") ||
+      path.startsWith("/slett-konto") ||
       path.startsWith("/logg-inn") ||
       path.startsWith("/portal") ||
       path.startsWith("/om-oss") ||
@@ -70,6 +74,7 @@ export default defineConfig({
         personvern: resolve(import.meta.dirname, "personvern/index.html"),
         omOss: resolve(import.meta.dirname, "om-oss/index.html"),
         faq: resolve(import.meta.dirname, "sporsmal-svar/index.html"),
+        slettKonto: resolve(import.meta.dirname, "slett-konto/index.html"),
         loggInn: resolve(import.meta.dirname, "logg-inn/index.html"),
         portal: resolve(import.meta.dirname, "portal/index.html"),
         notFound: resolve(import.meta.dirname, "404.html"),
