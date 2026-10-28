@@ -35,7 +35,7 @@ body.cs {
   padding: 3rem 1.5rem 2rem;
 }
 
-.cs-mascot {
+.cs-logo {
   display: block;
   width: clamp(7.5rem, 28vw, 10rem);
   height: auto;
