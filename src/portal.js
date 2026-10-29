@@ -782,11 +782,15 @@ const propertyForm = (p) => {
       { name: "unit", label: "Leilighet / enhet", type: "text", value: p?.unit_identifier ?? "", maxLength: 30, help: "For eksempel H0201" },
       { name: "postal", label: "Postnummer", type: "text", value: p?.postal_code ?? "", required: true, maxLength: 4 },
       { name: "city", label: "Poststed", type: "text", value: p?.city ?? "", required: true, maxLength: 100 },
-      ...(p ? [] : [{ name: "housingKind", label: "Type bolig", type: "select", options: act.HOUSING_KINDS, value: "standard", required: true, help: "Bofellesskap med rom opprettes i appen." }]),
+      ...(p ? [] : [
+        { name: "housingKind", label: "Type bolig", type: "select", options: act.HOUSING_KINDS, value: "standard", required: true, help: "Ved bofellesskap leies rommene ut hver for seg. Hvert rom har eget leieforhold og egen leiekontrakt." },
+        { name: "roomCount", label: "Antall rom som skal leies ut", type: "text", placeholder: "1–10", maxLength: 2, hidden: true, help: "Vi oppretter Rom 1, Rom 2 … slik at du kan invitere én leietaker per rom. Maks 10." },
+      ]),
       { name: "use", label: "Hva leies ut", type: "select", options: act.RENTAL_USE, value: act.RENTAL_USE.some(([v]) => v === use) ? use : "other_home", required: true },
       { name: "finn", label: "Finn-kode", type: "text", value: p?.finn_code ?? "", maxLength: 12 },
       ...(p ? [{ name: "account", label: "Kontonummer for husleie", type: "text", value: p.payment_account_override ?? "", maxLength: 20, help: "Tomt betyr kontonummeret fra profilen din." }] : []),
     ],
+    onChange: (inputs, show) => { if (inputs.housingKind) show("roomCount", inputs.housingKind.value === "shared"); },
     onSubmit: async (v) => {
       const invalid = act.validateProperty(v);
       if (invalid) return invalid;
@@ -794,9 +798,17 @@ const propertyForm = (p) => {
       if (!p) {
         const managed = state.properties.filter((x) => isManager(x.id)).length;
         if (managed >= 4) return "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+        const shared = v.housingKind === "shared";
+        const roomCount = shared ? act.parseRoomCount(v.roomCount) : null;
+        if (shared && !v.roomCount) return "Du må oppgi antall rom som skal leies ut.";
+        if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
         const res = await act.createProperty(state.user.id, v);
         if (res.error) return act.explain(res.error);
         const id = res.data?.[0]?.id;
+        if (id && roomCount) {
+          const rooms = await act.ensureSharedRooms(id, roomCount);
+          if (rooms.error) act.toast(`Boligen er opprettet, men ${rooms.error.charAt(0).toLowerCase()}${rooms.error.slice(1)} Legg til rom under «Om boligen».`);
+        }
         if (id) try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
         await refresh("Boligen er opprettet.");
         location.hash = "#om-boligen";
@@ -3748,6 +3760,61 @@ const coInvitationRow = (pid, inv) => {
   return li;
 };
 
+// PropertyDetail rooms (bofellesskap): add, rename and retire rooms with the
+// same RPCs as the app. A room with a tenancy or a pending invitation stays.
+const roomForm = (pid, rooms, room = null) => act.openForm({
+  title: room ? "Endre navn" : "Legg til rom",
+  submitLabel: room ? "Lagre" : "Legg til rom",
+  fields: [{ name: "label", label: "Navn på rom", type: "text", required: true, requiredMessage: "Skriv inn et navn på rommet.", maxLength: 80, placeholder: "For eksempel Rom 1", value: room ? room.label : act.nextRoomLabel(rooms) }],
+  onSubmit: async (v) => {
+    const invalid = act.roomLabelError(v.label, rooms, room?.id ?? null);
+    if (invalid) return invalid;
+    if (room && v.label.trim() === room.label.trim()) return null;
+    const res = room ? await act.renameRoom(room.id, v.label) : await act.createRoom(pid, v.label);
+    if (res.error) return res.error;
+    await refresh(room ? "Romnavnet er endret." : "Rommet er lagt til.");
+    return null;
+  },
+});
+
+const roomsCard = async (pid) => {
+  const res = await cached(`rooms:${pid}`, () => act.propertyRooms(pid));
+  const c = card("Rom", "building");
+  if (res.error) {
+    c.append(h("p", null, "Rommene kunne ikke hentes akkurat nå. Prøv igjen."),
+      actionsRow(button("Prøv igjen", "pt-btn-secondary pt-btn-small", () => { state.cache.delete(`rooms:${pid}`); refresh(); })));
+    return c;
+  }
+  const rooms = res.data;
+  if (!rooms.length) c.append(h("p", "pt-muted", "Ingen rom ennå. Legg til det første rommet."));
+  else {
+    const list = h("ul", "pt-list");
+    for (const r of rooms) {
+      const li = h("li", "pt-row");
+      const main = h("div", "pt-row-main");
+      main.append(h("strong", null, r.label));
+      li.append(main, h("span", `pt-chip${r.status ? " is-info" : ""}`, r.status ?? "Ledig"));
+      const actions = h("div", "pt-row-actions");
+      if (r.kind === "room") actions.append(button("Endre navn", "pt-btn-soft pt-btn-small", () => roomForm(pid, rooms, r)));
+      if (r.canRetire) {
+        actions.append(button("Lukk rom", "pt-btn-quiet-destructive pt-btn-small", async () => {
+          if (!(await act.confirmAction({ title: `Lukke ${r.label}?`, text: "Rommet blir ikke lenger tilgjengelig for nye leieforhold. Historikk beholdes. Rom med et aktivt leieforhold kan ikke lukkes.", confirmLabel: `Lukk ${r.label}` }))) return;
+          const out = await act.retireRoom(r.id);
+          if (out.error) return act.toast(out.error);
+          await refresh("Rommet er lukket.");
+        }));
+      }
+      li.append(actions);
+      list.append(li);
+    }
+    c.append(list);
+  }
+  const full = rooms.filter((r) => r.kind === "room").length >= act.ROOM_LIMIT;
+  c.append(h("p", "pt-muted", full ? "Et bofellesskap kan ha opptil 10 rom." : "Rom leies ut hver for seg. Hvert rom har eget leieforhold og egen leiekontrakt."));
+  if (!full) c.append(actionsRow(button("Legg til rom", "pt-btn-primary pt-btn-small", () => roomForm(pid, rooms))));
+  return c;
+};
+
 const landlordsCard = async (pid) => {
   const [mgr, coinv] = await Promise.all([
     cached(`mgr:${pid}`, () => act.propertyManagers(pid)),
@@ -4041,7 +4108,9 @@ const PAGES = {
       dl.append(d);
       d.append(h("dt", null, "Finn-kode"), h("dd", null, p.finn_code));
     }
-    out.push(c, await tenancyCard(p.id));
+    out.push(c);
+    if (isManager(p.id) && p.housing_kind === "shared") out.push(await roomsCard(p.id));
+    out.push(await tenancyCard(p.id));
     if (isManager(p.id)) out.push(await landlordsCard(p.id));
     return out;
   },
