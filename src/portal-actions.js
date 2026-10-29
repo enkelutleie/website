@@ -1483,26 +1483,57 @@ export const updateInspectionItem = (item, condition, note) =>
     requested_note: note && note.trim() ? note : null, expected_updated_at: item.updated_at,
   }).then(one);
 
-// One button in the app: send the move-in to the tenant (once), then lock it.
-// The row is read fresh so a retry never finalizes an older version or sends twice.
-export async function finalizeInspection(inspection, { sendMoveIn = false, deleteIncomplete = false } = {}) {
-  const fresh = await supabase.from("inspections").select("*").eq("id", inspection.id).maybeSingle();
-  if (fresh.error || !fresh.data) return { error: fresh.error ?? { message: "missing" } };
-  let current = fresh.data;
-  if (current.status === "finalized") return { data: current };
-  if (sendMoveIn && current.type === "move_in" && !current.sent_for_review_at) {
-    const sent = await supabase.rpc("send_move_in_for_review", { p_inspection_id: current.id }).then(one);
-    if (sent.error) return sent;
-    if (sent.data?.updated_at) current = sent.data;
-    else {
-      const again = await supabase.from("inspections").select("*").eq("id", current.id).maybeSingle();
-      if (again.error || !again.data) return { error: again.error ?? { message: "missing" } };
-      current = again.data;
-    }
-  }
-  return supabase.rpc("finalize_inspection", {
-    requested_inspection_id: current.id, expected_updated_at: current.updated_at, p_delete_incomplete: deleteIncomplete,
+// iOS PropertyHandoverLifecycle.finalizeStoredInspection + MoveInSendStatus (same as Android #250):
+// read the row fresh, send the move-in right before the lock only when it is an unsent draft,
+// then finalize that fresh row. A retry never sends twice or finalizes an older version.
+const freshInspection = async (id) => {
+  const r = await supabase.from("inspections").select("*").eq("id", id).maybeSingle();
+  return r.error || !r.data ? null : r.data;
+};
+const moveInNeedsSend = (i) => i.type === "move_in" && i.status === "draft" && !i.sent_for_review_at;
+// SupabaseInspectionRemote.purgeFinalizedChecklistPhotos: best effort, errors are ignored.
+async function purgeFinalizedChecklistPhotos(inspectionId) {
+  const listed = await supabase.rpc("list_soft_deleted_checklist_photo_paths", { requested_inspection_id: inspectionId });
+  const paths = (listed.data ?? []).map((r) => r?.storage_path).filter(Boolean);
+  if (listed.error || !paths.length) return;
+  const removed = await supabase.storage.from("property-images").remove(paths);
+  const names = (removed.data ?? []).map((f) => f.name).filter((n) => paths.includes(n));
+  if (names.length) await supabase.rpc("complete_soft_deleted_checklist_photos", { requested_paths: names });
+}
+const finalizeRow = (row, deleteIncomplete) =>
+  supabase.rpc("finalize_inspection", {
+    requested_inspection_id: row.id, expected_updated_at: row.updated_at, p_delete_incomplete: deleteIncomplete,
   }).then(one);
+export async function finalizeInspection(inspection, { sendMoveIn = false, deleteIncomplete = false } = {}) {
+  let current = await freshInspection(inspection.id);
+  if (!current) return { error: { message: "missing" } };
+  if (current.status === "finalized") {
+    await purgeFinalizedChecklistPhotos(inspection.id);
+    return { data: current };
+  }
+  let result;
+  try {
+    if (sendMoveIn && moveInNeedsSend(current)) {
+      const sent = await supabase.rpc("send_move_in_for_review", { p_inspection_id: current.id }).then(one);
+      if (sent.error) throw sent.error;
+      current = sent.data?.updated_at ? sent.data : (await freshInspection(current.id)) ?? current;
+    }
+    result = await finalizeRow(current, deleteIncomplete);
+    if (result.error) throw result.error;
+  } catch (error) {
+    if (!sendMoveIn) return { error };
+    // MoveInSendStatus.recoverFinalize: a lost reply can hide a send or lock that worked.
+    // Finalized: no error. Sent but still a draft: lock it once, never send again.
+    let stored = await freshInspection(inspection.id);
+    if (stored && stored.type === "move_in" && stored.status === "draft" && stored.sent_for_review_at) {
+      await finalizeRow(stored, deleteIncomplete).catch(() => null);
+      stored = (await freshInspection(inspection.id)) ?? stored;
+    }
+    if (stored?.status !== "finalized") return { error };
+    result = { data: stored };
+  }
+  await purgeFinalizedChecklistPhotos(inspection.id);
+  return result;
 }
 // CancelMoveInChecklist: the RPC returns the stored photo paths; the app removes them, then confirms.
 export async function cancelMoveIn(tenancyId) {
