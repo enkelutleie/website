@@ -1897,7 +1897,11 @@ const maintenanceDetail = async (pid, rid) => {
 
   const responseBox = (cls, title, body) => {
     const box = h("div", `pt-mt-response ${cls}`);
-    box.append(h("strong", null, title));
+    if (cls === "is-success") {
+      const head = h("strong", "pt-mt-response-head");
+      head.append(icon("check", "pt-mt-response-icon"), h("span", null, title));
+      box.append(head);
+    } else box.append(h("strong", null, title));
     if (body) box.append(h("p", null, body));
     return box;
   };
@@ -1940,8 +1944,7 @@ const maintenanceDetail = async (pid, rid) => {
           }
         } else row.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på den planlagte datoen ennå."));
       } else if (shared && !manager && !finished()) {
-        // After the tenant approves the date no green box is shown (the toast confirms it).
-        if (item.tenant_response === "accepted") { /* nothing */ }
+        if (item.tenant_response === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker"));
         else if (item.tenant_response === "declined") row.append(responseBox("is-danger", "Avslaget er sendt i chat", item.tenant_response_comment || "Svaret ligger i chatten."));
         else {
           row.append(responseBox("is-warning", "Passer denne dagen?", "Godta hendelsen, eller avslå og skriv i chatten hvilken dag som passer bedre."));

@@ -289,6 +289,9 @@ svg { flex: none; }
 .pt-mt-followup { color: var(--warning); font-size: var(--fs-footnote); font-weight: 600; }
 .pt-mt-response { border-radius: var(--radius-md); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
 .pt-mt-response p { font-size: var(--fs-footnote); }
+.pt-mt-response-head { display: inline-flex; align-items: center; gap: 6px; }
+.pt-mt-response-icon { display: inline-flex; color: var(--success); }
+.pt-mt-response-icon svg { width: 16px; height: 16px; }
 .pt-mt-response.is-success { background: var(--success-soft); color: var(--success); }
 .pt-mt-response.is-danger { background: var(--danger-soft); color: var(--danger); }
 .pt-mt-response.is-warning { background: var(--warning-soft); color: var(--warning); }
