@@ -390,3 +390,12 @@ svg { flex: none; }
 .pt-banner.is-danger { background: var(--danger-soft); color: var(--danger); }
 .pt-banner.is-success { background: var(--success-soft); color: #1f8a3b; }
 .pt-text-danger { color: var(--danger); font-size: var(--fs-footnote); }
+
+/* Boligbilder (PropertyDetailTopCard gallery) */
+.pt-gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-s); margin: var(--space-s) 0; }
+.pt-gallery-item { padding: 0; border: 1px solid var(--brand-border); border-radius: var(--radius-sm); background: var(--brand-wash); cursor: pointer; overflow: hidden; }
+.pt-gallery-item:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.pt-gallery-item .pt-mt-thumb { display: block; border-radius: 0; }
+.pt-gallery-modal .pt-modal-card { width: min(920px, 94vw); }
+.pt-gallery-full { display: block; width: 100%; height: min(70vh, 640px); object-fit: contain; background: var(--brand-wash); border-radius: var(--radius-sm); }
+.pt-gallery-page { text-align: center; margin: var(--space-s) 0 0; }
