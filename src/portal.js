@@ -1897,7 +1897,8 @@ const maintenanceDetail = async (pid, rid) => {
 
   const responseBox = (cls, title, body) => {
     const box = h("div", `pt-mt-response ${cls}`);
-    box.append(h("strong", null, title), h("p", null, body));
+    box.append(h("strong", null, title));
+    if (body) box.append(h("p", null, body));
     return box;
   };
 
@@ -1920,7 +1921,7 @@ const maintenanceDetail = async (pid, rid) => {
         const resp = st.responses.get(item.id);
         const decision = resp?.decision ?? item.tenant_response;
         const comment = resp?.comment ?? item.tenant_response_comment;
-        if (decision === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker", "Denne hendelsen er bekreftet av leietaker."));
+        if (decision === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker"));
         else if (decision === "declined") {
           row.append(responseBox("is-danger", "Avslått av leietaker", comment || "Svaret ligger i chatten."));
           if (!finished()) {
