@@ -1,11 +1,10 @@
 // Årsoppgave: port of iOS Features/Accounting (AnnualReportBuilder, AnnualReportPDF,
-// FurnitureAnnualReport, AnnualReportOwnership). A documentation package with income,
-// expenses, furniture, mileage and receipts for one property and year. All expenses count
-// (no deductible split, as in the app). No tax is computed.
+// FurnitureAnnualReport). One summary of the whole year for the whole property: income,
+// expenses, furniture, mileage and receipts. Every amount is the full property amount; there is
+// no ownership share, no split between landlords and no tax calculation.
 import { supabase } from "./supabase.js";
 import * as inv from "./portal-inventory.js";
 
-const FULL_BPS = 10000;
 export const FURNITURE_NOTE = "Fradrag føres via saldo/direkte fradrag";
 export const DIRECT_TREATMENT = "Direkte fradrag";
 export const SUPPLEMENTS = "Noe av årsrapportgrunnlaget (kjørebok, eiendeler eller eierandel) kunne ikke lastes. Rapporten under kan være ufullstendig. Prøv å laste året på nytt.";
@@ -29,39 +28,10 @@ export const kronerText = (minor) => {
 export const kmText = (meters) => `${String(Math.round(Number(meters) / 100) / 10).replace(".", ",")} km`;
 export const fileName = (year, address) => `Årsoppgave ${year} – ${String(address || "Bolig").replace(/[/:\\]/g, "-")}.pdf`;
 
-// OwnershipShare.shareNearestKrone
-export function shareNearestKrone(amountMinor, bps) {
-  const points = Math.min(Math.max(Number(bps) || 0, 0), FULL_BPS);
-  const product = BigInt(amountMinor) * BigInt(points);
-  const negative = product < 0n;
-  const magnitude = negative ? -product : product;
-  const ore = ((magnitude + 500000n) / 1000000n) * 100n;
-  return Number(negative ? -ore : ore);
-}
 export const percentText = (bps) => {
   const c = inv.clampRate(bps);
   return c % 100 === 0 ? `${c / 100} %` : `${Math.floor(c / 100)},${String(c % 100).padStart(2, "0")} %`;
 };
-const sharePercent = (bps) => {
-  const v = Math.round(bps / 10) / 10;
-  return `${String(v).replace(".", ",")} %`;
-};
-
-// AnnualReportOwnership.isSoleOwner for one property.
-export function isSoleOwner(roster, viewerId) {
-  const rows = roster ?? [];
-  const others = rows.filter((r) => (viewerId ? r.user_id !== viewerId : !r.is_current_user));
-  if (others.length) return false;
-  const own = rows[0];
-  if (own && own.stored_share_bps != null) return own.stored_share_bps >= FULL_BPS;
-  return true;
-}
-export function viewerShareBps(roster, viewerId) {
-  if (!roster?.length) return FULL_BPS;
-  const row = roster.find((r) => (viewerId ? r.user_id === viewerId : r.is_current_user));
-  return row ? Number(row.ownership_share_bps ?? 0) : 0;
-}
-
 // FurnitureAnnualReport.treatment
 export function treatment(item, taxYear, electionsAll) {
   const rate = () => percentText(electionsAll[item.scope?.key ?? "private"]?.[taxYear]?.rate_bps ?? inv.GROUP_D_MAX_RATE_BPS);
@@ -111,16 +81,11 @@ const isFurnishing = (t) => t.category === "furnishings_equipment" || t.legacy_c
 
 /**
  * AnnualReportBuilder.build for one property.
- * input: { year, transactions, trips, links, documents, items, elections, roster, viewerId,
- *          scope: "whole"|"mine", categoryTitle(row), landlordName, propertyTitle, tenantNames, generatedAt }
+ * input: { year, transactions, trips, links, documents, items, elections, driverNames,
+ *          categoryTitle(row), landlordName, propertyTitle, tenantNames, generatedAt }
  */
 export function buildReport(input) {
-  const { year, viewerId } = input;
-  const roster = input.roster ?? [];
-  const sole = isSoleOwner(roster, viewerId);
-  const scope = sole ? "whole" : input.scope === "mine" ? "mine" : "whole";
-  const share = scope === "mine" ? viewerShareBps(roster, viewerId) : FULL_BPS;
-  const scaled = (minor) => (scope === "mine" ? shareNearestKrone(Number(minor), share) : Number(minor));
+  const { year } = input;
   // AccountingLedger.lines: not voided, no financing costs (expected rent is not a stored row).
   const lines = (input.transactions ?? [])
     .filter((t) => !t.voided_at && t.category !== "financing_costs" && String(t.transaction_date).startsWith(String(year)))
@@ -158,25 +123,22 @@ export function buildReport(input) {
   const furniture = furnitureLines(input.items ?? [], year, input.elections ?? {}, furnitureExpenses);
   const furnitureIds = new Set([...furniture.map((l) => l.sourceTransactionId).filter(Boolean), ...furnitureExpenses.map((t) => t.id)]);
   const expenseLines = posted.filter((t) => !furnitureIds.has(t.id));
-  const shownExpenses = scope === "mine" ? expenseLines.filter((t) => !t.personal_for_user_id) : expenseLines;
-  const shownTrips = scope === "mine" ? trips.filter((t) => (t.driver_user_id ?? t.created_by) === viewerId) : trips;
   const entry = (t) => ({
     id: t.id, date: t.transaction_date, dateText: displayDate(t.transaction_date), category: input.categoryTitle(t),
-    description: describe(t), receiptRef: refsOf.get(t.id) ?? null, amountMinor: scaled(t.amount_minor),
+    description: describe(t), receiptRef: refsOf.get(t.id) ?? null, amountMinor: Number(t.amount_minor),
   });
   const incomeEntries = incomes.map(entry);
-  const expenseEntries = shownExpenses.map(entry);
+  const expenseEntries = expenseLines.map(entry);
   const incomeMinor = incomeEntries.reduce((a, e) => a + e.amountMinor, 0);
   const expenseMinor = expenseEntries.reduce((a, e) => a + e.amountMinor, 0);
-  const drivingMeters = shownTrips.reduce((a, t) => a + Number(t.distance_meters), 0);
+  const drivingMeters = trips.reduce((a, t) => a + Number(t.distance_meters), 0);
   return {
-    year, scope, isSoleOwner: sole, shareBps: share,
-    scopeTitle: sole ? "" : scope === "mine" ? `Min andel (${sharePercent(share)})` : "Hele boligen",
+    year,
     landlordName: input.landlordName || "–", propertyTitle: input.propertyTitle || "–",
     periodText: periodText(year), tenantText: input.tenantNames?.length ? input.tenantNames.join(", ") : "–",
     generatedText: displayDate(new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Oslo" }).format(input.generatedAt ?? new Date())),
     incomes: incomeEntries, expenses: expenseEntries, furniture, receipts,
-    trips: shownTrips.map((t) => ({
+    trips: trips.map((t) => ({
       id: t.id, dateText: displayDate(t.trip_date), route: `${t.from_place} → ${t.to_place}`,
       purpose: [String(t.purpose ?? "").trim(), input.driverNames?.[t.driver_user_id ?? t.created_by] ?? ""].filter(Boolean).join(" · "),
       meters: Number(t.distance_meters),
@@ -224,7 +186,7 @@ export function reportBlocks(r) {
     sum: ["Sum kjøring", kmText(r.summary.drivingMeters)],
   });
   blocks.push({
-    type: "table", title: `${n++}  Oppsummering`, trailing: r.scopeTitle,
+    type: "table", title: `${n++}  Oppsummering`,
     columns: [{ label: "", w: 0 }, { label: "", w: 110, align: right }],
     rows: [["Sum inntekter", kronerText(r.summary.incomeMinor)], ["Sum utgifter", kronerText(r.summary.expenseMinor)]],
     sum: ["Differanse inntekter minus utgifter", kronerText(r.summary.differenceMinor)],
