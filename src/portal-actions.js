@@ -2197,3 +2197,46 @@ export async function confirmPrivacyExportSaved(caseId) {
   const payload = typeof data === "string" ? (() => { try { return JSON.parse(data); } catch { return null; } })() : data;
   return payload?.outcome === "finalized";
 }
+
+/* ---------- Leiehistorikk (TenancyHistory) ---------- */
+export async function listTenancyHistory(pid) {
+  const { data, error } = await supabase.rpc("list_tenancy_history", { requested_property_id: pid });
+  return error ? { error } : { data: data ?? [] };
+}
+
+const trimmedText = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+const uniqueValues = (values) => [...new Set(values.map(trimmedText).filter(Boolean))];
+const tenantsOf = (e) => (Array.isArray(e.tenants) ? e.tenants : []);
+// TenancyHistoryPresentation
+export const historyTitle = (e) => {
+  const names = uniqueValues(tenantsOf(e).map((t) => t?.name));
+  if (names.length) return names.join(", ");
+  return trimmedText(e.tenant_name) ?? trimmedText(e.tenant_email) ?? uniqueValues(tenantsOf(e).map((t) => t?.email))[0] ?? "Tidligere leieforhold";
+};
+export const historyPhones = (e) => {
+  const v = uniqueValues(tenantsOf(e).map((t) => t?.phone));
+  return v.length ? v : [trimmedText(e.tenant_phone)].filter(Boolean);
+};
+export const historyEmails = (e) => {
+  const v = uniqueValues(tenantsOf(e).map((t) => t?.email));
+  return v.length ? v : [trimmedText(e.tenant_email)].filter(Boolean);
+};
+const dbDate = (d) => { const p = String(d).split("-"); return p.length >= 3 ? `${p[2].slice(0, 2)}.${p[1]}.${p[0]}` : String(d); };
+export const historyPeriod = (start, end) => {
+  if (!start) return null;
+  return end ? `${dbDate(start)}–${dbDate(end)}` : `Fra ${dbDate(start)}`;
+};
+// History exposes completed settlements, never ongoing or disputed ones.
+export const finishedSettlement = (s) => (s && (s.status === "accepted" || s.status === "full_refund") ? s : null);
+// The settlement is the summary; finalized checklists are only the fallback without one.
+export const visibleChecklists = (settlement, checklists) =>
+  settlement ? [] : (Array.isArray(checklists) ? checklists : [])
+    .filter((c) => c.type === "move_in" || c.type === "move_out")
+    .sort((a, b) => (a.type === "move_in") !== (b.type === "move_in") ? (a.type === "move_in" ? -1 : 1) : 0);
+
+export async function openHistoryReceipt(claim) {
+  if (!claim?.receipt_path) return { message: "Kunne ikke åpne dokumentasjonen. Prøv igjen." };
+  const { data, error } = await supabase.storage.from("deposit-settlement-receipts").download(claim.receipt_path);
+  if (error || !data) return { message: "Kunne ikke åpne dokumentasjonen. Prøv igjen." };
+  return { url: URL.createObjectURL(new Blob([data], { type: claim.receipt_mime || "image/jpeg" })) };
+}
