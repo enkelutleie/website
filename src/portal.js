@@ -527,12 +527,22 @@ const transactionRow = (pid, r, docIds = []) => {
   const inc = r.transaction_type === "income";
   const li = h("li", "pt-row");
   const main = h("div", "pt-row-main");
-  const category = act.categoryTitle(r);
-  main.append(h("strong", null, r.description || category), h("span", null, [dateText(r.transaction_date), category].join(" · ")));
+  // EconomyTransactionPresentation.listCopy: a trip expense shows its purpose and «25,5 km», no category.
+  const mileage = act.mileageFields(r);
+  const category = mileage ? null : act.categoryTitle(r);
+  const title = mileage ? mileage.purpose || "Kjørebok" : r.description || category;
+  const sub = mileage ? [`${act.kilometerText(mileage.meters)} km`, dateText(r.transaction_date)] : [dateText(r.transaction_date), category];
+  main.append(h("strong", null, title), h("span", null, sub.join(" · ")));
+  if (mileage) main.append(h("span", "pt-chip", "Kjørebok"));
   li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
     h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
   if (docIds.length) main.append(h("span", "pt-chip is-success", "Kvittering knyttet"));
-  if (isManager(pid)) {
+  if (isManager(pid) && mileage) {
+    // The trip owns this expense: it is changed in the mileage log, as in the app.
+    const open = h("a", "pt-btn pt-btn-soft pt-btn-small", "Åpne kjørebok");
+    open.href = "#okonomi/kjorebok";
+    li.append(open);
+  } else if (isManager(pid)) {
     li.append(
       button("Kvittering", "pt-btn-soft pt-btn-small", () => receiptDialog(pid, r, docIds)),
       button("Endre", "pt-btn-soft pt-btn-small", () => transactionForm(pid, r.transaction_type, r)),
@@ -3031,6 +3041,153 @@ async function documentsPage() {
   return out;
 }
 
+/* ---------- Kjørebok (MileageView) ---------- */
+const MILEAGE_INFO = `Kjøring til utleieboligen 🚗
+
+Kjører du din egen bil i forbindelse med utleien, kan du ha rett på fradrag for kjøringen.
+
+Det kan for eksempel være når du kjører til boligen for:
+
+• visning
+• vedlikehold eller reparasjoner
+• tilsyn av boligen
+• andre nødvendige oppgaver knyttet til utleien
+
+Satsen er 3,50 kr per km i 2026.
+
+Denne satsen er den samme enten du kjører vanlig bensin-/dieselbil eller elbil.
+
+Når du legger inn en tur i Enkel Utleie, beregner vi automatisk estimert fradrag ut fra antall kilometer.
+
+Eksempel:
+20 km × 3,50 kr = 70 kr estimert fradrag
+
+For å ha god dokumentasjon registrerer du dato, hvor du kjørte fra og til, hvorfor du kjørte og antall kilometer.
+
+Greit å vite
+Reglene kan være annerledes dersom utleien din regnes som næringsvirksomhet. Beregningene i Enkel Utleie er derfor veiledende, og det er Skatteetatens regler som avgjør hva du faktisk har krav på.`;
+const mileageState = { year: null, infoOpen: false };
+
+const economyTiles = () => {
+  const tiles = h("section", "pt-tiles");
+  const tile = h("a", "pt-tile pt-tile-link");
+  tile.href = "#okonomi/kjorebok";
+  tile.append(icon("car", "pt-icon-circle is-tax"), h("strong", null, "Kjørebok"), h("p", null, "Logg turer. Beløpet blir en utgift i regnskapet."));
+  tiles.append(tile);
+  return tiles;
+};
+
+// MileageComposerView: manual kilometers (the app can also measure the route on the map).
+const mileageForm = (pid, trip) => {
+  const requestId = crypto.randomUUID();
+  const preview = h("p", "pt-muted");
+  const rateFor = (date) => act.MILEAGE_RATES[Number(String(date || "").slice(0, 4))];
+  const fields = [
+    { name: "date", label: "Dato", type: "date", value: trip?.trip_date ?? todayISO(), required: true },
+    { name: "from", label: "Fra-adresse", value: trip?.from_place ?? "", placeholder: "F.eks. hjemmeadresse", required: true, requiredMessage: "Skriv inn fra-adresse." },
+    { name: "to", label: "Til-adresse", value: trip?.to_place ?? "", placeholder: "F.eks. Karlsrudveien 12, Oslo", required: true, requiredMessage: "Skriv inn til-adresse." },
+    { name: "purpose", label: "Formål", type: "textarea", value: trip?.purpose ?? "", maxLength: 200, placeholder: "F.eks. visning av leilighet, kjøp av materialer", required: true, requiredMessage: "Skriv inn formål." },
+    { name: "km", label: "Kilometer", value: trip ? act.kilometerText(trip.distance_meters) : "", placeholder: "F.eks. 25,5", required: true, requiredMessage: "Skriv inn kilometer." },
+  ];
+  act.openForm({
+    title: trip ? "Rediger kjøretur" : "Ny kjøretur",
+    intro: trip ? "Lagret som utgift i regnskapet" : undefined,
+    fields,
+    after: [preview],
+    submitLabel: "Lagre tur",
+    onChange: (inputs) => {
+      const rate = rateFor(inputs.date?.value);
+      const meters = act.mileageMeters(inputs.km?.value);
+      const amount = rate && meters ? act.mileageAmountMinor(meters, rate.orePerKm) : null;
+      preview.textContent = amount == null ? "" : `Beløp: ${money(amount)} (${act.orePerKmText(rate.orePerKm)} kr/km)`;
+    },
+    onSubmit: async (v) => {
+      const meters = act.mileageMeters(v.km);
+      if (!meters) return "Skriv inn kilometer mellom 0,1 og 2000.";
+      if (!rateFor(v.date)) return "Ingen offisiell kilometresats for dette året.";
+      const values = { date: v.date, meters, purpose: v.purpose, from: v.from, to: v.to };
+      const res = trip ? await act.correctMileageTrip(trip.id, values, requestId) : await act.createMileageTrip(pid, values, requestId);
+      if (res.error) return trip ? "Kunne ikke oppdatere turen." : "Kunne ikke lagre turen.";
+      mileageState.year = Number(v.date.slice(0, 4));
+      refresh(trip ? "Turen er oppdatert." : "Turen er lagret.");
+      return null;
+    },
+  });
+};
+
+const mileagePage = async (pid) => {
+  const thisYear = new Date().getFullYear();
+  const year = mileageState.year ?? thisYear;
+  const back = h("a", "pt-back", "‹ Økonomi");
+  back.href = "#okonomi";
+  const [res, zone] = await Promise.all([
+    cached(`mileage:${pid}:${year}`, () => act.listMileageTrips(pid, `${year}-01-01`, `${year + 1}-01-01`)),
+    cached("tiltakssone", () => act.taxResidenceInTiltakssone(state.user.id)),
+  ]);
+  const tiltakssone = zone === true;
+  const head = card("Kjøregodtgjørelse", "car");
+  head.append(h("p", "pt-muted", "Registrer kjøring i forbindelse med utleie, og få oversikt over fradragene dine."));
+  const rate = act.MILEAGE_RATES[year];
+  const info = h("div", "pt-mileage-info");
+  info.hidden = !mileageState.infoOpen;
+  info.append(
+    h("p", "pt-ho-status", rate ? `Sats ${year}: ${act.orePerKmText(rate.orePerKm)} kr/km · ${rate.authority}` : "Ingen offisiell kilometresats for dette året."),
+    h("p", "pt-prewrap", MILEAGE_INFO),
+  );
+  if (act.STATE_CAR_ALLOWANCE[year]) info.append(h("p", "pt-muted", `Statens kjøregodtgjørelse er ${act.orePerKmText(act.STATE_CAR_ALLOWANCE[year])} kr/km i ${year}. Den brukes ikke her.`));
+  const toggle = button(mileageState.infoOpen ? "Skjul" : "Les mer", "pt-btn-soft pt-btn-small", () => {
+    mileageState.infoOpen = !mileageState.infoOpen;
+    info.hidden = !mileageState.infoOpen;
+    toggle.textContent = mileageState.infoOpen ? "Skjul" : "Les mer";
+  });
+  const yearLabel = h("label", "pt-field pt-filter");
+  const select = h("select", "pt-select");
+  for (let y = thisYear; y >= Math.min(year, thisYear - 2); y--) {
+    const o = h("option", null, String(y));
+    o.value = String(y);
+    o.selected = y === year;
+    select.append(o);
+  }
+  select.addEventListener("change", () => { mileageState.year = Number(select.value); render(); });
+  yearLabel.append(h("span", "pt-field-label", "År"), select);
+  head.append(actionsRow(toggle, isManager(pid) ? button("Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid)) : null), info, yearLabel);
+  if (res.error) {
+    head.append(inline("Kunne ikke laste kjøreboka."));
+    return [back, head];
+  }
+  const trips = [...(res.data ?? [])].sort((a, b) => b.trip_date.localeCompare(a.trip_date) || String(b.created_at).localeCompare(String(a.created_at)));
+  const meters = trips.reduce((a, t) => a + Number(t.distance_meters), 0);
+  const deduction = trips.reduce((a, t) => a + Number(t.amount_minor ?? 0), 0);
+  const bps = act.SET_ASIDE_BPS[year]?.[tiltakssone ? 1 : 0];
+  const rateLabel = bps ? `${act.percentText(bps)}${tiltakssone ? " (tiltakssonen)" : ""}` : null;
+  const grid = h("section", "pt-kpis");
+  for (const [label, value] of [
+    [`Km i ${year}`, act.kilometerText(meters)],
+    ["Fradragsgrunnlag", money(deduction)],
+    [rateLabel ? `Spart skatt (${rateLabel})` : "Spart skatt", bps ? money(Math.round((deduction * bps) / 10000)) : "Usikkert"],
+  ]) {
+    const k = h("section", "pt-card pt-kpi");
+    k.append(h("div", "pt-kpi-top", label), h("p", "pt-kpi-value", value));
+    grid.append(k);
+  }
+  const list = card("Alle turer", "car");
+  if (!trips.length) list.append(inline("Ingen turer registrert i år."));
+  else {
+    const ul = h("ul", "pt-list");
+    for (const t of trips) {
+      const li = h("li", "pt-row");
+      const main = h("div", "pt-row-main");
+      const route = [act.displayPlace(t.from_place), act.displayPlace(t.to_place)].filter(Boolean).join(" – ");
+      main.append(h("strong", null, route || t.purpose || "Kjøretur"), h("span", null, [dateText(t.trip_date), t.purpose, `${act.kilometerText(t.distance_meters)} km`].filter(Boolean).join(" · ")));
+      li.append(icon("car", "pt-icon-circle is-tax"), main, h("span", "pt-amount is-expense", `−${money(t.amount_minor)}`));
+      if (isManager(pid)) li.append(button("Rediger", "pt-btn-soft pt-btn-small", () => mileageForm(pid, t)));
+      ul.append(li);
+    }
+    list.append(ul);
+  }
+  return [back, head, grid, list];
+};
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
@@ -3050,10 +3207,11 @@ const PAGES = {
     return out;
   },
   async boliger() { return [propertiesTable()]; },
-  async okonomi() {
+  async okonomi(sub) {
     const p = property();
     if (!p) return [noProperty()];
-    return [await kpis(p.id), ...(await transactionList(p.id))];
+    if (sub === "kjorebok") return mileagePage(p.id);
+    return [await kpis(p.id), economyTiles(), ...(await transactionList(p.id))];
   },
   async "om-boligen"() {
     const p = property();

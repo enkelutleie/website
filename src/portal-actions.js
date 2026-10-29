@@ -1832,3 +1832,105 @@ export function inkPad() {
   clear.addEventListener("click", () => { strokes.length = 0; draw(); wrap.dispatchEvent(new Event("input", { bubbles: true })); });
   return { node: wrap, strokes: () => strokes.map((s) => s.map((p) => ({ ...p }))) };
 }
+
+/* ---------- Kjørebok (MileageController.swift, MileageLedger.swift) ---------- */
+// MileageRateCatalog.json: Skatteetaten's rate for yrkeskjøring med privatbil, also elbil.
+export const MILEAGE_RATES = {
+  2025: { orePerKm: 350, authority: "Skatteetaten" },
+  2026: { orePerKm: 350, authority: "Skatteetaten" },
+};
+// MileageLedger.stateCarAllowanceOrePerKm: shown as a footnote only, never used.
+export const STATE_CAR_ALLOWANCE = { 2025: 500, 2026: 530 };
+// SetAsideEstimateManifest.json: ordinary rate and the tiltakssone rate, in basis points.
+export const SET_ASIDE_BPS = { 2025: [2200, 1850], 2026: [2200, 1850] };
+export const MILEAGE_MIN_METERS = 100;
+export const MILEAGE_MAX_METERS = 2000000;
+
+// MileageLedger.meters(fromKilometerInput:): "25,5" -> 25500, 0,1–2000 km.
+export const mileageMeters = (input) => {
+  const compact = String(input ?? "").replace(/[\u00a0\s]/g, "").replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(compact) && !/^\.\d+$/.test(compact)) return null;
+  const meters = Math.round(Number(compact) * 1000);
+  return meters >= MILEAGE_MIN_METERS && meters <= MILEAGE_MAX_METERS ? meters : null;
+};
+// MileageLedger.amountMinor: rounded to whole øre, like mileage_amount_minor on the server.
+export const mileageAmountMinor = (meters, orePerKm) =>
+  meters > 0 && orePerKm > 0 ? Math.floor((meters * orePerKm + 500) / 1000) : null;
+// MileageLedger.kilometerText: one decimal, comma, no trailing ",0".
+export const kilometerText = (meters) => String(Math.round(Number(meters) / 100) / 10).replace(".", ",");
+export const orePerKmText = (ore) => (ore / 100).toFixed(2).replace(".", ",");
+export const percentText = (bps) => {
+  const whole = Math.floor(bps / 100);
+  const rest = bps % 100;
+  return `${rest === 0 ? whole : rest % 10 === 0 ? `${whole},${rest / 10}` : `${whole},${String(rest).padStart(2, "0")}`} %`;
+};
+// MileageLedger.storedPlaceText: collapse whitespace, at most 120 characters, cut at a word.
+export const storedPlaceText = (raw) => {
+  const text = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  if (text.length <= 120) return text;
+  const prefix = text.slice(0, 120);
+  const space = prefix.lastIndexOf(" ");
+  return space > 0 ? prefix.slice(0, space).trim() || prefix : prefix;
+};
+// MileageTripListPresentation.displayPlace: no trailing ", Norge".
+export const displayPlace = (raw) => {
+  const text = String(raw ?? "").trim().replace(/,\s*(Norge|Norway)$/i, "").trim();
+  return text || null;
+};
+// EconomyTransactionPresentation.mileageFields: create_mileage_trip books
+// «Kjørebok · fra – til · formål · 25.5 km». Null when the row is not a trip expense.
+const isRoutePart = (part) => part.includes(" – ") || part.includes(" - ") || /, (norge|norway)/i.test(part) || /,\s*\d{4}\b/.test(part);
+export const mileageFields = (row) => {
+  if (row?.transaction_type !== "expense") return null;
+  const text = String(row.description ?? "").trim();
+  if (!text.startsWith("Kjørebok")) return null;
+  const parts = text.split(" · ").map((p) => p.trim()).filter(Boolean);
+  const last = parts[parts.length - 1] ?? "";
+  if (!/km$/i.test(last)) return null;
+  const km = Number(last.slice(0, -2).trim().replace(",", "."));
+  if (!(km > 0)) return null;
+  const rest = parts.slice(1, -1);
+  const purpose = [...rest].reverse().find((p) => !isRoutePart(p)) ?? null;
+  return { purpose, meters: Math.round(km * 1000) };
+};
+export const isMileageExpense = (row) => mileageFields(row) !== null;
+
+// SupabaseMileageRemote.list: pages of 200 until an empty page. End date is exclusive.
+export async function listMileageTrips(propertyId, startDate, endDate) {
+  const rows = [];
+  for (;;) {
+    const { data, error } = await supabase.rpc("list_mileage_trips", {
+      requested_property_id: propertyId, requested_start_date: startDate, requested_end_date: endDate,
+      requested_offset: rows.length, requested_page_size: 200,
+    });
+    if (error) return { error };
+    if (!data?.length) return { data: rows.filter((t) => !t.voided_at) };
+    rows.push(...data);
+  }
+}
+const tripPayload = (v) => ({
+  requested_trip_date: v.date,
+  requested_distance_meters: v.meters,
+  requested_purpose: v.purpose?.trim() || null,
+  requested_from_place: storedPlaceText(v.from),
+  requested_to_place: storedPlaceText(v.to),
+});
+// The server replays the same trip for the same client request id (safe retry).
+export async function createMileageTrip(propertyId, v, clientRequestId) {
+  const { data, error } = await supabase.rpc("create_mileage_trip", {
+    requested_property_id: propertyId, ...tripPayload(v), requested_client_request_id: clientRequestId,
+  });
+  return error ? { error } : { data: first(data) };
+}
+export async function correctMileageTrip(tripId, v, clientRequestId) {
+  const { data, error } = await supabase.rpc("correct_mileage_trip", {
+    requested_trip_id: tripId, ...tripPayload(v), requested_client_request_id: clientRequestId,
+  });
+  return error ? { error } : { data: first(data) };
+}
+// ProfileRepository: tax_residence_tiltakssone picks 18,5 % instead of 22 %.
+export async function taxResidenceInTiltakssone(userId) {
+  const { data } = await supabase.from("profiles").select("tax_residence_tiltakssone").eq("id", userId).maybeSingle();
+  return data?.tax_residence_tiltakssone === true;
+}
