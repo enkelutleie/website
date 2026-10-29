@@ -339,7 +339,8 @@ const dataUrlOf = (blob) =>
     reader.readAsDataURL(blob);
   });
 
-const toJpeg = (file) =>
+const toJpeg = async (file) => (await toJpegSized(file)).blob;
+const toJpegSized = (file) =>
   new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -348,8 +349,12 @@ const toJpeg = (file) =>
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(img.naturalWidth * scale);
       canvas.height = Math.round(img.naturalHeight * scale);
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("jpeg"))), "image/jpeg", 0.85);
+      const ctx = canvas.getContext("2d");
+      // JPEG has no transparency: put PNG receipts on white, not black.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => (blob ? resolve({ blob, width: canvas.width, height: canvas.height }) : reject(new Error("jpeg"))), "image/jpeg", 0.85);
     };
     img.onerror = () => reject(new Error("Bildet kunne ikke leses."));
     // CSP allows data: images only (img-src 'self' data:), so no blob: URLs.
@@ -844,4 +849,95 @@ export async function hasPremium() {
   const active = (ent.data ?? []).some((r) =>
     ["active", "grace", "canceled"].includes(r.status) && (!r.expires_at || new Date(r.expires_at).getTime() > now));
   return { ok: active };
+}
+
+/* ---------- Kvitteringer (FinancialTransactionReceiptController / EconomyController) ---------- */
+// Receipts on an existing post use the document lifecycle (PDF in "documents") plus
+// link_financial_transaction_document, as the app's saveAttachment. Images become a one-page PDF.
+export const RECEIPT_FILTERS = [["all", "Alle"], ["withReceipt", "Med kvittering"], ["withoutReceipt", "Uten kvittering"]];
+const MAX_DOCUMENT_BYTES = 10_000_000;
+export const transactionDocLinks = (propertyId) =>
+  supabase.from("financial_transaction_documents").select("transaction_id, document_id, linked_at").eq("property_id", propertyId);
+export const linkableDocuments = (propertyId) => supabase.rpc("list_property_documents", { requested_property_id: propertyId });
+export const receiptDocuments = (ids) =>
+  supabase.from("documents").select("id, title, original_file_name, status, created_at").in("id", ids);
+export const linkReceipt = (transactionId, documentId) =>
+  supabase.rpc("link_financial_transaction_document", { requested_transaction_id: transactionId, requested_document_id: documentId });
+export const unlinkReceipt = (transactionId, documentId) =>
+  supabase.rpc("unlink_financial_transaction_document", { requested_transaction_id: transactionId, requested_document_id: documentId });
+
+const ascii = (str) => new TextEncoder().encode(str);
+// Minimal PDF 1.4: one page the size of the image, the JPEG embedded as DCTDecode.
+export function jpegToPdf(jpeg, width, height) {
+  const parts = [];
+  const offsets = [];
+  let length = 0;
+  const push = (chunk) => { parts.push(chunk); length += chunk.length; };
+  const obj = (n, body, stream) => {
+    offsets[n] = length;
+    push(ascii(`${n} 0 obj\n${body}\n`));
+    if (stream) { push(ascii("stream\n")); push(stream); push(ascii("\nendstream\n")); }
+    push(ascii("endobj\n"));
+  };
+  const content = ascii(`q\n${width} 0 0 ${height} 0 0 cm\n/Im0 Do\nQ\n`);
+  push(ascii("%PDF-1.4\n"));
+  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+  obj(4, `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>`, jpeg);
+  obj(5, `<< /Length ${content.length} >>`, content);
+  const xref = length;
+  push(ascii(`xref\n0 6\n0000000000 65535 f \n${[1, 2, 3, 4, 5].map((n) => `${String(offsets[n]).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`));
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const c of parts) { out.set(c, at); at += c.length; }
+  return out;
+}
+
+const RECEIPT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
+async function receiptPdfBytes(file) {
+  if (!file || !RECEIPT_TYPES.includes(file.type)) return { message: "Filtypen støttes ikke. Bruk PDF, JPEG eller PNG." };
+  let bytes;
+  if (file.type === "application/pdf") bytes = new Uint8Array(await file.arrayBuffer());
+  else {
+    const { blob, width, height } = await toJpegSized(file);
+    bytes = jpegToPdf(new Uint8Array(await blob.arrayBuffer()), width, height);
+  }
+  const head = new TextDecoder().decode(bytes.slice(0, 5));
+  if (!bytes.length || bytes.length > MAX_DOCUMENT_BYTES || head !== "%PDF-") return { message: "Kvitteringen kunne ikke importeres." };
+  return { bytes };
+}
+
+const documentLifecycle = async (body) => {
+  const { data, error } = await supabase.functions.invoke("document-lifecycle", { body });
+  if (error) {
+    try {
+      const parsed = await error.context?.json?.();
+      if (parsed?.outcome) return parsed;
+    } catch { /* ignore */ }
+    throw error;
+  }
+  return data;
+};
+
+// prepareAttachment: reserve -> upload -> finalize, then link the ready document to the post.
+export async function attachReceipt(propertyId, transactionId, file) {
+  const SAVE_FAILED = "Kunne ikke lagre kvitteringen. Prøv igjen.";
+  try {
+    const pdf = await receiptPdfBytes(file);
+    if (pdf.message) return pdf.message;
+    const reservation = await documentLifecycle({
+      action: "reserve", property_id: propertyId, reservation_key: crypto.randomUUID(),
+      title: "Kvittering", original_file_name: "receipt.pdf", file_size_bytes: pdf.bytes.length,
+    });
+    if (!["reserved", "already_reserved"].includes(reservation?.outcome) || !reservation.document_id || !reservation.storage_path || reservation.status !== "pending") return SAVE_FAILED;
+    const up = await supabase.storage.from("documents").upload(reservation.storage_path, new Blob([pdf.bytes], { type: "application/pdf" }), { cacheControl: "0", contentType: "application/pdf", upsert: false });
+    if (up.error) return SAVE_FAILED;
+    const done = await documentLifecycle({ action: "finalize", document_id: reservation.document_id });
+    if (!["ready", "already_ready"].includes(done?.outcome) || done.document_id !== reservation.document_id || done.status !== "ready") return SAVE_FAILED;
+    const link = await linkReceipt(transactionId, reservation.document_id);
+    return link.error ? "Kunne ikke koble dokumentet. Prøv igjen." : null;
+  } catch {
+    return SAVE_FAILED;
+  }
 }
