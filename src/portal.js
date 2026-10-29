@@ -15,11 +15,6 @@ const toLogin = () => location.replace("/logg-inn/");
 const VISIBLE_TENANCY_STATUSES = ["draft", "invited", "active"];
 const OPEN_TASK_STATUSES = ["reported", "in_progress", "waiting"];
 const TENANCY_LABEL = { draft: "Utkast", invited: "Invitert", active: "Aktivt" };
-const CATEGORY = {
-  rent: "Husleie", reimbursement: "Refusjon", other_income: "Annen inntekt", maintenance: "Vedlikehold",
-  improvement: "Påkostning", electricity_heating: "Strøm og oppvarming",
-  other_expense: "Utgift", furnishings_equipment: "Møbler og inventar",
-};
 const HANDBOOK_TILES = [
   ["wifi", "Wi-Fi", "wifi", "is-success"],
   ["fuse_box", "Sikringsskap", "fuse", "is-warning"],
@@ -144,7 +139,7 @@ const transactions = (pid) =>
   cached(`tx:${pid}`, async () => {
     const yearStart = `${new Date().getFullYear()}-01-01`;
     return supabase.from("financial_transactions")
-      .select("id, transaction_type, category, amount_minor, transaction_date, description, counterparty, maintenance_request_id, updated_at")
+      .select("id, transaction_type, category, legacy_category, amount_minor, transaction_date, description, counterparty, maintenance_request_id, updated_at")
       // As in the app (#1468): future-dated posts (e.g. a recurring series) are not shown yet.
       .eq("property_id", pid).is("voided_at", null).gte("transaction_date", yearStart).lte("transaction_date", todayISO())
       .order("transaction_date", { ascending: false }).limit(1000);
@@ -531,7 +526,8 @@ const transactionRow = (pid, r, docIds = []) => {
   const inc = r.transaction_type === "income";
   const li = h("li", "pt-row");
   const main = h("div", "pt-row-main");
-  main.append(h("strong", null, r.description || CATEGORY[r.category] || (inc ? "Inntekt" : "Utgift")), h("span", null, [dateText(r.transaction_date), CATEGORY[r.category]].filter(Boolean).join(" · ")));
+  const category = act.categoryTitle(r);
+  main.append(h("strong", null, r.description || category), h("span", null, [dateText(r.transaction_date), category].join(" · ")));
   li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
     h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
   if (docIds.length) main.append(h("span", "pt-chip is-success", "Kvittering knyttet"));
@@ -638,12 +634,19 @@ const recurrenceCaption = (frequency, date) =>
 const transactionForm = (pid, type, row) => {
   const income = type === "income";
   const cats = income ? act.INCOME_CATEGORIES : act.EXPENSE_CATEGORIES;
+  // Editing shows the bucket (Påkostning/Møbler → «Annen utgift»). An inventory purchase left
+  // on «Annen utgift» still saves furnishings_equipment so the server keeps the asset.
+  const current = row ? act.effectiveCategory(row.category, row.legacy_category) : null;
+  const known = cats.some(([v]) => v === current);
+  const keepsFurnishing = !income && act.isFurnishingPurchase(row);
+  const options = income && !known ? [["", "Velg kategori"], ...cats] : cats;
+  const categoryValue = known ? current : income ? "" : cats[0][0];
   const activeTenancy = state.tenancies.find((t) => t.property_id === pid && t.status === "active");
   return act.openForm({
     title: row ? "Endre post" : income ? "Ny inntekt" : "Ny utgift",
     submitLabel: row ? "Lagre endringer" : "Lagre",
     fields: [
-      { name: "category", label: "Kategori", type: "select", options: cats, value: row?.category && cats.some(([v]) => v === row.category) ? row.category : cats[0][0], required: true },
+      { name: "category", label: "Kategori", type: "select", options, value: categoryValue, required: true, requiredMessage: "Velg kategori", help: income ? " " : undefined },
       { name: "amount", label: "Beløp", type: "money", value: row ? act.kronerOf(row.amount_minor) : "", required: true, placeholder: "0,00" },
       { name: "date", label: "Dato", type: "date", value: row?.transaction_date ?? todayISO(), required: true },
       income
@@ -657,6 +660,10 @@ const transactionForm = (pid, type, row) => {
       ]),
     ],
     onChange: (inputs, show) => {
+      if (income) {
+        const help = inputs.category.closest(".pt-field").querySelector(".pt-field-help");
+        if (help) help.textContent = act.INCOME_CATEGORY_DETAIL[inputs.category.value] ?? "";
+      }
       if (row) return;
       if (inputs.category.value === "rent" && !inputs.repeats.dataset.touched) inputs.repeats.value = "yes";
       inputs.repeats.addEventListener("change", () => { inputs.repeats.dataset.touched = "1"; }, { once: true });
@@ -667,7 +674,8 @@ const transactionForm = (pid, type, row) => {
     onSubmit: async (v) => {
       const amountMinor = act.minorOf(v.amount);
       if (!amountMinor || amountMinor <= 0) return "Skriv et gyldig beløp større enn 0.";
-      const values = { ...v, type, amountMinor, recurrence: v.repeats === "yes" ? v.recurrence : "none" };
+      const category = keepsFurnishing && v.category === "miscellaneous_expense" ? "furnishings_equipment" : v.category;
+      const values = { ...v, category, type, amountMinor, recurrence: v.repeats === "yes" ? v.recurrence : "none" };
       const res = row ? await act.updateTransaction(row, values) : await act.createTransaction(pid, values, activeTenancy?.id);
       if (res.error) return act.explain(res.error);
       const created = Array.isArray(res.data) ? res.data[0] : res.data;
@@ -716,7 +724,7 @@ const receiptDialog = async (pid, r, docIds) => {
   const linkable = (all.data ?? []).filter((d) => d.status === "ready" && !docIds.includes(d.id));
   return act.openForm({
     title: "Kvittering og bilag",
-    intro: `${r.description || CATEGORY[r.category] || "Post"} · ${dateText(r.transaction_date)} · ${money(r.amount_minor)}`,
+    intro: `${r.description || act.categoryTitle(r)} · ${dateText(r.transaction_date)} · ${money(r.amount_minor)}`,
     sections: [wrap],
     submitLabel: "Lagre",
     footer: (close) => { closeDialog = close; return h("span"); },

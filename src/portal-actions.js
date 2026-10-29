@@ -121,7 +121,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         const hidden = input.closest(".pt-field").hidden;
         values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null) : input.value.trim();
         if (f.required && !hidden && !values[f.name]) {
-          status.textContent = `Fyll ut «${f.label}».`;
+          status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
           status.hidden = false;
           input.focus();
           return;
@@ -189,8 +189,49 @@ export function toast(text) {
 const first = (data) => (Array.isArray(data) ? data[0] : data);
 
 /* ---------- Økonomi (EconomyController.swift) ---------- */
-export const INCOME_CATEGORIES = [["rent", "Husleie"], ["reimbursement", "Refusjon"], ["other_income", "Annen inntekt"]];
-export const EXPENSE_CATEGORIES = [["other_expense", "Utgift"], ["improvement", "Påkostning"], ["furnishings_equipment", "Møbler og inventar"]];
+// Picker choices in the app's order (#1511). «Uten kategori» is not an income choice.
+export const INCOME_CATEGORIES = [
+  ["rent", "Husleie"], ["electricity_heating_income", "Strøm og oppvarming"], ["parking", "Parkering"],
+  ["additional_rent", "Tilleggsleie"], ["reimbursement", "Refusjon"], ["other_income", "Annen inntekt"],
+];
+export const INCOME_CATEGORY_DETAIL = {
+  rent: "Månedlig leieinntekt.",
+  electricity_heating_income: "Betaling fra leietaker for strøm og oppvarming.",
+  parking: "Inntekter fra parkeringsplass eller garasje.",
+  additional_rent: "Utleie av bod, møbler eller andre tillegg.",
+  reimbursement: "Tilbakebetaling av utlegg.",
+  other_income: "Inntekter som ikke passer i de andre kategoriene.",
+};
+// «Utgift» stays other_expense; «Annen utgift» is miscellaneous_expense. Kjørebok and
+// Møbler og inventar are their own pages.
+export const EXPENSE_CATEGORIES = [
+  ["other_expense", "Utgift"], ["maintenance", "Vedlikehold"], ["municipal_fees", "Kommunale avgifter"],
+  ["electricity_heating", "Strøm og oppvarming"], ["insurance", "Forsikring"], ["miscellaneous_expense", "Annen utgift"],
+];
+const CATEGORY_TITLE = {
+  ...Object.fromEntries(INCOME_CATEGORIES), ...Object.fromEntries(EXPENSE_CATEGORIES),
+  financing_costs: "Finansieringskostnader",
+};
+const KNOWN_CATEGORIES = new Set([...Object.keys(CATEGORY_TITLE), "improvement", "furnishings_equipment", "property_tax", "common_costs", "letting_management"]);
+const FOLDED_TO_MISC = new Set(["improvement", "furnishings_equipment"]);
+
+// FinancialTransactionCategory.effectiveCategory: Påkostning and Møbler og utstyr show as
+// «Annen utgift», also when the server folded them to other_expense with legacy_category.
+export function effectiveCategory(category, legacyCategory) {
+  if (FOLDED_TO_MISC.has(category)) return "miscellaneous_expense";
+  if (["property_tax", "common_costs", "letting_management"].includes(category)) return "other_expense";
+  if (category === "other_expense" && FOLDED_TO_MISC.has((legacyCategory ?? "").trim())) return "miscellaneous_expense";
+  return category || null;
+}
+export function categoryTitle(row) {
+  const raw = (row.category ?? "").trim();
+  if (!raw) return "Uten kategori";
+  if (!KNOWN_CATEGORIES.has(raw)) return "Ukjent kategori";
+  return CATEGORY_TITLE[effectiveCategory(raw, row.legacy_category)] ?? "Ukjent kategori";
+}
+// Inventory purchase, also when already folded (category or legacy_category).
+export const isFurnishingPurchase = (row) =>
+  row?.category === "furnishings_equipment" || row?.legacy_category === "furnishings_equipment";
 export const RECURRENCE = [["monthly", "Hver måned"], ["weekly", "Hver uke"], ["yearly", "Hvert år"]];
 
 export async function createTransaction(propertyId, v, activeTenancyId) {
