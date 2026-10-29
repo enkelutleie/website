@@ -313,7 +313,11 @@ const tenancyCard = async (pid) => {
     if (isManager(pid) && !tenants.length) sub.append(actionsRow(button("Inviter leietaker", "pt-btn-soft pt-btn-small", () => inviteForm(pid, t))));
     c.append(sub);
   }
-  if (isManager(pid)) c.append(actionsRow(button("Nytt leieforhold", "pt-btn-secondary pt-btn-small", () => inviteForm(pid))));
+  // A whole home has one active tenancy; shared housing can invite per room.
+  const shared = state.properties.find((x) => x.id === pid)?.housing_kind === "shared";
+  if (isManager(pid) && (shared || !own.some((t) => t.status === "active"))) {
+    c.append(actionsRow(button("Inviter leietaker", "pt-btn-secondary pt-btn-small", () => inviteForm(pid))));
+  }
   return c;
 };
 
@@ -589,40 +593,59 @@ const photoForm = (p) =>
     },
   });
 
-const inviteForm = (pid, tenancy) =>
-  act.openForm({
-    title: tenancy ? "Inviter leietaker" : "Nytt leieforhold",
-    intro: "Leietakeren får en e-post med invitasjon og godtar den i appen.",
+const INVITE_PRIVACY = "Leietakeren får sin egen side i appen og har ikke tilgang til din økonomi eller annen privat informasjon.";
+const inviteDone = (res) => refresh(res.sent ? "Invitasjonen er sendt." : "Invitasjonen er opprettet, men e-postutsendingen ble ikke bekreftet.");
+const validEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+const inviteError = (error) => (/active_tenancy|already.*active/i.test(String(error?.message ?? "")) ? "Boligen har allerede et aktivt leieforhold." : act.explain(error));
+
+// TenancyInvitationSheet: only the tenant's e-mail, plus the room for shared housing.
+const inviteForm = async (pid, tenancy) => {
+  const emailField = { name: "email", label: "E-post", type: "email", required: true, maxLength: 254, placeholder: "leietaker@eksempel.no", help: INVITE_PRIVACY };
+  if (tenancy) {
+    return act.openForm({
+      title: "Inviter leietaker",
+      intro: "Legg til leietaker i dette leieforholdet",
+      submitLabel: "Send invitasjon",
+      fields: [emailField],
+      onSubmit: async (v) => {
+        if (!validEmail(v.email)) return "Skriv en gyldig e-postadresse.";
+        const res = await act.inviteToExisting(tenancy.id, v.email);
+        if (res.error) return inviteError(res.error);
+        await inviteDone(res);
+        return null;
+      },
+    });
+  }
+  const p = state.properties.find((x) => x.id === pid);
+  let rooms = null;
+  if (p?.housing_kind === "shared") {
+    const res = await act.invitableRooms(pid);
+    if (res.error) return act.toast("Rommene kunne ikke hentes akkurat nå. Prøv igjen.");
+    rooms = res.data;
+    if (!rooms.length) return act.toast("Ingen rom ennå. Legg til det første rommet.");
+    if (rooms.every((r) => r.blocked)) return act.toast("Alle enheter har allerede et aktivt leieforhold. Legg til et rom for å invitere en ny leietaker.");
+  }
+  const free = rooms?.filter((r) => !r.blocked) ?? [];
+  return act.openForm({
+    title: "Inviter leietaker",
     submitLabel: "Send invitasjon",
     fields: [
-      { name: "email", label: "Leietakers e-post", type: "email", required: true, maxLength: 254 },
-      ...(tenancy ? [] : [
-        { name: "start", label: "Startdato", type: "date", value: todayISO(), required: true },
-        { name: "end", label: "Sluttdato", type: "date", help: "Tomt betyr løpende leieforhold." },
-        { name: "rent", label: "Månedlig husleie (kr)", type: "money" },
-        { name: "payday", label: "Forfallsdag (1–31)", type: "number", min: 1, max: 31 },
-        { name: "deposit", label: "Depositum (kr)", type: "money" },
-      ]),
+      ...(rooms ? [{
+        name: "unit", label: "Utleieenhet", type: "select", required: true, value: free[0]?.id,
+        help: "Velg hvilket rom invitasjonen gjelder",
+        options: rooms.filter((r) => !r.blocked).map((r) => [r.id, r.label]),
+      }] : []),
+      emailField,
     ],
     onSubmit: async (v) => {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email)) return "Skriv en gyldig e-postadresse.";
-      let res;
-      if (tenancy) {
-        res = await act.inviteToExisting(tenancy.id, v.email);
-      } else {
-        const rentMinor = v.rent ? act.minorOf(v.rent) : null;
-        const depositMinor = v.deposit ? act.minorOf(v.deposit) : null;
-        if (v.rent && rentMinor == null) return "Skriv en gyldig husleie.";
-        if (v.deposit && depositMinor == null) return "Skriv et gyldig depositum.";
-        if (v.payday && !(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Forfallsdagen må være mellom 1 og 31.";
-        if (v.end && v.end < v.start) return "Sluttdatoen må være etter startdatoen.";
-        res = await act.inviteNewTenancy(pid, { ...v, rentMinor, depositMinor });
-      }
-      if (res.error) return act.explain(res.error);
-      await refresh(res.sent ? "Invitasjonen er sendt." : "Invitasjonen er lagret, men e-posten kunne ikke sendes. Send den på nytt fra appen.");
+      if (!validEmail(v.email)) return "Skriv en gyldig e-postadresse.";
+      const res = await act.inviteNewTenancy(pid, v.email, rooms ? v.unit : null);
+      if (res.error) return inviteError(res.error);
+      await inviteDone(res);
       return null;
     },
   });
+};
 
 const contractForm = (pid) => {
   const tenancies = state.tenancies.filter((t) => t.property_id === pid);
