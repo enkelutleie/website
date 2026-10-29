@@ -328,7 +328,8 @@ const calendarDetail = async (itemId, requestId) => {
       const respond = async (decision, comment) => {
         const r = await act.respondToCalendarItem(item.id, decision, comment);
         if (r.error) return "Svaret kunne ikke sendes";
-        await refresh(decision === "accepted" ? "Du har godtatt hendelsen" : "Avslaget er sendt i chat");
+        // iOS #1514: a planned maintenance date (linked case) gets no «Du har godtatt hendelsen».
+        await refresh(decision === "declined" ? "Avslaget er sendt i chat" : item.maintenance_request_id ? undefined : "Du har godtatt hendelsen");
         return null;
       };
       c.append(actionsRow(
@@ -2076,7 +2077,8 @@ const maintenanceDetail = async (pid, rid) => {
             if (res.error) return "Svaret kunne ikke sendes";
             await loadSchedule();
             draw();
-            act.toast(decision === "accepted" ? "Du har godtatt hendelsen" : "Avslaget er sendt i chat");
+            // iOS #1514: accepting a planned maintenance date shows no «Du har godtatt hendelsen».
+            if (decision === "declined") act.toast("Avslaget er sendt i chat");
             return null;
           };
           row.append(actionsRow(
