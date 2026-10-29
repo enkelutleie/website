@@ -3859,6 +3859,120 @@ const incomingCoLandlordCard = async () => {
   return c;
 };
 
+/* ---------- Boligbilder (PropertyDetailTopCard / PropertyGalleryViewer) ---------- */
+const linkButton = (label, href) => {
+  const l = h("a", "pt-btn pt-btn-soft pt-btn-small", label);
+  l.href = href;
+  return l;
+};
+const GALLERY_LIMIT_TEXT = "Du kan ha opptil 12 bilder per bolig. Slett et bilde for å legge til et nytt.";
+
+const galleryViewer = (images, start, urls, onRemove) => {
+  let index = start;
+  const dialog = h("dialog", "pt-modal pt-gallery-modal");
+  const box = h("div", "pt-modal-card");
+  const head = h("div", "pt-card-head");
+  head.append(h("h2", null, "Boligbilder"));
+  const img = h("img", "pt-gallery-full");
+  const page = h("p", "pt-muted pt-gallery-page");
+  const close = () => { dialog.close(); dialog.remove(); };
+  const show = async () => {
+    const image = images[index];
+    page.textContent = `${index + 1} av ${images.length}`;
+    img.alt = `Boligbilde ${index + 1} av ${images.length}`;
+    img.removeAttribute("src");
+    const url = urls.get(image.id) ?? (await act.propertyImageUrl(image.storage_path).catch(() => null));
+    if (url && images[index] === image) { urls.set(image.id, url); img.src = url; }
+  };
+  const prev = button("Forrige", "pt-btn-soft pt-btn-small", () => { index = (index - 1 + images.length) % images.length; show(); });
+  const next = button("Neste", "pt-btn-soft pt-btn-small", () => { index = (index + 1) % images.length; show(); });
+  prev.disabled = next.disabled = images.length < 2;
+  const remove = button("Fjern dette bildet", "pt-btn-quiet-destructive pt-btn-small", async () => {
+    const ok = await act.confirmAction({ title: "Fjern dette bildet", text: "Bildet blir fjernet fra boligen.", confirmLabel: "Fjern" });
+    if (!ok) return;
+    remove.disabled = true;
+    const err = await onRemove(images[index]);
+    remove.disabled = false;
+    if (err) return act.toast(err);
+    close();
+  });
+  const actions = h("div", "pt-modal-actions");
+  actions.append(remove, prev, next, button("Ferdig", "pt-btn-primary", close));
+  box.append(head, img, page, actions);
+  dialog.append(box);
+  dialog.addEventListener("cancel", close);
+  dialog.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" && images.length > 1) prev.click();
+    if (e.key === "ArrowRight" && images.length > 1) next.click();
+  });
+  document.body.append(dialog);
+  dialog.showModal();
+  show();
+};
+
+const galleryCard = async (p) => {
+  const c = card("Boligbilder", "photo");
+  const res = await act.galleryImages(p.id);
+  if (res.error) {
+    c.append(inline("Kunne ikke hente bildene. Prøv igjen."));
+    return c;
+  }
+  const images = res.data;
+  const urls = new Map();
+  const remove = async (image) => {
+    const err = await act.deletePropertyImage(image.id);
+    if (err) return err;
+    await refresh("Bildet er slettet.");
+    return null;
+  };
+  if (images.length) {
+    const grid = h("div", "pt-gallery-grid");
+    images.forEach((image, i) => {
+      const b = h("button", "pt-gallery-item");
+      b.type = "button";
+      b.setAttribute("aria-label", `Åpne boligbilde ${i + 1} av ${images.length}`);
+      const img = mtThumb(async () => {
+        const url = await act.propertyImageUrl(image.storage_path).catch(() => null);
+        if (url) urls.set(image.id, url);
+        return url;
+      }, `Boligbilde ${i + 1}`);
+      b.append(img);
+      b.addEventListener("click", () => galleryViewer(images, i, urls, remove));
+      grid.append(b);
+    });
+    c.append(grid, h("p", "pt-muted", `${images.length} av ${act.GALLERY_LIMIT} bilder`));
+  } else {
+    c.append(inline("Ingen bilder ennå."));
+  }
+  c.append(h("p", "pt-muted", "Bare synlig for deg og andre utleiere på boligen. Deles ikke med leietaker."));
+  const input = h("input", "pt-visually-hidden");
+  input.type = "file";
+  input.accept = "image/*";
+  input.multiple = true;
+  input.addEventListener("change", async () => {
+    const files = [...input.files];
+    input.value = "";
+    if (!files.length) return;
+    const room = act.GALLERY_LIMIT - images.length;
+    if (files.length > room) act.toast("Du kan legge til inntil 12 bilder per bolig.");
+    const chosen = files.slice(0, room);
+    let added = 0;
+    for (const file of chosen) {
+      if (!file.type?.startsWith("image/")) { act.toast("Velg en bildefil."); break; }
+      const err = await act.uploadPropertyPhoto(p.id, state.user.id, file).catch(() => "Bildet kunne ikke lagres. Prøv igjen.");
+      if (err) { act.toast(err); break; }
+      added += 1;
+    }
+    if (added) await refresh(added === 1 ? "Bildet er lastet opp." : `${added} bilder er lastet opp.`);
+  });
+  const add = button(images.length ? "Legg til flere bilder" : "Legg til boligbilde", "pt-btn-secondary pt-btn-small", () => {
+    if (images.length >= act.GALLERY_LIMIT) return act.toast(GALLERY_LIMIT_TEXT);
+    input.click();
+  });
+  c.append(input, actionsRow(add));
+  return c;
+};
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
@@ -3919,6 +4033,7 @@ const PAGES = {
       c.append(actionsRow(
         button("Rediger informasjon", "pt-btn-soft pt-btn-small", () => propertyForm(p)),
         button("Last opp bilde", "pt-btn-secondary pt-btn-small", () => photoForm(p)),
+        linkButton("Boligbilder", "#bilder"),
       ));
     }
     if (p.finn_code) {
@@ -3960,7 +4075,12 @@ const PAGES = {
     if (sub) return maintenanceDetail(state.propertyId, sub);
     return maintenanceList(state.propertyId);
   },
-  async bilder() { return [emptyPage("photo", "Bilder", "Bildealbum for boligen kommer på nettsiden. Til da finner du bildene i appen.")]; },
+  async bilder() {
+    const p = property();
+    if (!p) return [noProperty()];
+    if (!isManager(p.id)) return [emptyPage("photo", "Bilder", "Boligbildene er bare synlige for utleiere på boligen.")];
+    return [await galleryCard(p)];
+  },
   async "inn-utflytting"(sub) {
     const p = property();
     if (!p) return [noProperty()];

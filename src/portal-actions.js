@@ -451,13 +451,40 @@ export async function uploadPropertyPhoto(propertyId, userId, file) {
   return fin?.outcome && !/fail|error|invalid/i.test(fin.outcome) ? null : "Bildet ble lastet opp, men kunne ikke ferdigstilles. Prøv igjen.";
 }
 
-export async function coverPhotoUrl(propertyId) {
-  const { data } = await supabase.from("property_images").select("storage_path, status, created_at")
-    .eq("property_id", propertyId).eq("status", "ready").order("created_at", { ascending: false }).limit(1);
-  const path = first(data)?.storage_path;
-  if (!path) return null;
+// ImageController.galleryImages: ready images in the active "general" collections, oldest first.
+// The first one is the hero photo on the property card.
+export const GALLERY_LIMIT = 12; // PropertyCoverPhotoStore.maximumPhotoCount
+export async function galleryImages(propertyId) {
+  const [cols, imgs] = await Promise.all([
+    supabase.from("image_collections").select("id, kind, status").eq("property_id", propertyId),
+    supabase.from("property_images").select("id, collection_id, storage_path, status, created_at")
+      .eq("property_id", propertyId).eq("status", "ready").order("created_at", { ascending: true }),
+  ]);
+  if (cols.error || imgs.error) return { error: cols.error ?? imgs.error };
+  const general = new Set((cols.data ?? []).filter((c) => c.kind === "general" && c.status === "active").map((c) => c.id));
+  return { data: (imgs.data ?? []).filter((i) => general.has(i.collection_id)) };
+}
+
+export async function propertyImageUrl(path) {
   const file = await supabase.storage.from("property-images").download(path);
   return file.error ? null : dataUrlOf(file.data);
+}
+
+// ImageController.delete: image-lifecycle "delete"; deleted / already_deleted count as done.
+export async function deletePropertyImage(imageId) {
+  const failed = "Bildet kunne ikke slettes. Det ligger fortsatt på boligen.";
+  try {
+    const r = await imageLifecycle({ action: "delete", image_id: imageId });
+    return ["deleted", "already_deleted"].includes(r?.outcome) ? null : failed;
+  } catch {
+    return failed;
+  }
+}
+
+export async function coverPhotoUrl(propertyId) {
+  const res = await galleryImages(propertyId);
+  const path = res.data?.[0]?.storage_path;
+  return path ? propertyImageUrl(path) : null;
 }
 
 /* ---------- Leieforhold (TenancyController.swift) ---------- */
