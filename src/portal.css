@@ -325,3 +325,10 @@ svg { flex: none; }
 .pt-ho-status { font-weight: 600; margin: var(--space-s) 0; }
 .pt-ho-error { color: var(--danger); font-size: var(--fs-subheadline); }
 .pt-card > .pt-label { margin-top: var(--space-m); }
+
+/* Dokumenter og maler */
+.pt-doc-tile { border: none; font: inherit; color: var(--ink); text-align: left; text-decoration: none; cursor: pointer; }
+.pt-doc-tile span { font-size: var(--fs-footnote); color: var(--secondary-ink); }
+.pt-doc-tile:hover strong { color: var(--brand); }
+.pt-doc-tile:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.pt-modal-card .pt-signature { margin-top: var(--space-m); }

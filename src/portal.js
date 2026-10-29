@@ -1,6 +1,8 @@
 import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
+import * as tplt from "./portal-templates.js";
+import * as letter from "./portal-letter.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
 // and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
@@ -2654,6 +2656,252 @@ const hoOverview = async (p, t, d) => {
   return out;
 };
 
+/* ---------- Dokumenter og maler ---------- */
+// DocumentsView / LandlordDocumentTemplatesView in the app.
+const fileSizeText = (bytes) => {
+  const n = Number(bytes);
+  if (!n) return "";
+  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(n / 1000))} kB`;
+};
+const tenancyPeriodText = (t) => (t.end_date ? `${dateText(t.start_date)} – ${dateText(t.end_date)}` : `fra ${dateText(t.start_date)}`);
+const docActiveTenancies = (pid) => state.tenancies.filter((t) => t.property_id === pid && t.status === "active");
+const openDocButton = (d) => pdfButton("Åpne", "pt-btn-secondary pt-btn-small", () => act.openListedDocument(d));
+
+// One tenancy: confirm and grant. Several: a list where each switch grants or revokes at once.
+async function shareDocument(d, pid, access) {
+  const tenancies = docActiveTenancies(pid);
+  if (!tenancies.length) return act.toast("Det finnes ikke et aktivt leieforhold å dele med.");
+  const shared = new Set(access.filter((a) => a.document_id === d.id).map((a) => a.tenancy_id));
+  if (tenancies.length === 1) {
+    const t = tenancies[0];
+    if (shared.has(t.id)) return act.toast("Dokumentet er allerede delt med leietaker.");
+    const ok = await act.confirmAction({ title: "Del med leietaker", text: `Dokumentet deles med det aktive leieforholdet fra ${tenancyPeriodText(t).toLowerCase()}.`, confirmLabel: "Del", destructive: false });
+    if (!ok) return;
+    const err = await act.setDocumentAccess(d.id, t.id, pid, state.user.id, true);
+    if (err) return act.toast(err);
+    return refresh("Dokumentet er delt med leietaker.");
+  }
+  const people = (await tenancyPeople(pid)).data ?? [];
+  const ul = h("ul", "pt-list");
+  for (const t of tenancies) {
+    const names = people.filter((m) => m.tenancy_id === t.id && m.role === "tenant").map((m) => m.name).filter(Boolean);
+    const li = h("li", "pt-row");
+    const label = h("label", "pt-ho-toggle");
+    const box = h("input");
+    box.type = "checkbox";
+    box.checked = shared.has(t.id);
+    box.addEventListener("change", async () => {
+      box.disabled = true;
+      const err = await act.setDocumentAccess(d.id, t.id, pid, state.user.id, box.checked);
+      box.disabled = false;
+      if (err) {
+        box.checked = !box.checked;
+        act.toast(err);
+      }
+    });
+    label.append(box, h("span", null, `${names.join(", ") || "Leietaker"} · ${tenancyPeriodText(t)}`));
+    li.append(label);
+    ul.append(li);
+  }
+  await act.openForm({ title: "Del med leietaker", intro: d.title, fields: [], sections: [ul], submitLabel: "Ferdig", onSubmit: () => null });
+  refresh();
+}
+
+const documentRow = (d, pid, access, manager) => {
+  const li = h("li", "pt-row");
+  const main = h("div", "pt-row-main");
+  const meta = [dateText(d.created_at), fileSizeText(d.file_size_bytes)];
+  if (manager) {
+    const n = access.filter((a) => a.document_id === d.id).length;
+    meta.push(n ? (n === 1 ? "Delt med leietaker" : `Delt med ${n} leieforhold`) : "Ikke delt");
+  }
+  main.append(h("strong", null, d.title || d.original_file_name || "Dokument"), h("span", null, meta.filter(Boolean).join(" · ")));
+  li.append(icon("doc"), main);
+  if (d.status !== "ready") {
+    li.append(h("span", "pt-chip", "Klargjøres"));
+    return li;
+  }
+  const buttons = h("div", "pt-row-actions");
+  buttons.append(openDocButton(d));
+  if (manager) {
+    buttons.append(
+      button("Del", "pt-btn-secondary pt-btn-small", () => shareDocument(d, pid, access)),
+      button("Slett", "pt-btn-quiet-destructive pt-btn-small", async () => {
+        const ok = await act.confirmAction({ title: "Slett dokument?", text: "Dokumentet slettes for alle som har tilgang til det.", confirmLabel: "Slett" });
+        if (!ok) return;
+        const err = await act.deleteDocument(d.id);
+        if (err) return act.toast(err);
+        refresh("Dokumentet er slettet.");
+      }),
+    );
+  }
+  li.append(buttons);
+  return li;
+};
+
+const uploadDocument = (pid) => act.openForm({
+  title: "Last opp PDF",
+  intro: "Velg en PDF på maksimalt 10 MB.",
+  fields: [{ name: "file", label: "PDF", type: "file", accept: "application/pdf,.pdf", required: true }],
+  submitLabel: "Last opp",
+  onSubmit: async (v) => {
+    const res = await act.uploadDocumentPdf(pid, v.file);
+    if (res.message) return res.message;
+    refresh("Dokumentet er lastet opp.");
+    return null;
+  },
+});
+
+// Everything a template can fill in by itself: tenants, landlord contact, lease terms.
+async function templateContext(pid) {
+  const tenancies = docActiveTenancies(pid);
+  const peopleRes = await tenancyPeople(pid);
+  if (peopleRes.error) return { error: true };
+  const people = (peopleRes.data ?? []).filter((m) => m.role === "tenant" && tenancies.some((t) => t.id === m.tenancy_id));
+  const [contactsRes, agreementsRes, meRes] = await Promise.all([
+    people.length ? act.linkedContacts([...new Set(people.map((m) => m.user_id))]) : Promise.resolve({ data: [] }),
+    act.listAgreements(pid),
+    supabase.from("profiles").select("display_name, phone_number").eq("id", state.user.id).maybeSingle(),
+  ]);
+  if (contactsRes.error) return { error: true };
+  const contacts = new Map((contactsRes.data ?? []).map((c) => [c.user_id, c]));
+  const me = { ...(meRes.data ?? {}), email: state.user.email };
+  const terms = new Map();
+  for (const a of (agreementsRes.data ?? []).filter((x) => x.agreement_status === "signed" && tenancies.some((t) => t.id === x.tenancy_id))) {
+    if (terms.has(a.tenancy_id)) continue;
+    const detail = await act.getAgreement(a.agreement_id);
+    if (detail.data) terms.set(a.tenancy_id, detail.data.version?.snapshot?.terms ?? {});
+  }
+  return {
+    tenancies, people, contacts, terms,
+    landlord: { name: me.display_name ?? state.name ?? "", phone: me.phone_number ?? "", email: me.email ?? state.user.email ?? "" },
+  };
+}
+
+async function openTemplate(tpl, pid) {
+  const ctx = await templateContext(pid);
+  if (ctx.error) return act.toast("Kunne ikke hente leietakerne. Prøv igjen før du sender dokumentet.");
+  if (!ctx.people.length) return act.toast("Boligen er fylt inn. En leietaker i et aktivt leieforhold må være på plass før malen kan sendes.");
+  const p = property();
+  const a = addressOf(p);
+  const propertyAddress = [p.unit_identifier ? `${a.line} (${p.unit_identifier})` : a.line, a.place].filter(Boolean).join(", ");
+  const today = todayISO();
+  const tenants = ctx.people.map((m) => [`${m.tenancy_id}|${m.user_id}`, ctx.contacts.get(m.user_id)?.display_name || m.name || "Leietaker"]);
+  const fields = tplt.templateFields(tpl.id, { tenants, landlordName: ctx.landlord.name, landlordPhone: ctx.landlord.phone, landlordEmail: ctx.landlord.email, today });
+  const pad = tplt.SIGNED.has(tpl.id) ? act.inkPad() : null;
+  let picked = "";
+  let keys = null;
+  let draftKey = "";
+  const valuesOf = (inputs) => {
+    const v = {};
+    for (const [k, el] of Object.entries(inputs)) v[k] = el.value.trim();
+    const [, userId] = (v.tenant || "|").split("|");
+    v.tenantName = ctx.contacts.get(userId)?.display_name || ctx.people.find((m) => m.user_id === userId)?.name || "";
+    if (!v.propertyAddress && tpl.id !== "reference" && tpl.id !== "writtenWarning") v.propertyAddress = propertyAddress;
+    return v;
+  };
+  const buildPdf = async (v) => tplt.templateBlocks(tpl.id, v, pad?.strokes() ?? []);
+  const confirmedEmails = () => ctx.people.map((m) => (ctx.contacts.get(m.user_id)?.email ?? "").toLowerCase()).filter(Boolean);
+  const preview = h("div", "pt-modal-actions");
+  let currentInputs = null;
+  preview.append(pdfButton("Forhåndsvis", "pt-btn-secondary", async () => {
+    const v = valuesOf(currentInputs);
+    const bad = letter.unsupportedCharacters(Object.values(v).join(" "));
+    if (bad.length) return { message: `PDF-en kan ikke tegne noen av disse tegnene. Fjern dem før du sender. (${bad.join(" ")})` };
+    const bytes = letter.letterPdf(await buildPdf(v), { logo: await act.letterLogoJpeg(), title: tplt.letterTitle(tpl.id) });
+    return { url: URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })) };
+  }));
+  await act.openForm({
+    title: tpl.title,
+    intro: tpl.intro ?? tpl.subtitle,
+    fields,
+    after: [pad?.node, preview, h("p", "pt-field-help", tplt.DISCLAIMER)].filter(Boolean),
+    submitLabel: "Send til leietaker",
+    onChange: (inputs) => {
+      currentInputs = inputs;
+      if (inputs.tenant.value === picked) return;
+      picked = inputs.tenant.value;
+      const [tenancyId, userId] = picked.split("|");
+      const t = ctx.tenancies.find((x) => x.id === tenancyId);
+      const c = ctx.contacts.get(userId) ?? {};
+      const terms = ctx.terms.get(tenancyId) ?? {};
+      const set = (name, value) => { if (inputs[name] && value != null) inputs[name].value = value; };
+      if (!t) return;
+      set("tenantAddress", propertyAddress);
+      set("tenantEmail", c.email ?? "");
+      set("tenantPhone", c.phone_number ?? "");
+      set("propertyAddress", propertyAddress);
+      set("leasePeriod", tplt.leasePeriodText(terms.start_date ?? t.start_date, terms.end_date ?? t.end_date));
+      set("accountNumber", terms.payment_account ?? p.payment_account_override ?? "");
+      set("amount", terms.rent_amount_minor ? act.kronerOf(terms.rent_amount_minor) : "");
+      set("dueDate", tplt.nextDueDate(terms.payment_day));
+      if (inputs.endDate) set("endDate", tplt.suggestedEndDate(inputs.noticeDate.value || today, terms.notice_period_months ?? 3));
+    },
+    onSubmit: async (values) => {
+      const v = valuesOf(currentInputs);
+      const strokes = pad?.strokes() ?? [];
+      const issue = tplt.templateIssue(tpl.id, v, strokes, confirmedEmails());
+      if (issue) return issue;
+      const [tenancyId] = v.tenant.split("|");
+      // The same letter keeps its keys, so a retry never makes a second document or chat card.
+      const key = JSON.stringify([v, strokes]);
+      if (!keys || key !== draftKey) {
+        keys = { reservationKey: crypto.randomUUID(), chatRequestId: crypto.randomUUID() };
+        draftKey = key;
+      }
+      const bytes = letter.letterPdf(await buildPdf(v), { logo: await act.letterLogoJpeg(), title: tplt.letterTitle(tpl.id) });
+      const res = await act.sendTemplateLetter({ propertyId: pid, tenancyId, grantedBy: state.user.id, title: tplt.letterTitle(tpl.id), fileName: tpl.fileName, bytes, keys });
+      if (!res.ok) return res.text;
+      refresh(res.text);
+      return null;
+    },
+  });
+}
+
+const templatesCard = (pid) => {
+  const c = card("Ferdige dokumentmaler", "doc");
+  c.append(h("p", "pt-muted", "Velg en dokumentmal, fyll inn nødvendig informasjon og send det ferdige dokumentet direkte til leietakeren."));
+  const tiles = h("div", "pt-tiles");
+  for (const tpl of tplt.TEMPLATES) {
+    const tile = h("button", "pt-tile pt-doc-tile");
+    tile.type = "button";
+    tile.append(icon(tpl.icon), h("strong", null, tpl.title), h("span", null, tpl.subtitle));
+    tile.addEventListener("click", () => openTemplate(tpl, pid));
+    tiles.append(tile);
+  }
+  const deposit = h("a", "pt-tile pt-doc-tile");
+  deposit.href = "#inn-utflytting";
+  deposit.append(icon("banknote"), h("strong", null, "Depositumsoppgjør"), h("span", null, "Lages ved utflytting under Inn- og utflytting"));
+  tiles.append(deposit);
+  c.append(tiles);
+  return c;
+};
+
+async function documentsPage() {
+  const p = property();
+  if (!p) return [emptyPage("folder", "Dokumenter", "Velg en bolig for å se dokumentene.")];
+  const manager = isManager(p.id);
+  const [docs, access] = await Promise.all([act.listPropertyDocuments(p.id), manager ? act.listDocumentAccess(p.id) : Promise.resolve({ data: [] })]);
+  const out = [];
+  if (manager) out.push(templatesCard(p.id));
+  const c = card(manager ? "Dokumenter" : "Delte dokumenter", "folder");
+  if (manager) c.append(actionsRow(button("Last opp PDF", "pt-btn-primary pt-btn-small", () => uploadDocument(p.id))));
+  if (docs.error || access.error) {
+    c.append(inline("Kunne ikke hente dokumentene. Prøv igjen."));
+    return [...out, c];
+  }
+  const rows = (docs.data ?? []).filter((d) => d.status !== "deleted" && d.status !== "deleting" && (manager || d.status === "ready"));
+  if (!rows.length) {
+    c.append(inline(manager ? "Ingen dokumenter ennå. Last opp en PDF og velg hvilke aktive leieforhold som skal få tilgang." : "Ingen delte dokumenter ennå. Dokumenter vises her når utleieren deler dem med ditt aktive leieforhold."));
+  } else {
+    const ul = h("ul", "pt-list");
+    for (const d of rows) ul.append(documentRow(d, p.id, access.data ?? [], manager));
+    c.append(ul);
+  }
+  out.push(c);
+  return out;
+}
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
@@ -2767,7 +3015,7 @@ const PAGES = {
     if (!isManager(p.id)) return tenantContractCards(p);
     return [await landlordContractCard(p)];
   },
-  async dokumenter() { return [emptyPage("folder", isLandlord() ? "Dokumenter og maler" : "Delte dokumenter", "Dokumentene kommer på nettsiden. Til da finner du dem i appen.")]; },
+  dokumenter: documentsPage,
   async meldinger() { return chatPage(); },
   async historikk() { return [emptyPage("history", "Leiehistorikk", "Ingen tidligere leieforhold ennå.")]; },
   async innstillinger() {
