@@ -4,6 +4,7 @@ import * as act from "./portal-actions.js";
 import * as inv from "./portal-inventory.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
+import * as annual from "./portal-annual.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
@@ -3078,8 +3079,191 @@ const economyTiles = () => {
   const furniture = h("a", "pt-tile pt-tile-link");
   furniture.href = "#okonomi/mobler";
   furniture.append(icon("sofa", "pt-icon-circle is-tax"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
-  tiles.append(tile, furniture);
+  const report = h("a", "pt-tile pt-tile-link");
+  report.href = "#okonomi/arsoppgave";
+  report.append(icon("doc", "pt-icon-circle is-tax"), h("strong", null, "Årsoppgave"), h("p", null, "Dokumentasjon av leieinntekter og utgifter"));
+  tiles.append(tile, furniture, report);
   return tiles;
+};
+
+// AnnualReportView: the documentation package for one property and year, as a page and a PDF.
+const annualState = { year: null, scope: "whole" };
+const loadAnnual = async (pid, year) => {
+  const start = `${year}-01-01`;
+  const end = `${year + 1}-01-01`;
+  const [txs, links, trips, roster, inventory, me, people] = await Promise.all([
+    annual.listTransactions(pid, start, end),
+    annual.listLinks(pid, start, end),
+    act.listMileageTrips(pid, start, end),
+    annual.ownershipShares(pid, year),
+    cached("inventory", loadInventory),
+    supabase.from("profiles").select("display_name").eq("id", state.user.id).maybeSingle(),
+    tenancyPeople(pid),
+  ]);
+  if (txs.error || links.error) return { error: true };
+  const ids = [...new Set((links.data ?? []).map((l) => l.document_id))];
+  const docs = ids.length ? await annual.linkedDocuments(ids) : { data: [] };
+  const yearTenancies = state.tenancies.filter((t) => t.property_id === pid && !["draft", "cancelled"].includes(t.status)
+    && (!t.start_date || t.start_date < end) && (!t.end_date || t.end_date >= start));
+  const tenantNames = [...new Set((people.data ?? [])
+    .filter((m) => m.role === "tenant" && yearTenancies.some((t) => t.id === m.tenancy_id)).map((m) => m.name).filter(Boolean))];
+  const rosterRows = roster.error ? [] : roster.data ?? [];
+  const driverNames = Object.fromEntries(rosterRows.filter((r) => r.user_id).map((r) => [r.user_id, r.display_name ?? ""]));
+  return {
+    transactions: txs.data, links: links.data, documents: docs.data ?? [], trips: trips.error ? [] : trips.data,
+    roster: rosterRows, driverNames, tenantNames,
+    items: inventory.error ? [] : inventory.items.filter((i) => i.propertyId === pid),
+    elections: inventory.error ? {} : inventory.elections,
+    landlordName: me.data?.display_name ?? state.name ?? "",
+    supplementsFailed: Boolean(trips.error || roster.error || inventory.error || docs.error),
+  };
+};
+
+const reportTable = (columns, rows, sum) => {
+  const wrap = h("div", "pt-table-wrap");
+  const table = h("table", "pt-table pt-report-table");
+  const head = h("tr");
+  for (const c of columns) head.append(h("th", c.align === "right" ? "is-num" : null, c.label));
+  const thead = h("thead");
+  thead.append(head);
+  const tbody = h("tbody");
+  if (!rows.length) {
+    const tr = h("tr");
+    const td = h("td", "pt-muted", "Ingen poster");
+    td.colSpan = columns.length;
+    tr.append(td);
+    tbody.append(tr);
+  }
+  for (const r of rows) {
+    const tr = h("tr");
+    r.forEach((v, i) => {
+      const td = h("td", columns[i].align === "right" ? "is-num" : null);
+      td.append(v instanceof Node ? v : document.createTextNode(v ?? ""));
+      tr.append(td);
+    });
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  if (sum) {
+    const tr = h("tr", "pt-report-sum");
+    const label = h("td", null, sum[0]);
+    label.colSpan = columns.length - 1;
+    tr.append(label, h("td", "is-num", sum[1]));
+    const tfoot = h("tfoot");
+    tfoot.append(tr);
+    table.append(tfoot);
+  }
+  wrap.append(table);
+  return wrap;
+};
+
+const annualPage = async (pid) => {
+  const p = property();
+  const thisYear = new Date().getFullYear();
+  const year = annualState.year ?? annual.defaultYear();
+  const back = h("a", "pt-back", "‹ Økonomi");
+  back.href = "#okonomi";
+  const head = card("Årsoppgave", "doc");
+  head.append(
+    h("p", "pt-muted", "Dokumentasjon av leieinntekter og utgifter"),
+    h("p", "pt-muted", "Årsoppgaven er en dokumentasjonspakke med leieinntekter, utgifter, kjørebok og kvitteringer."),
+  );
+  const controls = h("div", "pt-report-controls");
+  const yearLabel = h("label", "pt-field pt-filter");
+  const select = h("select", "pt-select");
+  for (let y = thisYear; y >= Math.min(year, thisYear - 5); y--) {
+    const o = h("option", null, String(y));
+    o.value = String(y);
+    o.selected = y === year;
+    select.append(o);
+  }
+  select.addEventListener("change", () => { annualState.year = Number(select.value); render(); });
+  yearLabel.append(h("span", "pt-field-label", "År"), select);
+  controls.append(yearLabel);
+  head.append(controls);
+  const data = await cached(`annual:${pid}:${year}`, () => loadAnnual(pid, year));
+  if (data.error) {
+    head.append(inline("Kunne ikke lage årsoppgaven."));
+    return [back, head];
+  }
+  const build = () => annual.buildReport({
+    ...data, year, viewerId: state.user.id, scope: annualState.scope, categoryTitle: act.categoryTitle,
+    propertyTitle: [addressOf(p).line, p.unit_identifier].filter(Boolean).join(" "), generatedAt: new Date(),
+  });
+  const report = build();
+  if (!report.isSoleOwner) {
+    const seg = h("div", "pt-segmented");
+    for (const [value, label] of [["whole", "Hele boligen"], ["mine", "Min andel"]]) {
+      seg.append(button(label, `pt-segment${annualState.scope === value ? " is-selected" : ""}`, () => { annualState.scope = value; render(); }));
+    }
+    controls.append(seg);
+  }
+  const download = button("Last ned", "pt-btn-primary pt-btn-small", async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true;
+    try {
+      const r = build();
+      const bytes = letter.letterPdf(annual.reportBlocks(r), { logo: await act.letterLogoJpeg(), title: `Årsoppgave ${year}` });
+      const a = h("a");
+      a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      a.download = annual.fileName(year, addressOf(p).line);
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+    } catch {
+      act.toast("Kunne ikke lage årsoppgaven.");
+    } finally {
+      b.disabled = false;
+    }
+  });
+  const out = [back, head];
+  if (report.supplementsFailed) out.push(h("p", "pt-banner is-warning", annual.SUPPLEMENTS));
+  if (annual.isEmpty(report)) {
+    out.push(emptyPage("doc", `Ingen poster i ${year}`, "Det ligger ingen inntekter, utgifter eller kjøreturer i dette året."));
+    return out;
+  }
+  head.append(actionsRow(download));
+  const info = h("section", "pt-card");
+  const dl = h("dl", "pt-facts");
+  for (const [k, v] of [["Utleier", report.landlordName], ["Periode", report.periodText], ["Bolig", report.propertyTitle], ["Leietaker", report.tenantText], ["Generert", report.generatedText]]) {
+    const d = h("div");
+    d.append(h("dt", null, k), h("dd", null, v));
+    dl.append(d);
+  }
+  info.append(dl);
+  out.push(info);
+  const kr2 = annual.kronerText;
+  const R = "right";
+  const income = card("1  Inntekter", "income");
+  income.append(reportTable([{ label: "Dato" }, { label: "Kategori" }, { label: "Beskrivelse" }, { label: "Beløp", align: R }],
+    report.incomes.map((e) => [e.dateText, e.category, e.description, kr2(e.amountMinor)]), [`Sum inntekter ${year}`, kr2(report.summary.incomeMinor)]));
+  const expense = card("2  Utgifter", "expense");
+  expense.append(reportTable([{ label: "Dato" }, { label: "Kategori" }, { label: "Beskrivelse" }, { label: "Kvittering" }, { label: "Beløp", align: R }],
+    report.expenses.map((e) => [e.dateText, e.category, e.description, e.receiptRef ?? "–", kr2(e.amountMinor)]), ["Sum utgifter", kr2(report.summary.expenseMinor)]));
+  out.push(income, expense);
+  let n = 3;
+  if (report.furniture.length) {
+    const f = card(`${n++}  Møbler og inventar`, "sofa");
+    const dashOr = (v) => (v == null ? "—" : kr2(v));
+    f.append(h("p", "pt-muted", annual.FURNITURE_NOTE), reportTable(
+      [{ label: "Type møbel" }, { label: "Kjøp/1.1.", align: R }, { label: "Behandling" }, { label: "I år", align: R }, { label: "31.12.", align: R }],
+      report.furniture.map((l) => [annual.furnitureName(l, year), kr2(l.purchaseAmountMinor > 0 ? l.purchaseAmountMinor : l.openingMinor ?? l.historicalPurchaseMinor), l.treatment, dashOr(l.depreciationMinor), dashOr(l.closingMinor)])));
+    out.push(f);
+  }
+  const trips = card(`${n++}  Kjørebok`, "car");
+  trips.append(reportTable([{ label: "Dato" }, { label: "Fra → til" }, { label: "Formål" }, { label: "Km", align: R }],
+    report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Sum kjøring", annual.kmText(report.summary.drivingMeters)]));
+  const sum = card(`${n++}  Oppsummering`, "net");
+  if (report.scopeTitle) sum.append(h("p", "pt-muted", report.scopeTitle));
+  sum.append(reportTable([{ label: "" }, { label: "", align: R }],
+    [["Sum inntekter", kr2(report.summary.incomeMinor)], ["Sum utgifter", kr2(report.summary.expenseMinor)]],
+    ["Differanse inntekter minus utgifter", kr2(report.summary.differenceMinor)]));
+  const att = card(`${n++}  Vedlegg`, "folder");
+  att.append(reportTable([{ label: "Ref" }, { label: "Dato" }, { label: "Beskrivelse" }, { label: "Beløp", align: R }, { label: "" }],
+    report.receipts.map((x) => [x.ref, x.dateText, x.description, kr2(x.amountMinor), x.unavailable ? h("span", "pt-muted", "Kunne ikke hentes") : openDocButton(x.document)])));
+  out.push(trips, sum, att);
+  return out;
 };
 
 // MileageComposerView: manual kilometers (the app can also measure the route on the map).
@@ -3503,6 +3687,7 @@ const PAGES = {
     if (!p) return [noProperty()];
     if (sub === "kjorebok") return mileagePage(p.id);
     if (sub === "mobler") return assetsPage(p.id);
+    if (sub === "arsoppgave") return annualPage(p.id);
     return [await kpis(p.id), economyTiles(), ...(await transactionList(p.id))];
   },
   async "om-boligen"() {

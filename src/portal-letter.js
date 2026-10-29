@@ -68,6 +68,14 @@ export function wrap(text, size, bold, maxWidth) {
   return lines;
 }
 
+// Characters outside WinAnsi that the report uses.
+const pdfText = (v) => String(v ?? "").replace(/→/g, "->").replace(/\u2212/g, "-").replace(/\u202f/g, "\u00a0");
+const clip = (s, size, bold, maxW) => {
+  let v = pdfText(s);
+  if (width(v, size, bold) <= maxW) return v;
+  while (v.length > 1 && width(`${v}…`, size, bold) > maxW) v = v.slice(0, -1);
+  return `${v}…`;
+};
 const dash = (v) => (String(v ?? "").trim() ? String(v).trim() : "–");
 
 /**
@@ -145,6 +153,76 @@ export function letterPdf(blocks, { logo = null, title = "Dokument" } = {}) {
       yy -= 4;
       for (const l of bl) { ops.push(text(l, MARGIN + pad, yy - 10, 10, false, INK)); yy -= 14; }
       y -= h + 6;
+    } else if (b.type === "infocard") {
+      // AnnualReportPDF.infoCard: label/value pairs in two columns on a soft card.
+      const pad = 12;
+      const h = pad * 2 + b.rows.length * 22 - 6;
+      y -= 4;
+      ensure(h);
+      ops.push(`${SOFT} rg ${n(MARGIN)} ${n(y - h)} ${n(contentW)} ${n(h)} re f`);
+      let yy = y - pad;
+      const col = contentW / 2;
+      for (const r of b.rows) {
+        for (let i = 0; i < r.length; i += 2) {
+          const x = MARGIN + pad + (i / 2) * col;
+          ops.push(text(r[i], x, yy - 9, 8, false, MUTED));
+          ops.push(text(clip(dash(r[i + 1]), 10, true, col - pad - 70), x + 64, yy - 10, 10, true, INK));
+        }
+        yy -= 22;
+      }
+      y -= h + 10;
+    } else if (b.type === "table") {
+      // AnnualReportPDF sections: numbered title, optional note, column header, rows, sum row.
+      const cols = b.columns;
+      const fixed = cols.reduce((a, c) => a + (c.w || 0), 0);
+      const flex = cols.filter((c) => !c.w).length;
+      const widths = cols.map((c) => c.w || Math.max(40, (contentW - fixed) / Math.max(flex, 1)));
+      const xs = widths.map((_, i) => MARGIN + widths.slice(0, i).reduce((a, w) => a + w, 0));
+      const cell = (s, i, yy, size, bold, color) => {
+        const v = pdfText(s);
+        const x = cols[i].align === "right" ? xs[i] + widths[i] - 4 - width(v, size, bold) : xs[i];
+        ops.push(text(v, x, yy, size, bold, color));
+      };
+      const header = () => {
+        if (!cols.some((c) => c.label)) return;
+        cols.forEach((c, i) => cell(c.label, i, y - 8.5, 8, true, MUTED));
+        y -= 13;
+        ops.push(`${LINE} RG 0.5 w ${n(MARGIN)} ${n(y)} m ${n(PAGE_W - MARGIN)} ${n(y)} l S`);
+        y -= 5;
+      };
+      y -= 14;
+      ensure(70);
+      ops.push(text(pdfText(b.title), MARGIN, y - 11.5, 11.5, true, INK));
+      if (b.trailing) {
+        const t = pdfText(b.trailing);
+        ops.push(text(t, PAGE_W - MARGIN - width(t, 8.5, false), y - 11, 8.5, false, MUTED));
+      }
+      y -= 18;
+      ops.push(`${LINE} RG 0.75 w ${n(MARGIN)} ${n(y)} m ${n(PAGE_W - MARGIN)} ${n(y)} l S`);
+      y -= 8;
+      if (b.note) { lines(pdfText(b.note), MARGIN, 8.5, false, MUTED, contentW, 12); y -= 2; }
+      header();
+      if (!b.rows.length) {
+        ops.push(text("Ingen poster", MARGIN, y - 9, 9, false, MUTED));
+        y -= 16;
+      }
+      for (const row of b.rows) {
+        const wrapped = row.map((v, i) => wrap(pdfText(v ?? ""), 9, false, widths[i] - 6));
+        const h = Math.max(...wrapped.map((w) => w.length)) * 12 + 4;
+        if (y - h < BOTTOM) { newPage(); header(); }
+        wrapped.forEach((ls, i) => ls.forEach((l, k) => cell(l, i, y - 9 - k * 12, 9, false, INK)));
+        y -= h;
+        ops.push(`${LINE} RG 0.25 w ${n(MARGIN)} ${n(y + 1)} m ${n(PAGE_W - MARGIN)} ${n(y + 1)} l S`);
+      }
+      if (b.sum) {
+        ensure(24);
+        y -= 2;
+        ops.push(`${SOFT} rg ${n(MARGIN)} ${n(y - 20)} ${n(contentW)} 20 re f`);
+        ops.push(text(pdfText(b.sum[0]), MARGIN + 6, y - 13.5, 9.5, true, INK));
+        const v = pdfText(b.sum[1]);
+        ops.push(text(v, PAGE_W - MARGIN - 4 - width(v, 9.5, true), y - 13.5, 9.5, true, INK));
+        y -= 24;
+      }
     } else if (b.type === "signature") {
       y -= 16;
       ensure(170);
