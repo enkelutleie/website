@@ -647,21 +647,24 @@ const inviteForm = async (pid, tenancy) => {
   });
 };
 
+// ContractDraftAuthoringView: every term is optional in a draft (start date too,
+// migration contract_draft_without_start_date); the tenancy is untouched until signed.
 const contractForm = (pid) => {
   const tenancies = state.tenancies.filter((t) => t.property_id === pid);
+  const p = state.properties.find((x) => x.id === pid);
   return act.openForm({
     title: "Ny leiekontrakt",
-    intro: "Utkastet lagres med samme felter som i appen. Signering skjer i appen.",
+    intro: "Utkastet lagres med samme felter som i appen. Du kan fylle ut resten senere. Signering skjer i appen.",
     submitLabel: "Lagre utkast",
     fields: [
       { name: "tenancy", label: "Leieforhold", type: "select", required: true, options: tenancies.map((t) => [t.id, `${TENANCY_LABEL[t.status] ?? t.status}${t.start_date ? ` · fra ${dateText(t.start_date)}` : ""}`]) },
-      { name: "termType", label: "Varighet", type: "select", options: [["indefinite", "Løpende"], ["fixed", "Fast periode"]], value: "indefinite", required: true },
-      { name: "start", label: "Startdato", type: "date", value: tenancies[0]?.start_date ?? todayISO(), required: true },
+      { name: "termType", label: "Avtaletype", type: "select", options: [["indefinite", "Løpende"], ["fixed", "Fast periode"]], value: "indefinite", required: true },
+      { name: "start", label: "Startdato", type: "date", value: tenancies[0]?.start_date ?? "" },
       { name: "end", label: "Sluttdato", type: "date", hidden: true },
-      { name: "rent", label: "Månedlig husleie (kr)", type: "money", required: true },
-      { name: "payday", label: "Forfallsdag (1–31)", type: "number", min: 1, max: 31, value: "1", required: true },
-      { name: "deposit", label: "Depositum (kr)", type: "money", value: "0", help: "Maks seks måneders husleie." },
-      { name: "notice", label: "Oppsigelsestid (måneder)", type: "number", min: 1, max: 12, value: "3", required: true },
+      { name: "rent", label: "Månedsleie", type: "money" },
+      { name: "payday", label: "Betalingsdag (1–31)", type: "number", min: 1, max: 31 },
+      { name: "deposit", label: "Depositum", type: "money", help: "Maks seks måneders husleie." },
+      { name: "notice", label: "Oppsigelsestid (måneder)", type: "number", min: 1, max: 12, value: "3" },
       { name: "account", label: "Kontonummer for husleie", type: "text", maxLength: 20 },
       { name: "special", label: "Særlige avtaler", type: "textarea", maxLength: 4000 },
     ],
@@ -669,15 +672,16 @@ const contractForm = (pid) => {
     onSubmit: async (v) => {
       const tenancy = tenancies.find((t) => t.id === v.tenancy);
       if (!tenancy) return "Velg et leieforhold.";
-      const rentMinor = act.minorOf(v.rent);
-      const depositMinor = act.minorOf(v.deposit || "0");
-      if (!rentMinor) return "Skriv en gyldig husleie.";
-      if (depositMinor == null) return "Skriv et gyldig depositum.";
-      if (depositMinor > rentMinor * 6) return "Depositumet kan ikke være mer enn seks måneders husleie.";
-      if (v.termType === "fixed" && (!v.end || v.end <= v.start)) return "Velg en sluttdato etter startdatoen.";
-      if (!(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Forfallsdagen må være mellom 1 og 31.";
-      if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
-      const res = await act.createAgreementDraft(tenancy, { ...v, rentMinor, depositMinor });
+      const rentMinor = v.rent ? act.minorOf(v.rent) : null;
+      const depositMinor = v.deposit ? act.minorOf(v.deposit) : null;
+      if (v.rent && !rentMinor) return "Skriv en gyldig månedsleie.";
+      if (v.deposit && depositMinor == null) return "Skriv et gyldig depositum.";
+      if (rentMinor && depositMinor && depositMinor > rentMinor * 6) return "Depositumet kan ikke være mer enn seks måneders husleie.";
+      if (v.termType === "fixed" && v.start && v.end && v.end <= v.start) return "Sluttdatoen må være etter startdatoen.";
+      if (v.payday && !(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Betalingsdagen må være mellom 1 og 31.";
+      if (v.notice && !(Number(v.notice) >= 1 && Number(v.notice) <= 12)) return "Oppsigelsestiden må være mellom 1 og 12 måneder.";
+      if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummer må være 11 siffer";
+      const res = await act.createAgreementDraft(tenancy, { ...v, rentMinor, depositMinor, housingKind: p?.housing_kind });
       if (res.message) return res.message;
       if (res.error) return act.explain(res.error);
       await refresh("Utkastet er lagret.");
@@ -864,22 +868,24 @@ const PAGES = {
       const t = state.tenancies.find((x) => x.id === a.tenancy_id);
       main.append(h("strong", null, "Leiekontrakt"), h("span", null, t?.start_date ? `Leieforhold fra ${dateText(t.start_date)}` : "Leieforhold"));
       li.append(icon("contract"), main, h("span", `pt-chip${a.agreement_status === "signed" ? " is-success" : ""}`, STATUS[a.agreement_status] ?? a.agreement_status));
-      if (a.current_version_id) {
-        li.append(button("Vis PDF", "pt-btn-soft pt-btn-small", async (e) => {
+      // #1417: drafts and proposals are view-only (no download); signed contracts are downloaded in the app.
+      if (a.current_version_id && (a.agreement_status === "draft" || a.agreement_status === "ready_for_review")) {
+        li.append(button("Forhåndsvis", "pt-btn-soft pt-btn-small", async (e) => {
           const b = e.currentTarget;
+          // Open the tab during the click so the browser does not treat it as a pop-up.
+          const tab = window.open("", "_blank");
           b.disabled = true;
           b.textContent = "Lager PDF …";
           const pdf = await act.previewAgreementPdf(a);
           b.disabled = false;
-          b.textContent = "Vis PDF";
-          if (!pdf.url) return act.toast(pdf.message);
-          const link = document.createElement("a");
-          link.href = pdf.url;
-          link.download = pdf.filename;
-          document.body.append(link);
-          link.click();
-          link.remove();
-          setTimeout(() => URL.revokeObjectURL(pdf.url), 60_000);
+          b.textContent = "Forhåndsvis";
+          if (!pdf.url) {
+            tab?.close();
+            return act.toast(pdf.message);
+          }
+          if (tab) tab.location.href = pdf.url;
+          else act.toast("Tillat nye faner for å forhåndsvise kontrakten.");
+          setTimeout(() => URL.revokeObjectURL(pdf.url), 300_000);
         }));
       }
       if (a.agreement_status === "draft") {

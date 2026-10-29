@@ -492,21 +492,23 @@ export async function createAgreementDraft(tenancy, v) {
   const parties = [];
   for (const id of landlords) parties.push({ user_id: id, party_role: "landlord", required_to_sign: true, signing_order: parties.length + 1 });
   for (const id of tenants) parties.push({ user_id: id, party_role: "tenant", required_to_sign: true, signing_order: parties.length + 1 });
+  // Draft terms are encodeIfPresent in the app: empty fields are left out.
+  const digits = (v.account ?? "").replace(/\D/g, "");
   const terms = {
     lease_term_type: v.termType,
-    start_date: v.start,
-    end_date: v.termType === "fixed" ? v.end : null,
-    rent_amount_minor: v.rentMinor,
+    ...(v.start ? { start_date: v.start } : {}),
+    ...(v.termType === "fixed" && v.end ? { end_date: v.end } : {}),
+    ...(v.rentMinor ? { rent_amount_minor: v.rentMinor } : {}),
     currency_code: "NOK",
-    payment_day: Number(v.payday),
-    deposit_amount_minor: v.depositMinor,
-    notice_period_months: Number(v.notice),
+    ...(v.payday ? { payment_day: Number(v.payday) } : {}),
+    ...(v.depositMinor != null ? { deposit_amount_minor: v.depositMinor, security_type: v.depositMinor > 0 ? "deposit" : "none", security_amount_minor: v.depositMinor } : {}),
+    ...(v.notice ? { notice_period_months: Number(v.notice) } : {}),
     included_services: [],
     additional_charges: [],
-    security_type: v.depositMinor > 0 ? "deposit" : "none",
-    security_amount_minor: v.depositMinor,
     ...(v.special ? { special_terms: v.special } : {}),
-    ...(v.account ? { payment_account: v.account.replace(/\D/g, "") } : {}),
+    ...(digits ? { payment_account: digits } : {}),
+    // ContractTenancyKind: a bofellesskap is always shared_housing; otherwise left out.
+    ...(v.housingKind === "shared" ? { tenancy_kind: "shared_housing" } : {}),
   };
   return supabase.rpc("create_rental_agreement_draft", {
     requested_tenancy_id: tenancy.id,
