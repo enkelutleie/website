@@ -66,6 +66,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         input.type = { money: "text", datetime: "datetime-local" }[f.type] ?? f.type ?? "text";
         if (f.type === "money") input.inputMode = "decimal";
         if (f.accept) input.accept = f.accept;
+        if (f.multiple) input.multiple = true;
         if (f.min != null) input.min = f.min;
         if (f.max != null) input.max = f.max;
       }
@@ -118,7 +119,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       for (const f of fields) {
         const input = inputs[f.name];
         const hidden = input.closest(".pt-field").hidden;
-        values[f.name] = f.type === "file" ? input.files?.[0] ?? null : input.value.trim();
+        values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null) : input.value.trim();
         if (f.required && !hidden && !values[f.name]) {
           status.textContent = `Fyll ut «${f.label}».`;
           status.hidden = false;
@@ -1091,4 +1092,216 @@ export function subscribeChat(conversationId, onChange) {
   }
   channel.subscribe();
   return () => supabase.removeChannel(channel);
+}
+
+/* ---------- Vedlikehold (MaintenanceController.swift, MaintenanceRealtimeRemote) ---------- */
+export const MAINTENANCE_STATUS = { reported: "Innmeldt", in_progress: "Under behandling", waiting: "Venter", resolved: "Løst", closed: "Lukket" };
+export const MAINTENANCE_PRIORITIES = [["low", "Lav"], ["normal", "Normal"], ["high", "Høy"], ["urgent", "Haster"]];
+// MaintenanceStatus.allowedNextStatuses
+export const MAINTENANCE_NEXT = {
+  reported: ["in_progress", "waiting", "resolved"],
+  in_progress: ["waiting", "resolved"],
+  waiting: ["in_progress", "resolved"],
+  resolved: ["in_progress"],
+  closed: ["in_progress"],
+};
+export const MAINTENANCE_CATEGORIES = [["water", "Vann og rør"], ["electricity", "Strøm"], ["heating", "Varme og ventilasjon"], ["appliances", "Hvitevarer"], ["damage", "Bygg og skade"], ["access", "Lås og adgang"], ["pests", "Skadedyr"], ["other", "Annet"]];
+export const MAINTENANCE_IMAGE_LIMIT = 5;
+export const MAINTENANCE_DOCUMENT_LIMIT = 5;
+export const COMMENT_PHOTO_LIMIT = 4;
+export const COMMENT_PHOTO_ONLY = "📷 Bilde";
+export const isFinishedMaintenance = (r) => r?.status === "resolved" || r?.status === "closed";
+const MAINTENANCE_COLUMNS = "id, property_id, tenancy_id, created_by, title, description, category, priority, status, resolved_at, closed_at, last_activity_at, created_at, updated_at, submitted_at";
+
+// RLS decides what each role sees; unsubmitted drafts are hidden as in the app.
+export const listMaintenance = (propertyId) =>
+  supabase.from("maintenance_requests").select(MAINTENANCE_COLUMNS).eq("property_id", propertyId)
+    .not("submitted_at", "is", null).order("last_activity_at", { ascending: false });
+export const getMaintenance = (requestId) =>
+  supabase.from("maintenance_requests").select(MAINTENANCE_COLUMNS).eq("id", requestId).maybeSingle();
+export const listMaintenanceEvents = (requestId) =>
+  supabase.from("maintenance_events").select("id, maintenance_request_id, actor_id, event_type, old_value, new_value, comment, comment_attachments, created_at")
+    .eq("maintenance_request_id", requestId).order("created_at", { ascending: true }).order("id", { ascending: true });
+// Who reported the case: a tenant on the case's tenancy (MaintenanceController.reporterIsTenant).
+export async function maintenanceReporterIsTenant(request) {
+  if (!request?.tenancy_id || !request.created_by) return false;
+  const { data } = await supabase.from("tenancy_members").select("user_id")
+    .eq("tenancy_id", request.tenancy_id).eq("user_id", request.created_by).eq("role", "tenant").limit(1);
+  return (data ?? []).length > 0;
+}
+
+// MaintenanceController.setStatus: a finished case goes back to «Under behandling» via reopen.
+export const setMaintenanceStatus = (request, status) =>
+  status === "in_progress" && isFinishedMaintenance(request)
+    ? supabase.rpc("reopen_maintenance_request", { requested_request_id: request.id })
+    : supabase.rpc("set_maintenance_request_status", { requested_request_id: request.id, requested_status: status });
+export const setMaintenancePriority = (requestId, priority) =>
+  supabase.rpc("set_maintenance_request_priority", { requested_request_id: requestId, requested_priority: priority });
+export const shareMaintenance = (requestId, tenancyId) =>
+  supabase.rpc("share_maintenance_request_with_tenancy", { requested_request_id: requestId, requested_tenancy_id: tenancyId });
+
+// create -> upload images -> submit, as the app's create flow does.
+export async function createMaintenance(propertyId, v, images = []) {
+  const res = await supabase.rpc("create_maintenance_request", {
+    requested_property_id: propertyId, requested_tenancy_id: v.tenancyId || null,
+    requested_title: v.title, requested_description: v.description,
+    requested_category: v.category, requested_priority: v.priority,
+  });
+  if (res.error) return { message: explain(res.error) };
+  const requestId = first(res.data)?.maintenance_request_id;
+  if (!requestId) return { message: "Kunne ikke opprette vedlikeholdssaken. Prøv igjen." };
+  let imageError = null;
+  for (const file of images.slice(0, MAINTENANCE_IMAGE_LIMIT)) {
+    imageError = (await uploadMaintenanceImage(requestId, file)) ?? imageError;
+  }
+  const sub = await supabase.rpc("submit_maintenance_request", { requested_request_id: requestId });
+  if (sub.error) return { requestId, message: explain(sub.error) };
+  return { requestId, imageError };
+}
+
+export const listMaintenanceImages = (requestId) =>
+  supabase.rpc("list_maintenance_request_images", { requested_request_id: requestId });
+export async function maintenanceImageUrl(storagePath) {
+  const file = await supabase.storage.from("property-images").download(storagePath);
+  return file.error ? null : dataUrlOf(file.data);
+}
+export async function uploadMaintenanceImage(requestId, file) {
+  const FAILED = "Bildet kunne ikke lastes opp. Prøv igjen.";
+  try {
+    const jpeg = await toJpeg(file);
+    if (jpeg.size > 12_000_000) return "Velg et bilde på maksimalt 12 MB.";
+    const r = await imageLifecycle({ action: "reserve_maintenance", maintenance_request_id: requestId, reservation_key: crypto.randomUUID(), caption: null });
+    if (r?.outcome === "attachment_limit_reached") return `En sak kan ha maksimalt ${MAINTENANCE_IMAGE_LIMIT} bilder.`;
+    if (r?.outcome === "already_ready" || r?.status === "ready") return null;
+    if (!["reserved", "already_reserved"].includes(r?.outcome) || !r.image_id || !r.storage_path) return FAILED;
+    const up = await supabase.storage.from("property-images").upload(r.storage_path, jpeg, { cacheControl: "0", contentType: "image/jpeg", upsert: false });
+    if (up.error && !/exists|duplicate/i.test(up.error.message)) return FAILED;
+    const fin = await imageLifecycle({ action: "finalize_maintenance", image_id: r.image_id });
+    return ["ready", "already_ready"].includes(fin?.outcome) ? null : FAILED;
+  } catch {
+    return FAILED;
+  }
+}
+
+export const listMaintenanceDocuments = (requestId) =>
+  supabase.rpc("list_maintenance_request_documents", { requested_request_id: requestId });
+export async function uploadMaintenanceDocument(requestId, file) {
+  const FAILED = "Dokumentet kunne ikke lastes opp. Prøv igjen.";
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!bytes.length || bytes.length > MAX_DOCUMENT_BYTES || new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") return "Velg en PDF på maksimalt 10 MB.";
+    const name = file.name || "dokument.pdf";
+    const r = await documentLifecycle({
+      action: "reserve_maintenance", maintenance_request_id: requestId, reservation_key: crypto.randomUUID(),
+      title: name.replace(/\.pdf$/i, "").slice(0, 160) || "Dokument", original_file_name: name, file_size_bytes: bytes.length,
+    });
+    if (r?.outcome === "attachment_limit_reached") return `En sak kan ha maksimalt ${MAINTENANCE_DOCUMENT_LIMIT} dokumenter.`;
+    if (!["reserved", "already_reserved"].includes(r?.outcome) || !r.document_id || !r.storage_path) return FAILED;
+    if (r.status !== "ready") {
+      const up = await supabase.storage.from("documents").upload(r.storage_path, new Blob([bytes], { type: "application/pdf" }), { cacheControl: "0", contentType: "application/pdf", upsert: false });
+      if (up.error && !/exists|duplicate/i.test(up.error.message)) return FAILED;
+    }
+    const fin = await documentLifecycle({ action: "finalize_maintenance", document_id: r.document_id });
+    return ["ready", "already_ready"].includes(fin?.outcome) ? null : FAILED;
+  } catch {
+    return FAILED;
+  }
+}
+
+// Comment photos: maintenance-comment-images/{property}/{request}/{image}.jpg (lowercase), max 4.
+export async function addMaintenanceComment(request, text, photos = []) {
+  const attachments = [];
+  try {
+    for (const file of photos.slice(0, COMMENT_PHOTO_LIMIT)) {
+      const jpeg = await toJpeg(file);
+      if (jpeg.size > 10_000_000) return "Hvert bilde kan være maksimalt 10 MB.";
+      const id = crypto.randomUUID().toLowerCase();
+      const path = `${request.property_id}/${request.id}/${id}.jpg`.toLowerCase();
+      const up = await supabase.storage.from("maintenance-comment-images").upload(path, jpeg, { cacheControl: "0", contentType: "image/jpeg", upsert: false });
+      if (up.error) return "Bildet kunne ikke lastes opp. Prøv igjen.";
+      attachments.push({ id, storage_path: path, mime_type: "image/jpeg" });
+    }
+  } catch {
+    return "Bildet kunne ikke leses.";
+  }
+  const comment = text.trim() || (attachments.length ? COMMENT_PHOTO_ONLY : "");
+  if (!comment) return "Skriv en kommentar før du sender. Lukkede saker må gjenåpnes først.";
+  const res = await supabase.rpc("add_maintenance_comment", { requested_request_id: request.id, requested_comment: comment, requested_attachments: attachments });
+  return res.error ? explain(res.error) : null;
+}
+export async function commentPhotoUrl(storagePath) {
+  const file = await supabase.storage.from("maintenance-comment-images").download(storagePath);
+  return file.error ? null : dataUrlOf(file.data);
+}
+
+// Planned visit (MaintenanceView.scheduleSection): one calendar event, no deadline.
+export const maintenanceCalendarItems = (requestId) =>
+  supabase.from("property_calendar_items").select("id, property_id, tenancy_id, maintenance_request_id, title, description, item_type, category, starts_at, due_at, ends_at, all_day, visibility, status, tenant_response, tenant_response_comment, tenant_responded_at")
+    .eq("maintenance_request_id", requestId).order("starts_at", { ascending: true });
+export const calendarResponses = (propertyId) =>
+  supabase.rpc("list_calendar_item_responses", { requested_property_id: propertyId });
+export const scheduleMaintenanceVisit = (request, startsAt) =>
+  supabase.rpc("create_calendar_item", {
+    requested_property_id: request.property_id, requested_tenancy_id: request.tenancy_id ?? null,
+    requested_maintenance_request_id: request.id, requested_title: request.title.slice(0, 160),
+    requested_description: null, requested_item_type: "event", requested_category: "maintenance",
+    requested_starts_at: iso(startsAt), requested_due_at: null, requested_ends_at: null,
+    requested_all_day: false, requested_shared_with_property: false,
+  });
+// Reschedule keeps the item and its duration; the server resets the tenant's answer.
+export function rescheduleMaintenanceVisit(item, startsAt) {
+  const start = new Date(startsAt);
+  const ends = item.ends_at && item.starts_at ? new Date(start.getTime() + (new Date(item.ends_at) - new Date(item.starts_at))) : null;
+  return supabase.rpc("update_calendar_item", {
+    requested_calendar_item_id: item.id, requested_title: item.title, requested_description: item.description,
+    requested_item_type: item.item_type, requested_category: item.category,
+    requested_starts_at: iso(startsAt), requested_due_at: item.due_at,
+    requested_ends_at: ends ? ends.toISOString().replace(/\.\d{3}Z$/, "Z") : null, requested_all_day: item.all_day,
+  });
+}
+export const respondToCalendarItem = (itemId, decision, comment) =>
+  supabase.rpc("respond_to_calendar_item", { requested_calendar_item_id: itemId, requested_decision: decision, requested_comment: comment || null });
+
+// iOS #1506: channel maintenance:<request>:<uuid>, INSERT on maintenance_events for this request.
+// Reconnects with backoff (1 s → 30 s) and asks for a reload after every resubscribe.
+export function subscribeMaintenance(requestId, { onEvent, onResync }) {
+  const rid = String(requestId).toLowerCase();
+  let channel = null;
+  let stopped = false;
+  let attempt = 0;
+  let timer = null;
+  let hadConnection = false;
+  const connect = () => {
+    if (stopped) return;
+    const ch = supabase.channel(`maintenance:${rid}:${crypto.randomUUID()}`);
+    channel = ch;
+    ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "maintenance_events", filter: `maintenance_request_id=eq.${rid}` }, (payload) => {
+      const row = payload?.new;
+      if (!row?.id) return;
+      if (row.maintenance_request_id && String(row.maintenance_request_id).toLowerCase() !== rid) return;
+      onEvent(row);
+    });
+    ch.subscribe((status) => {
+      if (stopped || ch !== channel) return;
+      if (status === "SUBSCRIBED") {
+        if (hadConnection || attempt > 0) onResync?.();
+        hadConnection = true;
+        attempt = 0;
+      } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
+        channel = null;
+        supabase.removeChannel(ch);
+        const delay = Math.min(30_000, 1000 * 2 ** attempt);
+        attempt += 1;
+        clearTimeout(timer);
+        timer = setTimeout(connect, delay);
+      }
+    });
+  };
+  connect();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    if (channel) supabase.removeChannel(channel);
+    channel = null;
+  };
 }

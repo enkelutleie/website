@@ -1517,6 +1517,562 @@ async function chatPage() {
   return [shell];
 }
 
+/* ---------- Vedlikehold (MaintenanceView.swift, MaintenanceHistorySection) ---------- */
+const MT_EVENT_TITLES = {
+  created: "Saken ble opprettet", comment: "Kommentar", reopened: "Saken ble gjenåpnet", resolved: "Saken ble markert som løst",
+  closed: "Saken ble lukket", image_added: "Bilde lagt til", image_removed: "Bilde fjernet", document_added: "Dokument lagt til",
+  document_removed: "Dokument fjernet", shared_with_tenant: "Saken ble delt med leietaker",
+};
+const MT_EVENT_ICONS = {
+  created: "plus", comment: "chat", status_changed: "history", priority_changed: "history", reopened: "history", resolved: "check",
+  closed: "check", image_added: "photo", image_removed: "photo", document_added: "doc", document_removed: "doc", shared_with_tenant: "person",
+};
+const MT_RELOAD_REQUEST = new Set(["status_changed", "priority_changed", "reopened", "resolved", "closed", "shared_with_tenant"]);
+const mtPriority = (p) => new Map(act.MAINTENANCE_PRIORITIES).get(p) ?? p;
+const mtCategory = (c) => new Map(act.MAINTENANCE_CATEGORIES).get(c) ?? "Annet";
+const mtEventTitle = (e) => {
+  if (e.event_type === "status_changed") return `Status endret til ${act.MAINTENANCE_STATUS[e.new_value] ?? "ny status"}`;
+  if (e.event_type === "priority_changed") return `Prioritet endret til ${new Map(act.MAINTENANCE_PRIORITIES).get(e.new_value) ?? "ny prioritet"}`;
+  return MT_EVENT_TITLES[e.event_type] ?? "Hendelse";
+};
+const mtStatusChip = (r) => h("span", `pt-chip ${r.status === "resolved" ? "pt-chip-resolved" : "is-info"}`, act.MAINTENANCE_STATUS[r.status] ?? r.status);
+const mtTime = (v) => new Date(v).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+const mtDateTime = (v) => `${dateText(v)} kl. ${mtTime(v)}`;
+const mtActiveTenancies = (pid) => state.tenancies.filter((t) => t.property_id === pid && t.status === "active");
+const mtTenantTenancy = (pid) => mtActiveTenancies(pid).find((t) => state.tenantOf.has(t.id));
+const mtSortEvents = (events) => events.sort((a, b) => (a.created_at === b.created_at ? (a.id < b.id ? -1 : 1) : new Date(a.created_at) - new Date(b.created_at)));
+const mtFinished = (rows) => rows.filter(act.isFinishedMaintenance)
+  .sort((a, b) => new Date(b.resolved_at || b.updated_at) - new Date(a.resolved_at || a.updated_at));
+const mtBack = (href = "#vedlikehold", label = "Vedlikehold") => {
+  const a = h("a", "pt-mt-back", `← ${label}`);
+  a.href = href;
+  return a;
+};
+const mtPicker = (label, date, time) => {
+  // Native date/time inputs: the browser's picker closes as soon as a date is chosen.
+  const wrap = h("div", "pt-mt-picker");
+  const d = h("input", "pt-input");
+  d.type = "date";
+  d.value = date;
+  d.min = todayISO();
+  d.setAttribute("aria-label", label);
+  const t = h("input", "pt-input");
+  t.type = "time";
+  t.value = time;
+  t.setAttribute("aria-label", "Klokkeslett");
+  wrap.append(h("span", "pt-field-label", label), d, t);
+  return { wrap, value: () => (d.value && t.value ? `${d.value}T${t.value}` : null) };
+};
+const mtThumb = (load, alt) => {
+  const img = h("img", "pt-mt-thumb");
+  img.alt = alt;
+  load().then((url) => { if (url) img.src = url; });
+  return img;
+};
+
+const maintenanceForm = async (pid) => {
+  const manager = isManager(pid);
+  const fields = [
+    { name: "title", label: "Tittel", type: "text", required: true, maxLength: 160, placeholder: "Kort beskrivelse av problemet" },
+    { name: "description", label: "Beskrivelse", type: "textarea", required: true, maxLength: 5000, rows: 5, help: "Beskriv problemet før du sender inn saken." },
+    { name: "category", label: "Kategori", type: "select", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
+    { name: "priority", label: "Prioritet", type: "select", options: act.MAINTENANCE_PRIORITIES, value: "normal", required: true },
+  ];
+  if (manager) {
+    const tenancies = mtActiveTenancies(pid);
+    const people = await tenancyPeople(pid);
+    const names = new Map();
+    for (const m of people.data ?? []) if (m.role === "tenant" && m.name) names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name]);
+    fields.push({
+      name: "visibility", label: "Synlighet", type: "select", required: true, value: "private",
+      options: [["private", "Kun for utleiere"], ...tenancies.map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id) ?? ["leietaker"]).join(", ")}`])],
+      help: tenancies.length ? "Velg hvilket leieforhold saken gjelder, eller velg at saken kun skal være synlig for utleiere." : "Ingen aktiv leietaker er knyttet til denne boligen.",
+    });
+  }
+  fields.push({ name: "images", label: "Bilder", type: "file", accept: "image/*", multiple: true, help: `Du kan legge ved opptil ${act.MAINTENANCE_IMAGE_LIMIT} bilder.` });
+  await act.openForm({
+    title: "Ny vedlikeholdssak",
+    intro: "Ikke en nødtjeneste. Ved umiddelbar fare må du kontakte nødetater, vaktselskap eller riktig fagperson direkte.",
+    fields,
+    submitLabel: "Send inn sak",
+    onSubmit: async (v) => {
+      if (v.images.length > act.MAINTENANCE_IMAGE_LIMIT) return `En sak kan ha maksimalt ${act.MAINTENANCE_IMAGE_LIMIT} bilder.`;
+      const tenancyId = manager ? (v.visibility === "private" ? null : v.visibility) : mtTenantTenancy(pid)?.id;
+      if (!manager && !tenancyId) return "Du trenger et aktivt leieforhold for å melde inn en sak.";
+      const res = await act.createMaintenance(pid, { tenancyId, title: v.title, description: v.description, category: v.category, priority: v.priority }, v.images);
+      if (res.message) return res.message;
+      location.hash = `vedlikehold/${res.requestId}`;
+      refresh(res.imageError ? `Vedlikeholdssaken er opprettet, men ikke alle bildene ble lagt til. ${res.imageError}` : "Vedlikeholdssaken er opprettet.");
+      return null;
+    },
+  });
+};
+
+const maintenanceRow = (r) => {
+  const a = h("a", "pt-mt-row");
+  a.href = `#vedlikehold/${r.id}`;
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, r.title), h("span", null, `Prioritet: ${mtPriority(r.priority)} · Sist oppdatert ${dateText(r.last_activity_at || r.updated_at)}`));
+  a.append(icon("wrench"), main, mtStatusChip(r));
+  return a;
+};
+const maintenanceHistoryCard = (r) => {
+  const a = h("a", "pt-mt-history-card");
+  a.href = `#vedlikehold/${r.id}`;
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, r.title), h("span", null, `${mtCategory(r.category)} · ${dateText(r.resolved_at || r.updated_at)}`));
+  a.append(main, mtStatusChip(r), icon("chevron", "pt-icon-circle pt-mt-chevron"));
+  return a;
+};
+
+const maintenanceList = async (pid) => {
+  const manager = isManager(pid);
+  const res = await act.listMaintenance(pid);
+  const c = card("Vedlikehold", "wrench", manager ? ["Vedlikeholdshistorikk", "#vedlikehold/historikk"] : null);
+  c.append(h("p", "pt-muted", manager ? "Følg opp innmeldte saker og registrer vedlikehold på boligen." : "Meld inn problemer og følg status på saker for leieforholdet ditt."));
+  if (manager || mtTenantTenancy(pid)) c.append(actionsRow(button("+ Ny sak", "pt-btn-primary pt-btn-small", () => maintenanceForm(pid))));
+  if (res.error) return [c, emptyPage("info", "Vedlikehold er ikke tilgjengelig", "Kontroller forbindelsen og prøv igjen.")];
+  const rows = res.data ?? [];
+  const active = rows.filter((r) => !act.isFinishedMaintenance(r));
+  if (active.length) {
+    const list = h("div", "pt-mt-list");
+    list.append(...active.map(maintenanceRow));
+    c.append(list);
+  } else {
+    const empty = h("div", "pt-mt-empty");
+    empty.append(h("strong", null, "Ingen vedlikeholdssaker"), h("p", "pt-muted", manager || mtTenantTenancy(pid)
+      ? "Opprett en sak når noe i boligen må følges opp."
+      : "Du trenger et aktivt leieforhold for å melde inn en sak."));
+    c.append(empty);
+  }
+  const nodes = [c];
+  const finished = mtFinished(rows);
+  if (!manager && finished.length) {
+    const prev = card("Tidligere saker", "history");
+    const list = h("div", "pt-mt-history-list");
+    list.append(...finished.map(maintenanceHistoryCard));
+    prev.append(list);
+    nodes.push(prev);
+  }
+  return nodes;
+};
+
+const maintenanceHistory = async (pid) => {
+  if (!isManager(pid)) return maintenanceList(pid);
+  const res = await act.listMaintenance(pid);
+  const intro = h("section", "pt-card pt-mt-history-intro");
+  const head = h("div", "pt-mt-history-head");
+  const mascot = h("img", "pt-mt-mascot");
+  mascot.src = "/brand/house-mascot-happy.png";
+  mascot.alt = "";
+  const toggle = h("button", "pt-mt-info-toggle");
+  toggle.type = "button";
+  toggle.append(icon("info", "pt-mt-info-icon"));
+  toggle.setAttribute("aria-label", "Les mer");
+  toggle.setAttribute("aria-expanded", "false");
+  const info = h("p", "pt-mt-info", "Vedlikehold med kvitteringer kan i mange tilfeller gi skattefradrag. Bilder, beskrivelser og datoer kan være nyttig dersom Skatteetaten etterspør dokumentasjon.\n\nVed skade eller reklamasjon kan bilder, tidslinje og kommunikasjon være viktig for å dokumentere hva som har skjedd.");
+  info.hidden = true;
+  toggle.addEventListener("click", () => {
+    info.hidden = !info.hidden;
+    toggle.setAttribute("aria-label", info.hidden ? "Les mer" : "Skjul");
+    toggle.setAttribute("aria-expanded", String(!info.hidden));
+  });
+  head.append(mascot, h("p", null, "God vedlikeholdsdokumentasjon gir deg oversikt og gjør det enklere å følge opp boligen over tid."), toggle);
+  intro.append(head, info);
+  const c = card("Vedlikeholdshistorikk", "history");
+  if (res.error) c.append(inline("Kunne ikke hente vedlikeholdssakene. Prøv igjen."));
+  else {
+    const finished = mtFinished(res.data ?? []);
+    if (!finished.length) c.append(inline("Ingen avsluttede saker"));
+    else {
+      const list = h("div", "pt-mt-history-list");
+      list.append(...finished.map(maintenanceHistoryCard));
+      c.append(list);
+    }
+  }
+  return [mtBack(), intro, c];
+};
+
+const maintenanceDetail = async (pid, rid) => {
+  const token = renderToken;
+  const manager = isManager(pid);
+  const first = await act.getMaintenance(rid);
+  if (first.error || !first.data || first.data.property_id !== pid) {
+    return [mtBack(), emptyPage("info", "Saken er ikke tilgjengelig", "Vedlikeholdssaken finnes ikke lenger eller er ikke tilgjengelig.")];
+  }
+  const st = { request: first.data, events: [], images: [], documents: [], items: [], responses: new Map(), names: new Map(), reporter: null, photos: [] };
+  const finished = () => act.isFinishedMaintenance(st.request);
+  const loadEvents = async () => {
+    const r = await act.listMaintenanceEvents(rid);
+    if (r.error) return;
+    st.events = mtSortEvents(r.data ?? []);
+    const missing = [...new Set(st.events.map((e) => e.actor_id).filter((id) => id && !st.names.has(id)))];
+    if (missing.length) {
+      const m = await act.linkedContactNames(missing);
+      missing.forEach((id) => st.names.set(id, m.get(id) ?? null));
+    }
+  };
+  const loadAttachments = async () => {
+    const [img, doc] = await Promise.all([act.listMaintenanceImages(rid), act.listMaintenanceDocuments(rid)]);
+    st.images = (img.data ?? []).filter((i) => i.status === "ready");
+    st.documents = (doc.data ?? []).filter((d) => d.status === "ready");
+  };
+  const loadSchedule = async () => {
+    const [items, responses] = await Promise.all([act.maintenanceCalendarItems(rid), manager ? act.calendarResponses(pid) : Promise.resolve({ data: [] })]);
+    st.items = (items.data ?? []).filter((i) => i.status !== "cancelled");
+    st.responses = new Map((responses.data ?? []).map((r) => [r.calendar_item_id, r]));
+  };
+  const loadReporter = async () => {
+    if (!(await act.maintenanceReporterIsTenant(st.request))) return;
+    const m = await act.linkedContactNames([st.request.created_by]);
+    st.reporter = m.get(st.request.created_by) ?? "leietaker";
+  };
+  await Promise.all([loadEvents(), loadAttachments(), loadSchedule(), loadReporter()]);
+
+  const wrap = h("div", "pt-mt-detail");
+  const timelineList = h("ol", "pt-mt-timeline");
+  const timelineEmpty = inline("Ingen historikk er tilgjengelig ennå.");
+  const reloadRequest = async (message) => {
+    const r = await act.getMaintenance(rid);
+    if (r.data) st.request = r.data;
+    await Promise.all([loadEvents(), loadSchedule()]);
+    draw();
+    if (message) act.toast(message);
+  };
+  const run = async (res, message) => {
+    const err = rpcError(res);
+    if (err) return act.toast(err);
+    await reloadRequest(message);
+  };
+
+  const summary = () => {
+    const r = st.request;
+    const c = h("section", "pt-card");
+    const head = h("div", "pt-card-head");
+    head.append(icon("wrench"), h("h2", null, r.title), mtStatusChip(r));
+    const chips = h("div", "pt-mt-chips");
+    chips.append(
+      h("span", "pt-chip is-info", `Prioritet: ${mtPriority(r.priority)}`),
+      h("span", "pt-chip is-info", mtCategory(r.category)),
+      h("span", "pt-chip is-info", r.tenancy_id ? "Delt med leietaker" : "Kun for utleiere"),
+    );
+    c.append(head, chips, h("p", "pt-mt-description", r.description));
+    c.append(h("p", "pt-muted", [`Opprettet ${dateText(r.created_at)}`, st.reporter ? `Innmeldt av ${st.reporter}` : null, `Sist oppdatert ${dateText(r.last_activity_at || r.updated_at)}`].filter(Boolean).join(" · ")));
+    if (manager && !finished()) {
+      const next = (act.MAINTENANCE_NEXT[r.status] ?? []).filter((s) => s !== "resolved");
+      const tenancies = mtActiveTenancies(pid);
+      c.append(actionsRow(
+        button("Endre prioritet", "pt-btn-soft pt-btn-small", () => act.openForm({
+          title: "Prioritet", fields: [{ name: "priority", label: "Prioritet", type: "select", options: act.MAINTENANCE_PRIORITIES, value: r.priority, required: true }],
+          onSubmit: async (v) => {
+            if (v.priority === r.priority) return null;
+            const res = await act.setMaintenancePriority(r.id, v.priority);
+            if (res.error) return act.explain(res.error);
+            reloadRequest("Vedlikeholdssaken er oppdatert.");
+            return null;
+          },
+        })),
+        next.length ? button("Endre status", "pt-btn-soft pt-btn-small", () => act.openForm({
+          title: "Endre status", fields: [{ name: "status", label: "Status", type: "select", options: next.map((s) => [s, act.MAINTENANCE_STATUS[s]]), required: true }],
+          onSubmit: async (v) => {
+            const res = await act.setMaintenanceStatus(r, v.status);
+            if (res.error) return act.explain(res.error);
+            reloadRequest("Vedlikeholdssaken er oppdatert.");
+            return null;
+          },
+        })) : null,
+        !r.tenancy_id && tenancies.length ? button("Del med leietaker", "pt-btn-soft pt-btn-small", async () => {
+          const people = await tenancyPeople(pid);
+          const names = new Map();
+          for (const m of people.data ?? []) if (m.role === "tenant" && m.name) names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name]);
+          act.openForm({
+            title: "Del med leietaker?",
+            intro: "Når saken deles, får leietakeren tilgang til saken, kommentarer og historikk samt eventuelle bilder som er knyttet til saken. Dokumenter følger sine egne tilgangsregler. Eksisterende private kalenderfrister deles ikke automatisk.",
+            fields: [{ name: "tenancy", label: "Velg leieforhold", type: "select", required: true, options: tenancies.map((t) => [t.id, (names.get(t.id) ?? ["Leietaker"]).join(", ")]) }],
+            submitLabel: "Del med leietaker",
+            onSubmit: async (v) => {
+              const res = await act.shareMaintenance(r.id, v.tenancy);
+              if (res.error) return act.explain(res.error);
+              reloadRequest("Vedlikeholdssaken er delt med leietakeren.");
+              return null;
+            },
+          });
+        }) : null,
+      ));
+    }
+    return c;
+  };
+
+  const finishedCard = () => {
+    const r = st.request;
+    const c = h("section", "pt-card pt-mt-finished");
+    const head = h("div", "pt-card-head");
+    head.append(icon("check", "pt-icon-circle is-success"), h("h2", null, "Vedlikeholdssaken er ferdigstilt"));
+    c.append(head, h("p", "pt-muted", "Saken er låst. Bilder og tidslinje er beholdt som historikk."));
+    const tenancyOk = !r.tenancy_id || state.tenancies.some((t) => t.id === r.tenancy_id && t.status === "active");
+    if (manager && tenancyOk) {
+      c.append(actionsRow(button("Gjenåpne saken", "pt-btn-secondary pt-btn-small", async () => run(await act.setMaintenanceStatus(r, "in_progress"), "Vedlikeholdssaken er oppdatert."))));
+    }
+    return c;
+  };
+
+  const filePicker = (accept, onFiles, multiple = false) => {
+    const input = h("input", "pt-visually-hidden");
+    input.type = "file";
+    input.accept = accept;
+    input.multiple = multiple;
+    input.addEventListener("change", () => { const files = [...input.files]; input.value = ""; if (files.length) onFiles(files); });
+    return input;
+  };
+
+  const imagesCard = () => {
+    const c = card("Bilder", "photo");
+    if (st.images.length) {
+      const grid = h("div", "pt-mt-thumbs");
+      grid.append(...st.images.map((i) => mtThumb(() => act.maintenanceImageUrl(i.storage_path), i.caption || "Bilde i vedlikeholdssaken")));
+      c.append(grid, h("p", "pt-muted", `${st.images.length} av ${act.MAINTENANCE_IMAGE_LIMIT} bilder`));
+    } else c.append(inline("Ingen bilder er lagt til saken ennå."));
+    if (!finished() && st.images.length < act.MAINTENANCE_IMAGE_LIMIT) {
+      const input = filePicker("image/*", async ([file]) => {
+        const err = await act.uploadMaintenanceImage(rid, file);
+        if (err) return act.toast(err);
+        await loadAttachments();
+        draw();
+        act.toast("Bildet er lagt til saken.");
+      });
+      c.append(input, actionsRow(button("Legg til", "pt-btn-soft pt-btn-small", () => input.click())));
+    }
+    return c;
+  };
+
+  const documentsCard = () => {
+    if (!manager && !st.documents.length) return null;
+    const c = card("Dokumenter", "doc");
+    if (st.documents.length) {
+      const list = h("ul", "pt-list");
+      for (const d of st.documents) {
+        const li = h("li", "pt-row");
+        const main = h("div", "pt-row-main");
+        main.append(h("strong", null, d.title || d.original_file_name || "Dokument"), h("span", null, dateText(d.created_at)));
+        li.append(icon("doc"), main, pdfButton("Åpne", "pt-btn-soft pt-btn-small", () => act.documentPdf(d.id)));
+        list.append(li);
+      }
+      c.append(list);
+    } else c.append(inline("Ingen dokumenter er lagt til saken ennå."));
+    if (manager && !finished() && st.documents.length < act.MAINTENANCE_DOCUMENT_LIMIT) {
+      const input = filePicker("application/pdf", async ([file]) => {
+        const err = await act.uploadMaintenanceDocument(rid, file);
+        if (err) return act.toast(err);
+        await loadAttachments();
+        draw();
+        act.toast("Dokumentet er lagt til saken.");
+      });
+      c.append(input, actionsRow(button("Legg til dokument", "pt-btn-soft pt-btn-small", () => input.click())));
+    }
+    return c;
+  };
+
+  // Planlagt dato for fiks: one visit with date and time, no deadline.
+  const scheduleCard = () => {
+    if (!manager || finished() || st.items.length) return null;
+    const c = card("Planlagt dato for fiks", "calendar");
+    c.append(h("p", "pt-muted", "Velg når saken skal fikses. Leietaker ser datoen og får den i kalenderen."));
+    const tomorrow = new Date(Date.now() + 86_400_000);
+    const picker = mtPicker("Planlagt dato", localParts(tomorrow.toISOString()).date, "09:00");
+    c.append(picker.wrap, actionsRow(button("Legg i kalenderen", "pt-btn-primary pt-btn-small", async (e) => {
+      const at = picker.value();
+      if (!at) return act.toast("Velg dato og klokkeslett.");
+      e.currentTarget.disabled = true;
+      const res = await act.scheduleMaintenanceVisit(st.request, at);
+      const err = rpcError(res);
+      if (err) { e.currentTarget.disabled = false; return act.toast(err); }
+      await loadSchedule();
+      draw();
+      act.toast("Planlagt dato er lagt i kalenderen.");
+    })));
+    return c;
+  };
+
+  const responseBox = (cls, title, body) => {
+    const box = h("div", `pt-mt-response ${cls}`);
+    box.append(h("strong", null, title), h("p", null, body));
+    return box;
+  };
+
+  const plannedCard = () => {
+    if (!st.items.length) return null;
+    const c = card("Planlagt dato for fiks", "calendar");
+    for (const item of st.items) {
+      const at = item.starts_at || item.due_at;
+      const row = h("div", "pt-mt-planned");
+      const pills = h("div", "pt-mt-pills");
+      pills.append(h("span", "pt-mt-pill", dateText(at)));
+      if (!item.all_day && at) pills.append(h("span", "pt-mt-pill", mtTime(at)));
+      const overdue = item.status === "active" && at && new Date(at) < new Date() && !finished();
+      pills.append(h("span", `pt-chip ${overdue ? "is-warning" : item.status === "completed" ? "is-success" : "is-info"}`,
+        overdue ? "Forfalt" : item.status === "completed" ? "Fullført" : "Aktiv"));
+      row.append(pills);
+      if (overdue && manager) row.append(h("p", "pt-mt-followup", "Vedlikeholdssaken trenger oppfølging. Den planlagte datoen har passert."));
+      const shared = !!item.tenancy_id && item.status === "active";
+      if (shared && manager) {
+        const resp = st.responses.get(item.id);
+        const decision = resp?.decision ?? item.tenant_response;
+        const comment = resp?.comment ?? item.tenant_response_comment;
+        if (decision === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker", "Denne hendelsen er bekreftet av leietaker."));
+        else if (decision === "declined") {
+          row.append(responseBox("is-danger", "Avslått av leietaker", comment || "Svaret ligger i chatten."));
+          if (!finished()) {
+            const p = localParts(at);
+            const picker = mtPicker("Velg ny dato", p.date, p.time);
+            row.append(picker.wrap, actionsRow(button("Send ny dato til leietaker", "pt-btn-primary pt-btn-small", async (e) => {
+              const next = picker.value();
+              if (!next) return act.toast("Velg dato og klokkeslett.");
+              e.currentTarget.disabled = true;
+              const err = rpcError(await act.rescheduleMaintenanceVisit(item, next));
+              if (err) { e.currentTarget.disabled = false; return act.toast(err); }
+              await loadSchedule();
+              draw();
+              act.toast("Ny dato er sendt til leietaker.");
+            })));
+          }
+        } else row.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på den planlagte datoen ennå."));
+      } else if (shared && !manager && !finished()) {
+        if (item.tenant_response === "accepted") row.append(responseBox("is-success", "Du har godtatt hendelsen", mtDateTime(at)));
+        else if (item.tenant_response === "declined") row.append(responseBox("is-danger", "Avslaget er sendt i chat", item.tenant_response_comment || "Svaret ligger i chatten."));
+        else {
+          row.append(responseBox("is-warning", "Passer denne dagen?", "Godta hendelsen, eller avslå og skriv i chatten hvilken dag som passer bedre."));
+          const respond = async (decision, comment) => {
+            const res = await act.respondToCalendarItem(item.id, decision, comment);
+            if (res.error) return "Svaret kunne ikke sendes";
+            await loadSchedule();
+            draw();
+            act.toast(decision === "accepted" ? "Du har godtatt hendelsen" : "Avslaget er sendt i chat");
+            return null;
+          };
+          row.append(actionsRow(
+            button("Godta", "pt-btn-primary pt-btn-small", async () => { const err = await respond("accepted"); if (err) act.toast(err); }),
+            button("Avslå", "pt-btn-secondary pt-btn-small", () => act.openForm({
+              title: "Avslå hendelsen",
+              fields: [{ name: "comment", label: "Kommentar", type: "textarea", rows: 3, maxLength: 1000, placeholder: "Hvilken dag passer bedre?", help: "Kommentaren sendes til utleier i chat, så dere kan avtale en annen dag der." }],
+              submitLabel: "Send avslag",
+              onSubmit: (v) => respond("declined", v.comment),
+            })),
+          ));
+        }
+      }
+      c.append(row);
+    }
+    return c;
+  };
+
+  const drawTimeline = () => {
+    timelineList.replaceChildren();
+    timelineEmpty.hidden = st.events.length > 0;
+    for (const e of st.events) {
+      const li = h("li", `pt-mt-event${e.event_type === "comment" ? " is-comment" : ""}`);
+      li.dataset.eventId = e.id;
+      const body = h("div", "pt-mt-event-body");
+      body.append(h("strong", null, mtEventTitle(e)));
+      const photos = Array.isArray(e.comment_attachments) ? e.comment_attachments : [];
+      const text = e.comment && !(photos.length && e.comment === act.COMMENT_PHOTO_ONLY) ? e.comment : null;
+      if (text) body.append(h("p", null, text));
+      if (photos.length) {
+        const grid = h("div", "pt-mt-thumbs");
+        grid.append(...photos.map((ph) => mtThumb(() => act.commentPhotoUrl(ph.storage_path), "Bilde i kommentaren")));
+        body.append(grid);
+      }
+      const name = e.actor_id ? (e.actor_id === state.user.id ? "Du" : st.names.get(e.actor_id)) : null;
+      if (name) body.append(h("span", "pt-mt-actor", name));
+      body.append(h("span", "pt-mt-time", mtDateTime(e.created_at)));
+      li.append(icon(MT_EVENT_ICONS[e.event_type] ?? "history"), body);
+      timelineList.append(li);
+    }
+  };
+
+  // Composer is built once so a half-written comment survives realtime redraws.
+  const composer = h("div", "pt-mt-composer");
+  const textarea = h("textarea", "pt-input pt-textarea");
+  textarea.rows = 3;
+  textarea.maxLength = 4000;
+  textarea.placeholder = "Skriv en kommentar …";
+  textarea.setAttribute("aria-label", "Kommentar til vedlikeholdssaken");
+  const chosen = h("div", "pt-mt-chosen");
+  const drawChosen = () => {
+    chosen.replaceChildren(...st.photos.map((f, i) => {
+      const chip = h("span", "pt-chip is-info pt-mt-chosen-chip", f.name || "Bilde");
+      const x = button("Fjern bilde", "pt-btn-quiet-destructive pt-btn-small", () => { st.photos.splice(i, 1); drawChosen(); });
+      chip.append(x);
+      return chip;
+    }));
+  };
+  const photoInput = filePicker("image/*", (files) => {
+    if (st.photos.length + files.length > act.COMMENT_PHOTO_LIMIT) act.toast(`Du kan legge ved opptil ${act.COMMENT_PHOTO_LIMIT} bilder.`);
+    st.photos = [...st.photos, ...files].slice(0, act.COMMENT_PHOTO_LIMIT);
+    drawChosen();
+  }, true);
+  const send = button("Send kommentar", "pt-btn-primary pt-btn-small", async () => {
+    if (!textarea.value.trim() && !st.photos.length) return act.toast("Skriv en kommentar før du sender. Lukkede saker må gjenåpnes først.");
+    send.disabled = true;
+    const err = await act.addMaintenanceComment(st.request, textarea.value, st.photos);
+    send.disabled = false;
+    if (err) return act.toast(err);
+    textarea.value = "";
+    st.photos = [];
+    drawChosen();
+    await loadEvents();
+    drawTimeline();
+    act.toast("Kommentaren er lagt til.");
+  });
+  composer.append(textarea, chosen, photoInput, actionsRow(button("Legg ved bilde", "pt-btn-soft pt-btn-small", () => photoInput.click()), send));
+
+  const timelineCard = () => {
+    const c = card("Tidslinje", "history");
+    drawTimeline();
+    c.append(timelineEmpty, timelineList);
+    if (!finished()) c.append(composer);
+    return c;
+  };
+
+  const resolveRow = () => {
+    if (!manager || finished() || !(act.MAINTENANCE_NEXT[st.request.status] ?? []).includes("resolved")) return null;
+    return actionsRow(button("Marker saken som løst", "pt-btn-primary", async () => {
+      const ok = await act.confirmAction({
+        title: "Ferdigstill vedlikeholdssak?",
+        text: "Saken låses etter ferdigstilling. Ingen kan kommentere, redigere eller slette innhold. Hele saken beholdes som historikk. Du kan gjenåpne saken ved behov.",
+        confirmLabel: "Ferdigstill saken",
+      });
+      if (ok) run(await act.setMaintenanceStatus(st.request, "resolved"), "Vedlikeholdssaken er oppdatert.");
+    }));
+  };
+
+  const draw = () => {
+    wrap.replaceChildren(...[
+      mtBack(finished() && manager ? "#vedlikehold/historikk" : "#vedlikehold", finished() && manager ? "Vedlikeholdshistorikk" : "Vedlikehold"),
+      summary(), finished() ? finishedCard() : null, imagesCard(), documentsCard(), scheduleCard(), plannedCard(), timelineCard(), resolveRow(),
+    ].filter(Boolean));
+  };
+  draw();
+
+  // iOS #1506: live timeline; RLS decides what arrives, the list dedupes by id.
+  if (token === renderToken) {
+    setPageCleanup(act.subscribeMaintenance(rid, {
+      onEvent: async (row) => {
+        if (st.events.some((e) => e.id === row.id)) return;
+        st.events = mtSortEvents([...st.events, row]);
+        if (row.actor_id && !st.names.has(row.actor_id)) {
+          const m = await act.linkedContactNames([row.actor_id]);
+          st.names.set(row.actor_id, m.get(row.actor_id) ?? null);
+        }
+        if (/^(image|document)_/.test(row.event_type)) { await loadAttachments(); draw(); }
+        else if (MT_RELOAD_REQUEST.has(row.event_type)) await reloadRequest();
+        else drawTimeline();
+      },
+      onResync: async () => { await loadEvents(); drawTimeline(); },
+    }));
+  }
+  return [wrap];
+};
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
@@ -1553,7 +2109,7 @@ const PAGES = {
       dl.append(d);
     });
     const links = h("div", "pt-links");
-    [["Boligperm", "#boligperm"], ["Dokumenter og maler", "#dokumenter"], ["Vedlikeholdshistorikk", "#vedlikehold"]].forEach(([t, href]) => {
+    [["Boligperm", "#boligperm"], ["Dokumenter og maler", "#dokumenter"], ["Vedlikeholdshistorikk", isManager() ? "#vedlikehold/historikk" : "#vedlikehold"]].forEach(([t, href]) => {
       const l = h("a", "pt-btn pt-btn-soft pt-btn-small", t);
       l.href = href;
       links.append(l);
@@ -1605,9 +2161,11 @@ const PAGES = {
     const p = property();
     return p ? [await calendarCard(p.id, true)] : [noProperty()];
   },
-  async vedlikehold() {
-    const open = state.openTasks.get(state.propertyId);
-    return [emptyPage("wrench", "Vedlikehold", `${open != null ? `Åpne saker på boligen: ${open}. ` : ""}Saksliste og detaljer kommer på nettsiden. Til da håndteres vedlikehold i appen.`)];
+  async vedlikehold(sub) {
+    if (!property()) return [noProperty()];
+    if (sub === "historikk") return maintenanceHistory(state.propertyId);
+    if (sub) return maintenanceDetail(state.propertyId, sub);
+    return maintenanceList(state.propertyId);
   },
   async bilder() { return [emptyPage("photo", "Bilder", "Bildealbum for boligen kommer på nettsiden. Til da finner du bildene i appen.")]; },
   async "inn-utflytting"() {
@@ -1694,9 +2252,10 @@ const setPageCleanup = (fn) => { pageCleanup?.(); pageCleanup = fn; };
 const render = async () => {
   setPageCleanup(null);
   const items = allItems();
-  let id = location.hash.slice(1);
+  // Sub-routes: #vedlikehold/<sak-id> and #vedlikehold/historikk.
+  let [id, sub] = location.hash.slice(1).split("/");
   if (id === "overtakelse") id = "inn-utflytting";
-  if (!items.some((i) => i.id === id)) id = "oversikt";
+  if (!items.some((i) => i.id === id)) { id = "oversikt"; sub = undefined; }
   renderNav(id);
   const item = items.find((i) => i.id === id);
   root.querySelector("[data-page-title]").textContent = !isLandlord() && item.tenantLabel ? item.tenantLabel : item.label;
@@ -1705,7 +2264,7 @@ const render = async () => {
   const token = ++renderToken;
   let nodes;
   try {
-    nodes = await PAGES[id]();
+    nodes = await PAGES[id](sub);
   } catch {
     nodes = [emptyPage("info", "Noe gikk galt", "Prøv å laste siden på nytt om litt.")];
   }

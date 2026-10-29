@@ -37,4 +37,5 @@ export const ICONS = {
   sos: s('<path d="M12 3 2 20h20Z"/><path d="M12 10v4M12 17h.01"/>'),
   car: s('<path d="M5 16V11l2-5h10l2 5v5M3 16h18v3H3zM7 19v2M17 19v2"/><path d="M7 13h.01M17 13h.01"/>'),
   plus: s('<path d="M12 5v14M5 12h14"/>'),
+  chevron: s('<path d="m9 6 6 6-6 6"/>'),
 };
