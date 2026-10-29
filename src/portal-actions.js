@@ -30,11 +30,11 @@ export const kronerOf = (minor) => (minor == null ? "" : (Number(minor) / 100).t
 /**
  * fields: [{ name, label, type: text|number|money|date|datetime|select|textarea|file|email,
  *            options: [[value,label]], value, required, help, placeholder, accept, maxLength, min, max }]
- * sections: nodes shown above the fields. footer(close): node below the buttons.
+ * sections: nodes shown above the fields; after: nodes below the fields. footer(close): node below the buttons.
  * submitClass replaces the primary style (e.g. "pt-btn-destructive"); submitDisabled locks it.
  * onSubmit(values, form) -> string error | null | undefined
  */
-export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit, onChange, sections = [], footer, submitClass = "pt-btn-primary", submitDisabled = false }) {
+export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit, onChange, sections = [], after = [], footer, submitClass = "pt-btn-primary", submitDisabled = false }) {
   return new Promise((resolve) => {
     const dialog = h("dialog", "pt-modal");
     const form = h("form", "pt-modal-card");
@@ -80,7 +80,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       if (f.hidden) wrap.hidden = true;
       body.append(wrap);
     }
-    form.append(body);
+    form.append(body, ...after);
     const status = h("p", "pt-form-error");
     status.setAttribute("role", "alert");
     status.hidden = true;
@@ -1485,3 +1485,215 @@ export const depositError = (res) => {
   const key = Object.keys(DEPOSIT_ERROR_TEXT).find((k) => msg.includes(k));
   return key ? DEPOSIT_ERROR_TEXT[key] : res?.error ? explain(res.error) : null;
 };
+
+/* ---------- Dokumenter (DocumentController / DocumentsView) ---------- */
+// list_property_documents, document_tenancy_access (managers), the "document-lifecycle"
+// edge function and the private "documents" bucket, exactly as the app.
+export const listPropertyDocuments = (propertyId) => supabase.rpc("list_property_documents", { requested_property_id: propertyId });
+export const listDocumentAccess = (propertyId) =>
+  supabase.from("document_tenancy_access").select("document_id, tenancy_id").eq("property_id", propertyId);
+
+// reserve -> upload -> finalize. A stable reservationKey makes retries reuse the same row.
+async function storeDocumentPdf(propertyId, bytes, title, fileName, reservationKey) {
+  const reservation = await documentLifecycle({
+    action: "reserve", property_id: propertyId, reservation_key: reservationKey,
+    title, original_file_name: fileName, file_size_bytes: bytes.length,
+  });
+  if (!["reserved", "already_reserved"].includes(reservation?.outcome) || !reservation.document_id) return { stage: "reserve" };
+  if (reservation.status === "ready") return { id: reservation.document_id };
+  if (reservation.status !== "pending" || !reservation.storage_path) return { stage: "reserve" };
+  const up = await supabase.storage.from("documents").upload(reservation.storage_path, new Blob([bytes], { type: "application/pdf" }), { cacheControl: "0", contentType: "application/pdf", upsert: false });
+  if (up.error && !/exists|duplicate/i.test(up.error.message ?? "")) return { stage: "upload" };
+  const done = await documentLifecycle({ action: "finalize", document_id: reservation.document_id });
+  if (!["ready", "already_ready"].includes(done?.outcome) || done.document_id !== reservation.document_id) return { stage: "finalize", id: reservation.document_id };
+  return { id: reservation.document_id };
+}
+
+export async function uploadDocumentPdf(propertyId, file) {
+  const PICK = "Velg en PDF på maksimalt 10 MB.";
+  if (!file) return { message: PICK };
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name ?? "");
+  if (!isPdf || !file.size || file.size > MAX_DOCUMENT_BYTES) return { message: PICK };
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") return { message: PICK };
+  const fileName = (file.name ?? "").split(/[\\/]/).pop() || "dokument.pdf";
+  const title = fileName.replace(/\.[^.]+$/, "").trim() || "Dokument";
+  try {
+    const saved = await storeDocumentPdf(propertyId, bytes, title, fileName, crypto.randomUUID());
+    if (saved.stage === "reserve") return { message: "Dokumentet kunne ikke klargjøres for opplasting. Prøv igjen." };
+    if (saved.stage === "finalize") return { message: "Filen ble lastet opp, men kunne ikke ferdigstilles ennå. Prøv igjen senere." };
+    if (saved.stage) return { message: "Dokumentet kunne ikke lastes opp. Ingen tilgang ble delt. Prøv igjen." };
+    return { id: saved.id, notice: "Dokumentet er lastet opp. Del det med et aktivt leieforhold når du er klar." };
+  } catch {
+    return { message: "Dokumentet kunne ikke lastes opp. Ingen tilgang ble delt. Prøv igjen." };
+  }
+}
+
+export async function deleteDocument(documentId) {
+  try {
+    const res = await documentLifecycle({ action: "delete", document_id: documentId });
+    return ["deleted", "already_deleted"].includes(res?.outcome) ? null : "Dokumentet kunne ikke slettes. Prøv igjen.";
+  } catch {
+    return "Dokumentet kunne ikke slettes. Prøv igjen.";
+  }
+}
+
+// Grant / revoke a tenancy's read access (RLS: managers, can_share_document).
+export async function setDocumentAccess(documentId, tenancyId, propertyId, grantedBy, granted) {
+  const res = granted
+    ? await supabase.from("document_tenancy_access").insert({ document_id: documentId, tenancy_id: tenancyId, property_id: propertyId, granted_by: grantedBy })
+    : await supabase.from("document_tenancy_access").delete().eq("document_id", documentId).eq("tenancy_id", tenancyId);
+  if (res.error && !(granted && res.error.code === "23505")) return "Kunne ikke oppdatere dokumentdelingen. Prøv igjen.";
+  return null;
+}
+
+// Open a listed (ready) document from its storage path.
+export async function openListedDocument(doc) {
+  if (!doc?.storage_path || doc.status !== "ready") return { message: "Dokumentet finnes ikke lenger eller er ikke tilgjengelig." };
+  const { data, error } = await supabase.storage.from("documents").download(doc.storage_path);
+  if (error || !data) return { message: "Kunne ikke åpne dokumentet. Prøv igjen." };
+  return { url: URL.createObjectURL(new Blob([data], { type: "application/pdf" })), filename: doc.original_file_name || "dokument.pdf" };
+}
+
+/* ---------- Maler (LandlordDocumentDelivery) ---------- */
+// Save the letter, grant the tenancy, post an «eu-doc v1» card in its chat and ask
+// "landlord-template-email" to send it. Keys stay the same for retries of one letter.
+const templateEmail = async (documentId, tenancyId) => {
+  try {
+    const { data, error } = await supabase.functions.invoke("landlord-template-email", { body: { document_id: documentId, tenancy_id: tenancyId } });
+    let payload = data;
+    if (error) {
+      try { payload = await error.context?.json?.(); } catch { payload = null; }
+    }
+    const outcome = payload?.outcome;
+    if (outcome === "sent") return "sent";
+    if (outcome === "email_not_configured") return "notConfigured";
+    if (outcome === "no_recipient") return "noRecipient";
+    return "failed";
+  } catch {
+    return "failed";
+  }
+};
+
+async function postDocumentCard(tenancyId, documentId, title, requestId) {
+  const find = async () => {
+    const res = await listChatConversations();
+    return (res.data ?? []).find((c) => c.tenancy_id === tenancyId && !c.is_property_chat && c.conversation_status === "active" && c.is_writable);
+  };
+  let conv = await find();
+  if (!conv) {
+    await provisionChats();
+    conv = await find();
+  }
+  if (!conv) return false;
+  const body = `eu-doc v1\n${documentId.toLowerCase()}\n${cardTitle(title, "Dokument")}`;
+  const sent = await sendChatMessage(conv.conversation_id, requestId, body);
+  return !sent.error;
+}
+
+export function templateNotice(shared, email) {
+  if (shared && email === "sent") return { ok: true, text: "Dokumentet er sendt til leietaker i appen og på e-post." };
+  if (shared && email === "notConfigured") return { ok: true, text: "Dokumentet er delt i appen. E-post er ikke satt opp på serveren ennå." };
+  if (shared && email === "noRecipient") return { ok: true, text: "Dokumentet er delt i appen. Leietaker har ingen bekreftet e-post." };
+  if (shared) return { ok: true, text: "Dokumentet er delt i appen. E-post ble ikke sendt." };
+  if (email === "sent") return { ok: true, text: "E-post er sendt. Dokumentet ble ikke delt i appen." };
+  return { ok: false, text: "Handlingen ble ikke fullført. Prøv igjen." };
+}
+
+/** keys: { reservationKey, chatRequestId, documentId? } (documentId is set after a save). */
+export async function sendTemplateLetter({ propertyId, tenancyId, grantedBy, title, fileName, bytes, keys }) {
+  try {
+    if (!keys.documentId) {
+      const saved = await storeDocumentPdf(propertyId, bytes, title, fileName, keys.reservationKey);
+      if (!saved.id || saved.stage) return templateNotice(false, "failed");
+      keys.documentId = saved.id;
+    }
+    const grant = await setDocumentAccess(keys.documentId, tenancyId, propertyId, grantedBy, true);
+    const shared = !grant;
+    const [, email] = await Promise.all([
+      shared ? postDocumentCard(tenancyId, keys.documentId, title, keys.chatRequestId).catch(() => false) : Promise.resolve(false),
+      templateEmail(keys.documentId, tenancyId),
+    ]);
+    return templateNotice(shared, email);
+  } catch {
+    return templateNotice(false, "failed");
+  }
+}
+
+// App logo (not the mascot) as a white-backed JPEG for the letter header.
+let letterLogo = null;
+export function letterLogoJpeg() {
+  if (!letterLogo) {
+    letterLogo = new Promise((resolve) => {
+      const img = new Image();
+      img.onload = async () => {
+        try {
+          const size = 160;
+          const canvas = document.createElement("canvas");
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, size, size);
+          ctx.drawImage(img, 0, 0, size, size);
+          const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.92));
+          resolve(blob ? { jpeg: new Uint8Array(await blob.arrayBuffer()), width: size, height: size } : null);
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = "/brand/app-logo-160.png";
+    });
+  }
+  return letterLogo;
+}
+
+// Ink pad for template signatures: strokes as normalized 0..1 points (max 40 strokes, 240 points each).
+export function inkPad() {
+  const wrap = h("div", "pt-signature");
+  const canvas = h("canvas", "pt-signature-canvas");
+  canvas.width = 720;
+  canvas.height = 240;
+  canvas.setAttribute("aria-label", "Signaturfelt");
+  const clear = h("button", "pt-btn pt-btn-secondary pt-btn-small", "Tøm signatur");
+  clear.type = "button";
+  wrap.append(h("span", "pt-field-label", "Signatur (utleier)"), canvas, clear);
+  const ctx = canvas.getContext("2d");
+  const strokes = [];
+  let current = null;
+  const draw = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#1b3a6b";
+    ctx.lineWidth = 4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const s of strokes) {
+      ctx.beginPath();
+      s.forEach((p, i) => (i ? ctx.lineTo(p.x * canvas.width, p.y * canvas.height) : ctx.moveTo(p.x * canvas.width, p.y * canvas.height)));
+      if (s.length === 1) ctx.lineTo(s[0].x * canvas.width + 1, s[0].y * canvas.height);
+      ctx.stroke();
+    }
+  };
+  const point = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (strokes.length >= 40) return;
+    canvas.setPointerCapture(e.pointerId);
+    current = [point(e)];
+    strokes.push(current);
+    draw();
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!current || current.length >= 240) return;
+    current.push(point(e));
+    draw();
+  });
+  const end = () => { current = null; wrap.dispatchEvent(new Event("input", { bubbles: true })); };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+  clear.addEventListener("click", () => { strokes.length = 0; draw(); wrap.dispatchEvent(new Event("input", { bubbles: true })); });
+  return { node: wrap, strokes: () => strokes.map((s) => s.map((p) => ({ ...p }))) };
+}
