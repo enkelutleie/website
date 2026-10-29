@@ -376,3 +376,14 @@ svg { flex: none; }
 .pt-asset-detail { display: flex; flex-direction: column; gap: var(--space-s); padding: var(--space-s) 0 0; }
 .pt-bullets { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
 .pt-mileage-info h3 { margin: var(--space-s) 0 0; font-size: var(--fs-body, 1rem); }
+
+/* Årsoppgave (AnnualReportView) */
+.pt-report-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-l); }
+.pt-segmented { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--brand-soft); gap: 2px; }
+.pt-segment { border: 0; background: transparent; color: var(--secondary-ink); font: inherit; font-size: var(--fs-footnote); font-weight: 600; padding: 6px 14px; border-radius: 999px; cursor: pointer; transition: background-color var(--ease), color var(--ease); }
+.pt-segment:hover { color: var(--brand); }
+.pt-segment.is-selected { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-light); }
+.pt-banner { padding: 12px 16px; border-radius: var(--radius-md); font-size: var(--fs-footnote); }
+.pt-banner.is-warning { background: var(--warning-soft); color: #b36800; }
+.pt-report-table td { vertical-align: top; }
+.pt-report-sum td { font-weight: 700; background: var(--soft-surface); border-bottom: 0; }
