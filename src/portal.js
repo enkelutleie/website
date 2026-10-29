@@ -3,6 +3,7 @@ import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
+import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
 // and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
@@ -126,6 +127,17 @@ const emptyPage = (iconName, title, text) => {
   return c;
 };
 const inline = (text) => h("p", "pt-empty-inline", text);
+// Answer box under a planned date (MaintenanceView / CalendarView). The green one has a check and no sub-text.
+const responseBox = (cls, title, body) => {
+  const box = h("div", `pt-mt-response ${cls}`);
+  if (cls === "is-success") {
+    const head = h("strong", "pt-mt-response-head");
+    head.append(icon("check", "pt-mt-response-icon"), h("span", null, title));
+    box.append(head);
+  } else box.append(h("strong", null, title));
+  if (body) box.append(h("p", null, body));
+  return box;
+};
 
 /* ---------- data (read-only) ---------- */
 const transactions = (pid) =>
@@ -257,6 +269,115 @@ const kpis = async (pid) => {
   return grid;
 };
 
+const calendarTime = (value) => new Date(value).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+const CALENDAR_STATUS = { active: "Aktiv", completed: "Fullført", cancelled: "Kansellert" };
+
+// #kalender/<id>[/<sak-id>]: one calendar item (CalendarView detail). A maintenance date
+// notification carries the case id too, so a missing or cancelled item opens the case instead.
+const calendarDetail = async (itemId, requestId) => {
+  const res = await act.calendarItem(itemId);
+  let item = res.error ? null : res.data;
+  if (item && item.property_id !== state.propertyId) {
+    if (state.properties.some((p) => p.id === item.property_id)) selectProperty(item.property_id, false);
+    else item = null;
+  }
+  if (!item || item.status === "cancelled") {
+    if (requestId && !res.error) {
+      location.replace(`#vedlikehold/${requestId}`);
+      return [h("p", "pt-muted", "Henter kalenderpunktet …")];
+    }
+    const back = h("a", "pt-mt-back", "← Kalender");
+    back.href = "#kalender";
+    if (res.error) return [back, inline("Kalenderpunktet kunne ikke hentes akkurat nå.")];
+    return [back, emptyPage("calendar", "Kalenderpunktet er ikke tilgjengelig", "Kalenderpunktet finnes ikke lenger eller er ikke tilgjengelig.")];
+  }
+  const pid = item.property_id;
+  const manager = isManager(pid);
+  const back = h("a", "pt-mt-back", "← Kalender");
+  back.href = "#kalender";
+  const c = card(item.title || "Hendelse", "calendar");
+  const deadline = item.item_type === "deadline";
+  const at = deadline ? item.due_at || item.starts_at : item.starts_at || item.due_at;
+  const facts = h("dl", "pt-facts");
+  const when = item.all_day || !at ? dateText(at) : `${dateText(at)} kl. ${calendarTime(at)}`;
+  const rows = [
+    ["Type", deadline ? "Frist" : "Hendelse"],
+    [deadline ? "Frist" : "Start", when + (item.all_day ? " · Hele dagen" : "")],
+  ];
+  if (item.ends_at && !deadline) rows.push(["Slutt", item.all_day ? dateText(item.ends_at) : `${dateText(item.ends_at)} kl. ${calendarTime(item.ends_at)}`]);
+  rows.push(["Status", CALENDAR_STATUS[item.status] ?? "Aktiv"]);
+  const cat = act.CALENDAR_CATEGORIES.find(([k]) => k === item.category);
+  if (cat) rows.push(["Kategori", cat[1]]);
+  rows.forEach(([k, v]) => {
+    const d = h("div");
+    d.append(h("dt", null, k), h("dd", null, v));
+    facts.append(d);
+  });
+  c.append(facts);
+  if (item.description) c.append(h("p", "pt-cal-description", item.description));
+
+  const shared = !!item.tenancy_id && item.status === "active";
+  if (shared && manager) {
+    const responses = await act.calendarResponses(pid);
+    const resp = (responses.data ?? []).find((r) => r.calendar_item_id === item.id);
+    const decision = resp?.decision ?? item.tenant_response;
+    const comment = resp?.comment ?? item.tenant_response_comment;
+    if (decision === "accepted") c.append(responseBox("is-success", "Leietaker har godkjent"));
+    else if (decision === "declined") c.append(responseBox("is-danger", "Leietaker har avslått", comment || "Svaret ligger i chatten."));
+    else c.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på hendelsen ennå."));
+  } else if (shared && !manager) {
+    if (item.tenant_response === "accepted") c.append(responseBox("is-success", "Godkjent av leietaker"));
+    else if (item.tenant_response === "declined") c.append(responseBox("is-danger", "Avslaget er sendt i chat", "Svaret ditt er sendt til utleier i chatten."));
+    else {
+      c.append(responseBox("is-warning", "Passer denne dagen?", "Godta hendelsen, eller avslå og skriv i chatten hvilken dag som passer bedre."));
+      const respond = async (decision, comment) => {
+        const r = await act.respondToCalendarItem(item.id, decision, comment);
+        if (r.error) return "Svaret kunne ikke sendes";
+        await refresh(decision === "accepted" ? "Du har godtatt hendelsen" : "Avslaget er sendt i chat");
+        return null;
+      };
+      c.append(actionsRow(
+        button("Godta", "pt-btn-primary pt-btn-small", async (e) => {
+          e.currentTarget.disabled = true;
+          const err = await respond("accepted");
+          if (err) { e.currentTarget.disabled = false; act.toast(err); }
+        }),
+        button("Avslå", "pt-btn-secondary pt-btn-small", () => act.openForm({
+          title: "Avslå hendelsen",
+          fields: [{ name: "comment", label: "Kommentar", type: "textarea", rows: 3, maxLength: 1000, placeholder: "Hvilken dag passer bedre?", help: "Kommentaren sendes til utleier i chat, så dere kan avtale en annen dag der." }],
+          submitLabel: "Send avslag",
+          onSubmit: (v) => respond("declined", v.comment),
+        })),
+      ));
+    }
+  }
+
+  const links = [];
+  if (item.maintenance_request_id) {
+    c.append(h("p", "pt-muted", "Knyttet til vedlikeholdssak"));
+    const a = h("a", "pt-btn pt-btn-soft pt-btn-small", "Åpne vedlikeholdssaken");
+    a.href = `#vedlikehold/${item.maintenance_request_id}`;
+    links.push(a);
+  }
+  // A planned maintenance date is moved from the case; other items are edited here.
+  if (manager && item.status === "active" && !item.maintenance_request_id) {
+    links.push(
+      button("Rediger", "pt-btn-soft pt-btn-small", () => calendarForm(pid, item)),
+      button("Marker som fullført", "pt-btn-secondary pt-btn-small", async () => {
+        const err = rpcError(await act.completeCalendarItem(item.id));
+        if (err) act.toast(err); else refresh("Hendelsen er fullført.");
+      }),
+      button("Kanseller kalenderpunktet", "pt-btn-quiet-destructive pt-btn-small", async () => {
+        if (!(await act.confirmAction({ title: "Avlyse hendelsen?", text: `«${item.title || "Hendelse"}» blir avlyst for alle på boligen.`, confirmLabel: "Avlys" }))) return;
+        const err = rpcError(await act.cancelCalendarItem(item.id));
+        if (err) act.toast(err); else { location.hash = "#kalender"; act.toast("Hendelsen er avlyst."); }
+      }),
+    );
+  }
+  if (links.length) c.append(actionsRow(...links));
+  return [back, c];
+};
+
 const calendarCard = async (pid, full = false) => {
   const c = card("Kalender", "calendar", full ? null : ["Se alle", "#kalender"]);
   const res = await calendarItems(pid);
@@ -280,7 +401,12 @@ const calendarCard = async (pid, full = false) => {
   for (const i of upcoming) {
     const li = h("li", "pt-row");
     const main = h("div", "pt-row-main");
-    main.append(h("strong", null, i.title || "Hendelse"), h("span", null, dateText(i.starts_at || i.due_at)));
+    const title = h("strong");
+    const open = h("a", "pt-row-link", i.title || "Hendelse");
+    open.href = `#kalender/${i.id}`;
+    open.title = "Åpner kalenderpunktet";
+    title.append(open);
+    main.append(title, h("span", null, dateText(i.starts_at || i.due_at)));
     li.append(icon("calendar"), main);
     if (full && isManager(pid) && i.status === "active") {
       li.append(
@@ -1895,17 +2021,6 @@ const maintenanceDetail = async (pid, rid) => {
     return c;
   };
 
-  const responseBox = (cls, title, body) => {
-    const box = h("div", `pt-mt-response ${cls}`);
-    if (cls === "is-success") {
-      const head = h("strong", "pt-mt-response-head");
-      head.append(icon("check", "pt-mt-response-icon"), h("span", null, title));
-      box.append(head);
-    } else box.append(h("strong", null, title));
-    if (body) box.append(h("p", null, body));
-    return box;
-  };
-
   const plannedCard = () => {
     if (!st.items.length) return null;
     const c = card("Planlagt dato for fiks", "calendar");
@@ -2990,7 +3105,8 @@ const PAGES = {
     }
     return [intro, tiles];
   },
-  async kalender() {
+  async kalender(sub, extra) {
+    if (sub) return calendarDetail(sub, extra);
     const p = property();
     return p ? [await calendarCard(p.id, true)] : [noProperty()];
   },
@@ -3042,6 +3158,180 @@ const PAGES = {
   },
 };
 
+/* ---------- Varsler i bjella (NotificationsView) ---------- */
+const notificationTime = (value) => {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const today = new Date().toDateString() === d.toDateString();
+  const time = d.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+  return today ? `I dag ${time}` : `${d.toLocaleDateString("nb-NO", { day: "numeric", month: "short" })} ${time}`;
+};
+
+const bell = { scope: null, rows: [], more: false, loading: false, loadingMore: false, failed: false, open: false, token: 0, wakeTimer: null, stop: null };
+const bellScope = () => (isLandlord() ? "manager" : "tenant");
+const bellEls = () => ({ wrap: root.querySelector("[data-bell-wrap]"), btn: root.querySelector("[data-bell]") });
+
+const loadBell = async ({ quiet = false } = {}) => {
+  const scope = bell.scope;
+  const token = ++bell.token;
+  if (!quiet || !bell.rows.length) { bell.loading = !bell.rows.length; drawBell(); }
+  const res = await act.listNotifications(scope);
+  if (token !== bell.token || scope !== bell.scope) return;
+  bell.loading = false;
+  if (res.error) {
+    if (bell.rows.length) act.toast("Kunne ikke oppdatere varslene. Listen du allerede ser er beholdt.");
+    else bell.failed = true;
+  } else {
+    bell.failed = false;
+    bell.rows = res.data ?? [];
+    bell.more = bell.rows.length >= act.NOTIFICATION_PAGE_SIZE;
+  }
+  drawBell();
+};
+const loadMoreBell = async () => {
+  if (bell.loadingMore || !bell.rows.length) return;
+  const scope = bell.scope;
+  const token = bell.token;
+  bell.loadingMore = true;
+  drawBell();
+  const res = await act.listNotifications(scope, bell.rows[bell.rows.length - 1]);
+  bell.loadingMore = false;
+  if (token !== bell.token || scope !== bell.scope) return drawBell();
+  if (res.error) { act.toast("Kunne ikke hente flere varsler."); return drawBell(); }
+  const seen = new Set(bell.rows.map((r) => r.notification_id));
+  const next = (res.data ?? []).filter((r) => !seen.has(r.notification_id));
+  bell.rows = bell.rows.concat(next);
+  bell.more = (res.data ?? []).length >= act.NOTIFICATION_PAGE_SIZE;
+  drawBell();
+};
+const syncBellScope = () => {
+  if (!bellEls().btn) return;
+  const scope = bellScope();
+  if (scope === bell.scope) return;
+  bell.scope = scope;
+  bell.rows = [];
+  bell.more = false;
+  bell.failed = false;
+  loadBell();
+};
+const wakeBell = () => {
+  clearTimeout(bell.wakeTimer);
+  bell.wakeTimer = setTimeout(() => { if (bell.scope) loadBell({ quiet: true }); }, 400);
+};
+
+const openNotification = (n) => {
+  const scope = bell.scope;
+  if (n.is_unread) {
+    n.is_unread = false;
+    drawBell();
+    act.markNotificationRead(scope, n.notification_id).then((res) => {
+      if (!res.error) return;
+      n.is_unread = true;
+      drawBell();
+      act.toast("Kunne ikke merke varselet som lest. Prøv igjen.");
+    });
+  }
+  const target = notificationRoute(n, scope);
+  if (!target) return act.toast("Denne hendelsen har ingen egen detaljside. Varselet hører likevel hjemme i listen.");
+  if (n.property_id && n.property_id !== state.propertyId) {
+    if (!state.properties.some((p) => p.id === n.property_id)) return act.toast("Varsel er ikke tilgjengelig. Dette varselet er ikke lenger i listen.");
+    selectProperty(n.property_id, false);
+  }
+  closeBell();
+  if (location.hash === target) render(); else location.hash = target;
+};
+const markAllBell = async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  const res = await act.markAllNotificationsRead(bell.scope);
+  if (res.error) { btn.disabled = false; return act.toast("Kunne ikke merke alle varsler som lest. Prøv igjen."); }
+  bell.rows.forEach((r) => { r.is_unread = false; });
+  drawBell();
+};
+
+const drawBell = () => {
+  const { wrap, btn } = bellEls();
+  if (!btn) return;
+  const unread = bell.rows.filter((r) => r.is_unread).length;
+  btn.innerHTML = ICONS.bell;
+  btn.setAttribute("aria-expanded", String(bell.open));
+  btn.setAttribute("aria-label", unread ? `Varsler, ${unread} uleste` : "Varsler");
+  if (unread) btn.append(h("span", "pt-badge", unread >= act.NOTIFICATION_PAGE_SIZE && bell.more ? `${unread}+` : String(unread)));
+  wrap.querySelector(".pt-notif")?.remove();
+  if (!bell.open) return;
+  const panel = h("section", "pt-notif");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Varsler");
+  const head = h("div", "pt-notif-head");
+  head.append(h("h2", null, "Varsler"));
+  const all = button("Merk alle som lest", "pt-btn-soft pt-btn-small", markAllBell);
+  all.disabled = !unread;
+  head.append(all);
+  panel.append(head);
+  const body = h("div", "pt-notif-body");
+  if (bell.loading) body.append(h("p", "pt-muted pt-notif-note", "Laster varsler …"));
+  else if (bell.failed) {
+    const box = h("div", "pt-notif-empty");
+    box.append(h("strong", null, "Varslene er ikke tilgjengelige"), h("p", null, "Listen kunne ikke lastes. Trykk Prøv igjen."),
+      button("Prøv igjen", "pt-btn-secondary pt-btn-small", () => loadBell()));
+    body.append(box);
+  } else if (!bell.rows.length) {
+    const box = h("div", "pt-notif-empty");
+    box.append(icon("bell"), h("strong", null, "Ingen varsler ennå"),
+      h("p", null, "Når noe skjer i et leieforhold, vedlikehold eller kalenderpunkt, vises det her for den aktive rollen din."));
+    body.append(box);
+  } else {
+    const list = h("ul", "pt-notif-list");
+    for (const n of bell.rows) {
+      const li = h("li");
+      const row = h("button", `pt-notif-row${n.is_unread ? " is-unread" : ""}`);
+      row.type = "button";
+      const main = h("span", "pt-notif-main");
+      main.append(h("strong", null, notificationTitle(n)));
+      const summary = notificationText(n, bell.scope, act.TERMINATION_REASONS);
+      if (summary) main.append(h("span", "pt-notif-summary", summary));
+      main.append(h("span", "pt-notif-time", notificationTime(n.occurred_at || n.relevant_at)));
+      const dot = h("span", "pt-notif-dot");
+      if (n.is_unread) dot.setAttribute("aria-label", "Ulest");
+      row.append(dot, main);
+      row.addEventListener("click", () => openNotification(n));
+      li.append(row);
+      list.append(li);
+    }
+    body.append(list);
+    if (bell.more) {
+      const more = button(bell.loadingMore ? "Laster varsler …" : "Last inn flere", "pt-btn-secondary pt-btn-small", loadMoreBell);
+      more.disabled = bell.loadingMore;
+      const foot = h("div", "pt-notif-foot");
+      foot.append(more);
+      body.append(foot);
+    }
+  }
+  panel.append(body);
+  wrap.append(panel);
+};
+const closeBell = () => {
+  if (!bell.open) return;
+  bell.open = false;
+  drawBell();
+};
+const startBell = () => {
+  const { wrap, btn } = bellEls();
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    bell.open = !bell.open;
+    drawBell();
+    if (bell.open) loadBell({ quiet: true });
+  });
+  document.addEventListener("click", (e) => { if (bell.open && !wrap.contains(e.target)) closeBell(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && bell.open) { closeBell(); btn.focus(); } });
+  window.addEventListener("focus", wakeBell);
+  // ForegroundRefreshCadence.notificationReminder: refetch every 5 minutes while open.
+  setInterval(() => { if (!document.hidden) wakeBell(); }, 300_000);
+  bell.stop = act.subscribeNotifications(wakeBell);
+  drawBell();
+};
+
 /* ---------- shell ---------- */
 const visibleNav = () => NAV.map((g) => ({ ...g, items: g.items.filter((i) => !(i.landlordOnly && !isLandlord())) }));
 const allItems = () => visibleNav().flatMap((g) => g.items);
@@ -3070,19 +3360,21 @@ const setPageCleanup = (fn) => { pageCleanup?.(); pageCleanup = fn; };
 const render = async () => {
   setPageCleanup(null);
   const items = allItems();
-  // Sub-routes: #vedlikehold/<sak-id> and #vedlikehold/historikk.
-  let [id, sub] = location.hash.slice(1).split("/");
+  closeBell();
+  // Sub-routes: #vedlikehold/<sak-id>, #vedlikehold/historikk and #kalender/<id>[/<sak-id>].
+  let [id, sub, extra] = location.hash.slice(1).split("/");
   if (id === "overtakelse") id = "inn-utflytting";
-  if (!items.some((i) => i.id === id)) { id = "oversikt"; sub = undefined; }
+  if (!items.some((i) => i.id === id)) { id = "oversikt"; sub = undefined; extra = undefined; }
   renderNav(id);
   const item = items.find((i) => i.id === id);
   root.querySelector("[data-page-title]").textContent = !isLandlord() && item.tenantLabel ? item.tenantLabel : item.label;
   const role = property() ? roleOf(state.propertyId) : null;
   root.querySelector("[data-user-role]").textContent = role ?? (state.roles.size ? "Utleier" : "");
+  syncBellScope();
   const token = ++renderToken;
   let nodes;
   try {
-    nodes = await PAGES[id](sub);
+    nodes = await PAGES[id](sub, extra);
   } catch {
     nodes = [emptyPage("info", "Noe gikk galt", "Prøv å laste siden på nytt om litt.")];
   }
@@ -3181,8 +3473,7 @@ const load = async (session, isRefresh = false) => {
 
   root.querySelector("[data-user-name]").textContent = state.name || "Min side";
   root.querySelector("[data-avatar]").textContent = (state.name || "?").charAt(0).toUpperCase();
-  const bell = root.querySelector("[data-bell]");
-  bell.innerHTML = ICONS.bell;
+  if (!isRefresh) startBell();
   root.setAttribute("aria-busy", "false");
   renderSelect();
   if (propertiesRes.error && !state.properties.length) {
