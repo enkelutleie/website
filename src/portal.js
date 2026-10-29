@@ -3189,7 +3189,7 @@ const economyTiles = () => {
 };
 
 // AnnualReportView: the documentation package for one property and year, as a page and a PDF.
-const annualState = { year: null, scope: "whole" };
+const annualState = { year: null };
 const loadAnnual = async (pid, year) => {
   const start = `${year}-01-01`;
   const end = `${year + 1}-01-01`;
@@ -3213,7 +3213,7 @@ const loadAnnual = async (pid, year) => {
   const driverNames = Object.fromEntries(rosterRows.filter((r) => r.user_id).map((r) => [r.user_id, r.display_name ?? ""]));
   return {
     transactions: txs.data, links: links.data, documents: docs.data ?? [], trips: trips.error ? [] : trips.data,
-    roster: rosterRows, driverNames, tenantNames,
+    driverNames, tenantNames,
     items: inventory.error ? [] : inventory.items.filter((i) => i.propertyId === pid),
     elections: inventory.error ? {} : inventory.elections,
     landlordName: me.data?.display_name ?? state.name ?? "",
@@ -3289,17 +3289,10 @@ const annualPage = async (pid) => {
     return [back, head];
   }
   const build = () => annual.buildReport({
-    ...data, year, viewerId: state.user.id, scope: annualState.scope, categoryTitle: act.categoryTitle,
+    ...data, year, categoryTitle: act.categoryTitle,
     propertyTitle: [addressOf(p).line, p.unit_identifier].filter(Boolean).join(" "), generatedAt: new Date(),
   });
   const report = build();
-  if (!report.isSoleOwner) {
-    const seg = h("div", "pt-segmented");
-    for (const [value, label] of [["whole", "Hele boligen"], ["mine", "Min andel"]]) {
-      seg.append(button(label, `pt-segment${annualState.scope === value ? " is-selected" : ""}`, () => { annualState.scope = value; render(); }));
-    }
-    controls.append(seg);
-  }
   const download = button("Last ned", "pt-btn-primary pt-btn-small", async (e) => {
     const b = e.currentTarget;
     b.disabled = true;
@@ -3357,7 +3350,6 @@ const annualPage = async (pid) => {
   trips.append(reportTable([{ label: "Dato" }, { label: "Fra → til" }, { label: "Formål" }, { label: "Km", align: R }],
     report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Sum kjøring", annual.kmText(report.summary.drivingMeters)]));
   const sum = card(`${n++}  Oppsummering`, "net");
-  if (report.scopeTitle) sum.append(h("p", "pt-muted", report.scopeTitle));
   sum.append(reportTable([{ label: "" }, { label: "", align: R }],
     [["Sum inntekter", kr2(report.summary.incomeMinor)], ["Sum utgifter", kr2(report.summary.expenseMinor)]],
     ["Differanse inntekter minus utgifter", kr2(report.summary.differenceMinor)]));
