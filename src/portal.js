@@ -3663,9 +3663,207 @@ const assetsPage = async (pid) => {
   return [back, head, ...cards, list];
 };
 
+/* ---------- Medutleiere (PropertiesHomeView landlordsContent, PropertyMembersController.swift) ---------- */
+// property.detail.coLandlord.delivery.*: the text is only shown when delivery needs attention.
+const CO_DELIVERY = {
+  pending: "Invitasjonen er lagret og venter på utsending",
+  sending: "Sender e-post …",
+  sent: "E-post sendt – venter på godkjenning",
+  send_failed: "E-posten kunne ikke sendes – invitasjonen er lagret",
+  unknown: "E-postlevering er ikke bekreftet",
+};
+const CO_PROBLEM = new Set(["send_failed", "unknown"]);
+const CO_RESEND = new Set(["sent", "send_failed", "unknown"]);
+// Kept across the re-render that follows each action, like membersController.errorMessage / deliveryNotice.
+const coNotice = new Map();
+const setCoNotice = (pid, text) => {
+  if (text) coNotice.set(pid, text); else coNotice.delete(pid);
+};
+const reloadCo = async (pid, notice) => {
+  setCoNotice(pid, notice);
+  state.cache.delete(`mgr:${pid}`);
+  state.cache.delete(`coinv:${pid}`);
+  await refresh();
+};
+
+const coLandlordForm = (pid) => act.openForm({
+  title: "Inviter med-utleier",
+  intro: "Skriv inn e-postadressen og send invitasjonen. De trenger ikke konto fra før — lenken lar dem registrere seg eller logge inn, og de knyttes til boligen automatisk.",
+  submitLabel: "Send invitasjon",
+  fields: [{ name: "email", label: "E-postadresse", type: "email", required: true, maxLength: 254, placeholder: "medutleier@eksempel.no" }],
+  onSubmit: async (v) => {
+    if (!v.email.includes("@") || !validEmail(v.email)) return "Skriv inn en gyldig e-postadresse.";
+    const res = await act.inviteCoLandlord(pid, v.email);
+    if (res.error) return act.coLandlordAddError(res.error);
+    const email = res.invitation.email || v.email.trim().toLowerCase();
+    await reloadCo(pid, res.sent === false ? `Invitasjonen til ${email} er lagret, men e-posten kunne ikke sendes. Du kan prøve på nytt nedenfor.` : null);
+    if (res.sent) act.toast("Invitasjonen er sendt.");
+    return null;
+  },
+});
+
+const shareCoLandlordLink = async (b, inv) => {
+  b.disabled = true;
+  b.textContent = "Lager invitasjonslenke …";
+  const link = await act.coLandlordShareLink(inv.invitation_id);
+  b.disabled = false;
+  b.textContent = "Del invitasjonen manuelt";
+  if (!link) return act.toast("Kunne ikke lage invitasjonslenken. Prøv igjen.");
+  const text = `Du er invitert som med-utleier i Enkel Utleie. Åpne lenken og logg inn med ${inv.email}.\n${link}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    act.toast("Invitasjonslenken er kopiert. Lim den inn i en melding.");
+  } catch {
+    act.toast("Kunne ikke kopiere invitasjonslenken. Prøv igjen.");
+  }
+};
+
+const coInvitationRow = (pid, inv) => {
+  const li = h("li", "pt-row");
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, inv.email));
+  if (CO_PROBLEM.has(inv.delivery_status)) main.append(h("span", "pt-text-danger", CO_DELIVERY[inv.delivery_status]));
+  li.append(h("span", "pt-avatar pt-avatar-sm", (inv.email || "?").charAt(0).toUpperCase()), main, h("span", "pt-chip is-warning", "Venter"));
+  const actions = h("div", "pt-row-actions");
+  if (CO_RESEND.has(inv.delivery_status)) {
+    actions.append(button("Send på nytt", "pt-btn-soft pt-btn-small", async (e) => {
+      e.currentTarget.disabled = true;
+      const res = await act.resendCoLandlordInvitation(inv.invitation_id);
+      await reloadCo(pid, res.sent ? null : `E-posten til ${inv.email} kunne ikke sendes. Invitasjonen er fortsatt lagret.`);
+      if (res.sent) act.toast("Invitasjonen er sendt på nytt.");
+    }));
+  }
+  if (inv.delivery_status === "send_failed") {
+    const share = button("Del invitasjonen manuelt", "pt-btn-soft pt-btn-small", (e) => shareCoLandlordLink(e.currentTarget, inv));
+    actions.append(share);
+  }
+  actions.append(button("Kanseller", "pt-btn-quiet-destructive pt-btn-small", async () => {
+    if (!(await act.confirmAction({ title: "Kanseller invitasjonen til med-utleier?", text: "Tidligere lenker blir ugyldige, og personen får ikke tilgang.", confirmLabel: "Kanseller invitasjon" }))) return;
+    const res = await act.cancelCoLandlordInvitation(inv.invitation_id);
+    if (res.error) return reloadCo(pid, "Invitasjonen kunne ikke kanselleres. Prøv igjen.");
+    if (res.data === "cancelled") return reloadCo(pid, null);
+    return reloadCo(pid, res.data === "accepted" ? "Invitasjonen er allerede godtatt." : "Invitasjonen er ikke lenger aktiv.");
+  }));
+  li.append(actions);
+  return li;
+};
+
+const landlordsCard = async (pid) => {
+  const [mgr, coinv] = await Promise.all([
+    cached(`mgr:${pid}`, () => act.propertyManagers(pid)),
+    cached(`coinv:${pid}`, () => act.coLandlordInvitations(pid)),
+  ]);
+  const managers = mgr.data ?? [];
+  const c = card(managers.length > 1 ? "Utleiere" : "Utleier", "key");
+  if (mgr.error && !managers.length) {
+    c.append(h("p", null, "Utleierne ble ikke hentet. Ingenting ble endret. Prøv igjen."),
+      actionsRow(button("Prøv igjen", "pt-btn-secondary pt-btn-small", () => reloadCo(pid, null))));
+    return c;
+  }
+  const list = h("ul", "pt-list");
+  for (const m of managers) {
+    const li = h("li", "pt-row");
+    const name = m.display_name || m.email || "Utleier";
+    li.append(h("span", "pt-avatar pt-avatar-sm", name.charAt(0).toUpperCase()));
+    const main = h("div", "pt-row-main");
+    main.append(h("strong", null, name), h("span", null, [m.email, m.phone_number].filter(Boolean).join(" · ")));
+    li.append(main, h("span", `pt-chip${m.role === "owner" ? " is-info" : ""}`, m.role === "owner" ? "Eier" : "Medutleier"));
+    if (m.role === "co_landlord" && m.user_id !== state.user?.id) {
+      li.append(button("Fjern", "pt-btn-quiet-destructive pt-btn-small", async () => {
+        if (!(await act.confirmAction({ title: "Fjerne med-utleier?", text: "Personen mister umiddelbart tilgang til denne boligen og tilhørende data.", confirmLabel: "Fjern tilgang" }))) return;
+        const res = await act.removeCoLandlord(pid, m.user_id);
+        await reloadCo(pid, res.error ? "Kunne ikke fjerne utleieren. Prøv igjen." : null);
+        if (!res.error) act.toast("Med-utleieren er fjernet.");
+      }));
+    }
+    list.append(li);
+  }
+  c.append(list);
+  const pending = (coinv.data ?? []).filter((i) => !i.status || i.status === "pending");
+  if (pending.length) {
+    const plist = h("ul", "pt-list");
+    pending.forEach((i) => plist.append(coInvitationRow(pid, i)));
+    c.append(h("p", "pt-label", "Venter på godkjenning"), plist);
+  }
+  if (coinv.error) {
+    c.append(h("p", "pt-text-danger", pending.length
+      ? "Kunne ikke oppdatere invitasjonene til med-utleier. Invitasjonene under vises fortsatt."
+      : "Invitasjonene til med-utleier ble ikke hentet. Ingenting ble endret. Prøv igjen."));
+  }
+  const notice = coNotice.get(pid);
+  coNotice.delete(pid);
+  if (notice) c.append(h("p", "pt-banner is-danger", notice));
+  c.append(h("p", "pt-muted", "En medutleier kan administrere boligen sammen med deg."),
+    actionsRow(button("Legg til medutleier", "pt-btn-primary pt-btn-small", () => { setCoNotice(pid, null); coLandlordForm(pid); })));
+  return c;
+};
+
+// IncomingCoLandlordInvitationsCard: shown on the overview while someone has invited you.
+let incomingCoNotice = null;
+const incomingCoLandlordCard = async () => {
+  const res = await cached("coinv:mine", () => act.myCoLandlordInvitations());
+  const rows = res.data ?? [];
+  const notice = incomingCoNotice;
+  if (!rows.length && !res.error && !notice) return null;
+  const c = card("Invitasjon som med-utleier", "key");
+  if (res.error && !rows.length) {
+    c.append(h("p", null, "Invitasjonene som med-utleier ble ikke hentet. Ingenting ble endret. Prøv igjen."),
+      actionsRow(button("Prøv igjen", "pt-btn-secondary pt-btn-small", () => { state.cache.delete("coinv:mine"); refresh(); })));
+    return c;
+  }
+  if (!rows.length) {
+    incomingCoNotice = null;
+    c.append(h("p", `pt-banner ${notice.ok ? "is-success" : "is-danger"}`, notice.text));
+    return c;
+  }
+  const done = async (n) => {
+    incomingCoNotice = n;
+    state.cache.delete("coinv:mine");
+    await refresh();
+  };
+  const list = h("ul", "pt-list");
+  for (const i of rows) {
+    const li = h("li", "pt-row");
+    const main = h("div", "pt-row-main");
+    main.append(h("strong", null, i.property_display_name),
+      h("span", null, [i.property_location, `Fra ${i.inviter_display_name}`].filter(Boolean).join(" · ")),
+      h("span", null, `Sendt til ${i.email}. Du får først tilgang når du godtar.`));
+    const actions = h("div", "pt-row-actions");
+    actions.append(
+      button("Godta som med-utleier", "pt-btn-primary pt-btn-small", async (e) => {
+        e.currentTarget.disabled = true;
+        const r = await act.acceptCoLandlordInvitation(i.invitation_id);
+        if (r.error) return done({ text: "Kunne ikke godta invitasjonen. Prøv igjen." });
+        const outcome = r.result?.outcome;
+        if (outcome === "accepted") return done({ ok: true, text: `Du er nå med-utleier for ${r.result.property_display_name || i.property_display_name}.` });
+        if (outcome === "email_unconfirmed") return done({ text: "E-postadressen må være bekreftet før du kan godta invitasjonen." });
+        if (outcome === "expired") return done({ text: "Invitasjonen er utløpt. Be utleieren sende en ny." });
+        return done({ text: "Invitasjonen er ikke lenger aktiv." });
+      }),
+      button("Avslå invitasjon", "pt-btn-quiet-destructive pt-btn-small", async () => {
+        if (!(await act.confirmAction({ title: "Avslå invitasjonen som med-utleier?", text: "Invitasjonen fjernes, og e-postlenken blir ugyldig.", confirmLabel: "Avslå invitasjon" }))) return;
+        const r = await act.declineCoLandlordInvitation(i.invitation_id);
+        if (r.error || r.data !== "declined") return done({ text: "Kunne ikke avslå invitasjonen. Prøv igjen." });
+        return done({ ok: true, text: "Invitasjonen som med-utleier er avslått." });
+      }),
+    );
+    li.append(main, actions);
+    list.append(li);
+  }
+  c.append(list);
+  if (notice) {
+    incomingCoNotice = null;
+    c.append(h("p", `pt-banner ${notice.ok ? "is-success" : "is-danger"}`, notice.text));
+  }
+  if (res.error) c.append(h("p", "pt-text-danger", "Kunne ikke oppdatere invitasjoner som med-utleier. Invitasjonene under vises fortsatt."));
+  return c;
+};
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
+    const incoming = await incomingCoLandlordCard();
+    if (incoming) out.push(incoming);
     const p = property();
     if (!p) {
       out.push(propertiesTable());
@@ -3729,6 +3927,7 @@ const PAGES = {
       d.append(h("dt", null, "Finn-kode"), h("dd", null, p.finn_code));
     }
     out.push(c, await tenancyCard(p.id));
+    if (isManager(p.id)) out.push(await landlordsCard(p.id));
     return out;
   },
   async boligperm() {

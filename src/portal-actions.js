@@ -1934,3 +1934,75 @@ export async function taxResidenceInTiltakssone(userId) {
   const { data } = await supabase.from("profiles").select("tax_residence_tiltakssone").eq("id", userId).maybeSingle();
   return data?.tax_residence_tiltakssone === true;
 }
+
+/* ---------- Medutleiere (PropertyMembersController.swift, IncomingCoLandlordInvitations.swift) ---------- */
+export async function propertyManagers(propertyId) {
+  return supabase.rpc("list_property_managers", { requested_property_id: propertyId });
+}
+
+export async function coLandlordInvitations(propertyId) {
+  return supabase.rpc("list_property_co_landlord_invitations", { requested_property_id: propertyId });
+}
+
+const sendCoLandlordInvitation = (invitationId, action) =>
+  supabase.functions.invoke("send-co-landlord-notification", {
+    body: { invitation_id: invitationId, request_id: crypto.randomUUID(), action },
+  });
+
+// PropertyCoLandlordAddErrorPolicy: same messages as the app.
+export const coLandlordAddError = (error) => {
+  const msg = String(error?.message ?? error ?? "").toLowerCase();
+  if (msg.includes("account not found")) return "Kunne ikke sende invitasjonen. Prøv igjen.";
+  if (msg.includes("invalid email")) return "Skriv inn en gyldig e-postadresse.";
+  if (msg.includes("account already has access")) return "Denne brukeren har allerede tilgang til boligen.";
+  if (msg.includes("property_co_landlord") && /not found|does not exist|schema cache|pgrst202/.test(msg)) return "Med-utleierfunksjonen er ikke aktivert på serveren ennå.";
+  return "Kunne ikke invitere med-utleier. Prøv igjen.";
+};
+
+// create_property_co_landlord_invitation, then the e-mail only when the row is new (was_created).
+export async function inviteCoLandlord(propertyId, email) {
+  const normalized = email.trim().toLowerCase();
+  const { data, error } = await supabase.rpc("create_property_co_landlord_invitation", {
+    requested_property_id: propertyId, requested_email: normalized,
+  });
+  if (error) return { error };
+  const row = first(data);
+  if (!row?.invitation_id) return { error: new Error("missing invitation") };
+  if (!row.was_created) return { invitation: row, sent: null };
+  const sent = await sendCoLandlordInvitation(row.invitation_id, "send");
+  return { invitation: row, sent: !sent.error };
+}
+
+export async function resendCoLandlordInvitation(invitationId) {
+  const res = await sendCoLandlordInvitation(invitationId, "resend");
+  return { sent: !res.error };
+}
+
+export async function cancelCoLandlordInvitation(invitationId) {
+  return supabase.rpc("cancel_property_co_landlord_invitation", { requested_invitation_id: invitationId });
+}
+
+export async function removeCoLandlord(propertyId, userId) {
+  return supabase.rpc("remove_property_co_landlord", { requested_property_id: propertyId, requested_user_id: userId });
+}
+
+// InvitationShareLink(kind: .coLandlord): a fresh link to share by hand when the e-mail failed.
+export async function coLandlordShareLink(invitationId) {
+  const { data, error } = await supabase.rpc("issue_co_landlord_invitation_share_link", { p_invitation_id: invitationId });
+  if (error || typeof data !== "string" || !data.includes("/co-landlord-invite#token=")) return null;
+  return data;
+}
+
+export async function myCoLandlordInvitations() {
+  return supabase.rpc("list_my_property_co_landlord_invitations");
+}
+
+export async function acceptCoLandlordInvitation(invitationId) {
+  const { data, error } = await supabase.rpc("accept_property_co_landlord_invitation_by_id", { requested_invitation_id: invitationId });
+  if (error) return { error };
+  return { result: first(data) ?? null };
+}
+
+export async function declineCoLandlordInvitation(invitationId) {
+  return supabase.rpc("decline_property_co_landlord_invitation", { requested_invitation_id: invitationId });
+}
