@@ -387,3 +387,6 @@ svg { flex: none; }
 .pt-banner.is-warning { background: var(--warning-soft); color: #b36800; }
 .pt-report-table td { vertical-align: top; }
 .pt-report-sum td { font-weight: 700; background: var(--soft-surface); border-bottom: 0; }
+.pt-banner.is-danger { background: var(--danger-soft); color: var(--danger); }
+.pt-banner.is-success { background: var(--success-soft); color: #1f8a3b; }
+.pt-text-danger { color: var(--danger); font-size: var(--fs-footnote); }
