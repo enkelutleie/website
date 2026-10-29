@@ -60,7 +60,7 @@ const NAV = [
 
 const state = {
   user: null, name: null, properties: [], tenancies: [], roles: new Map(), tenantOf: new Set(),
-  propertyId: null, openTasks: new Map(), cache: new Map(),
+  propertyId: null, openTasks: new Map(), cache: new Map(), receiptFilter: "all",
 };
 
 /* ---------- helpers ---------- */
@@ -135,6 +135,8 @@ const transactions = (pid) =>
       .eq("property_id", pid).is("voided_at", null).gte("transaction_date", yearStart).lte("transaction_date", todayISO())
       .order("transaction_date", { ascending: false }).limit(1000);
   });
+// EconomyController.listDocumentLinks(propertyID): which posts have a receipt.
+const receiptLinks = (pid) => cached(`txdoc:${pid}`, () => act.transactionDocLinks(pid));
 const calendarItems = (pid) =>
   cached(`cal:${pid}`, async () =>
     supabase.from("property_calendar_items").select("id, title, description, item_type, category, all_day, starts_at, due_at, status")
@@ -397,15 +399,17 @@ const propertiesTable = () => {
 };
 
 const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long" });
-const transactionRow = (pid, r) => {
+const transactionRow = (pid, r, docIds = []) => {
   const inc = r.transaction_type === "income";
   const li = h("li", "pt-row");
   const main = h("div", "pt-row-main");
   main.append(h("strong", null, r.description || CATEGORY[r.category] || (inc ? "Inntekt" : "Utgift")), h("span", null, [dateText(r.transaction_date), CATEGORY[r.category]].filter(Boolean).join(" · ")));
   li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
     h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
+  if (docIds.length) main.append(h("span", "pt-chip is-success", "Kvittering knyttet"));
   if (isManager(pid)) {
     li.append(
+      button("Kvittering", "pt-btn-soft pt-btn-small", () => receiptDialog(pid, r, docIds)),
       button("Endre", "pt-btn-soft pt-btn-small", () => transactionForm(pid, r.transaction_type, r)),
       button("Slett", "pt-btn-quiet-destructive pt-btn-small", async () => {
         if (!(await act.confirmAction({ title: "Slette posten?", text: `${inc ? "Inntekten" : "Utgiften"} på ${money(r.amount_minor)} blir annullert, som i appen.`, confirmLabel: "Slett" }))) return;
@@ -426,14 +430,32 @@ const transactionList = async (pid) => {
       button("Ny utgift", "pt-btn-secondary pt-btn-small", () => transactionForm(pid, "expense")),
     ));
   }
-  const res = await transactions(pid);
+  const [res, links] = await Promise.all([transactions(pid), receiptLinks(pid)]);
   if (res.error) {
     c.append(inline("Transaksjonene kunne ikke hentes."));
     return [c];
   }
-  const rows = res.data ?? [];
+  const docsOf = new Map();
+  for (const l of links.data ?? []) docsOf.set(l.transaction_id, [...(docsOf.get(l.transaction_id) ?? []), l.document_id]);
+  // EconomyAttachmentFilter: unavailable (with the app's message) when the links fail to load.
+  if (links.error) c.append(inline("Kunne ikke hente hvilke poster som har kvittering. Kvitteringsfilteret er utilgjengelig. Prøv igjen."));
+  else if ((res.data ?? []).length) {
+    const label = h("label", "pt-field pt-filter");
+    const select = h("select", "pt-select");
+    for (const [v, l] of act.RECEIPT_FILTERS) {
+      const o = h("option", null, l);
+      o.value = v;
+      o.selected = state.receiptFilter === v;
+      select.append(o);
+    }
+    select.addEventListener("change", () => { state.receiptFilter = select.value; render(); });
+    label.append(h("span", "pt-field-label", "Kvitteringsfilter"), select);
+    c.append(label);
+  }
+  const filter = links.error ? "all" : state.receiptFilter;
+  const rows = (res.data ?? []).filter((r) => filter === "all" || (filter === "withReceipt") === docsOf.has(r.id));
   if (!rows.length) {
-    c.append(inline("Ingen transaksjoner ennå."));
+    c.append(inline((res.data ?? []).length ? "Ingen poster passer filteret." : "Ingen transaksjoner ennå."));
     return [c];
   }
   const months = new Map();
@@ -447,7 +469,7 @@ const transactionList = async (pid) => {
     const m = h("section", "pt-card pt-month");
     m.append(h("h3", "pt-month-title", MONTH_FORMAT.format(new Date(`${key}-01T12:00:00`)).toLocaleUpperCase("nb-NO")));
     const ul = h("ul", "pt-list");
-    for (const r of list) ul.append(transactionRow(pid, r));
+    for (const r of list) ul.append(transactionRow(pid, r, docsOf.get(r.id)));
     m.append(ul);
     cards.push(m);
   }
@@ -501,6 +523,7 @@ const transactionForm = (pid, type, row) => {
         : { name: "description", label: "Hva gjelder utgiften?", type: "text", value: row?.description ?? "", maxLength: 500, placeholder: "Reparasjon av vaskemaskin" },
       { name: "counterparty", label: income ? "Betalt av" : "Butikk eller leverandør", type: "text", value: row?.counterparty ?? "", maxLength: 200 },
       ...(row ? [] : [
+        { name: "receipt", label: "Kvittering", type: "file", accept: RECEIPT_ACCEPT, help: "PDF, JPEG eller PNG. Bilder lagres som PDF." },
         { name: "repeats", label: "Er dette en gjentakende betaling?", type: "select", options: [["no", "Nei"], ["yes", "Ja"]], value: "no", required: true },
         { name: "recurrence", label: "Hvor ofte", type: "select", options: act.RECURRENCE, value: "monthly", required: true, hidden: true, help: " " },
       ]),
@@ -519,7 +542,71 @@ const transactionForm = (pid, type, row) => {
       const values = { ...v, type, amountMinor, recurrence: v.repeats === "yes" ? v.recurrence : "none" };
       const res = row ? await act.updateTransaction(row, values) : await act.createTransaction(pid, values, activeTenancy?.id);
       if (res.error) return act.explain(res.error);
+      const created = Array.isArray(res.data) ? res.data[0] : res.data;
+      if (!row && v.receipt && created?.id) {
+        // The post is saved; a failed receipt is reported, not rolled back (as in the app).
+        const err = await act.attachReceipt(pid, created.id, v.receipt);
+        await refresh(err ? `Posten er lagret, men kvitteringen ble ikke lagret: ${err}` : "Posten og kvitteringen er lagret.");
+        return null;
+      }
       await refresh(row ? "Posten er oppdatert." : "Posten er lagret.");
+      return null;
+    },
+  });
+};
+
+// EconomyTransactionDocumentsSection: «Kvittering og bilag» on one post.
+const RECEIPT_ACCEPT = "application/pdf,image/jpeg,image/png";
+const receiptDialog = async (pid, r, docIds) => {
+  const docs = docIds.length ? await act.receiptDocuments(docIds) : { data: [] };
+  const all = await act.linkableDocuments(pid);
+  const list = h("ul", "pt-list");
+  if (docs.error) list.append(h("li", "pt-row", "Kunne ikke hente dokumentkoblingene. Prøv igjen."));
+  else if (!docs.data.length) list.append(h("li", "pt-row", "Ingen kvittering er knyttet ennå. Last opp en, eller koble en eksisterende fil."));
+  let closeDialog = () => {};
+  for (const d of docs.data ?? []) {
+    const li = h("li", "pt-row");
+    const main = h("div", "pt-row-main");
+    main.append(h("strong", null, d.title || "Kvittering"), h("span", null, d.created_at ? dateText(d.created_at.slice(0, 10)) : ""));
+    const actions = h("div", "pt-row-actions");
+    actions.append(
+      pdfButton("Åpne", "pt-btn-secondary pt-btn-small", () => act.documentPdf(d.id)),
+      button("Slett bilde", "pt-btn-quiet-destructive pt-btn-small", async () => {
+        if (!(await act.confirmAction({ title: "Slette bildet?", text: "Selve dokumentet slettes ikke, og dokumentdelingen endres ikke.", confirmLabel: "Slett" }))) return;
+        const res = await act.unlinkReceipt(r.id, d.id);
+        closeDialog();
+        if (res.error) act.toast("Kunne ikke fjerne dokumentkoblingen. Prøv igjen.");
+        else refresh("Dokumentkoblingen er fjernet.");
+      }),
+    );
+    li.append(main, actions);
+    list.append(li);
+  }
+  const wrap = h("div");
+  wrap.append(h("p", "pt-label", "Kvittering og bilag"), list);
+  // «Koble dokument»: only ready documents you can read, not already on this post.
+  const linkable = (all.data ?? []).filter((d) => d.status === "ready" && !docIds.includes(d.id));
+  return act.openForm({
+    title: "Kvittering og bilag",
+    intro: `${r.description || CATEGORY[r.category] || "Post"} · ${dateText(r.transaction_date)} · ${money(r.amount_minor)}`,
+    sections: [wrap],
+    submitLabel: "Lagre",
+    footer: (close) => { closeDialog = close; return h("span"); },
+    fields: [
+      { name: "file", label: "Last opp kvittering", type: "file", accept: RECEIPT_ACCEPT, help: "PDF, JPEG eller PNG. Bilder lagres som PDF." },
+      ...(linkable.length ? [{ name: "doc", label: "Koble dokument", type: "select", options: [["", "Ingen"], ...linkable.map((d) => [d.id, d.title || d.original_file_name || "Dokument"])], value: "" }] : []),
+    ],
+    onSubmit: async (v) => {
+      if (!v.file && !v.doc) return "Velg en fil eller et dokument.";
+      if (v.file) {
+        const err = await act.attachReceipt(pid, r.id, v.file);
+        if (err) return err;
+      }
+      if (v.doc) {
+        const res = await act.linkReceipt(r.id, v.doc);
+        if (res.error) return "Kunne ikke koble dokumentet. Prøv igjen.";
+      }
+      await refresh(v.file ? "Kvitteringen er lagret." : "Dokumentet er koblet.");
       return null;
     },
   });

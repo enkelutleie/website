@@ -205,3 +205,8 @@ svg { flex: none; }
 .pt-signature-canvas { width: 100%; aspect-ratio: 3 / 1; background: var(--contract-canvas); border: 1px solid var(--brand-border); border-radius: var(--radius-sm); touch-action: none; cursor: crosshair; }
 .pt-row-actions { display: flex; flex-wrap: wrap; gap: var(--space-s); justify-content: flex-end; }
 .pt-subrow { font-size: var(--fs-footnote); color: var(--secondary-ink); }
+
+/* Kvitteringsfilter (EconomyAttachmentFilter) */
+.pt-filter {
+  max-width: 16rem;
+}
