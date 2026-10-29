@@ -10,6 +10,15 @@
   --surface: #ffffff;
   --soft-surface: rgba(232, 243, 255, 0.72);
   --contract-surface: #eaf4ff;
+  /* AppTheme.fieldSurface: text inputs stay white. */
+  --field-surface: #ffffff;
+  /* AppTheme.contractCanvas: Leiekontrakt keeps a white page. */
+  --contract-canvas: #ffffff;
+  /* AppTheme.chat*: chat ownership stays blue/white in every theme. */
+  --chat-outgoing-bubble: #2f80ed;
+  --chat-outgoing-ink: #ffffff;
+  --chat-incoming-bubble: #ffffff;
+  --chat-incoming-ink: #1b3a6b;
   --ink: #1b3a6b;
   --secondary-ink: rgba(27, 58, 107, 0.68);
   --success: #34c759;

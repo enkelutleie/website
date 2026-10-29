@@ -450,7 +450,17 @@ const transactionForm = (pid, type, row) => {
 
 const propertyForm = (p) => {
   const use = p?.rental_profile?.home_use;
+  // As in the app: only the owner sees «Arkiver bolig», below the save button.
+  const footer = p && isOwner(p.id) ? (close) => {
+    const box = h("div", "pt-archive-entry");
+    box.append(
+      button("Arkiver bolig", "pt-btn-quiet-destructive pt-btn-small", () => { close(); archiveDialog(p); }),
+      h("p", "pt-field-help", "Når boligen avsluttes, arkiveres den samtidig og fjernes fra operative oversikter. Historikk og lagrede filer slettes ikke."),
+    );
+    return box;
+  } : undefined;
   return act.openForm({
+    footer,
     title: p ? "Rediger informasjon" : "Ny bolig",
     submitLabel: p ? "Lagre endringer" : "Opprett bolig",
     fields: [
@@ -468,8 +478,8 @@ const propertyForm = (p) => {
       if (invalid) return invalid;
       if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
       if (!p) {
-        const managed = [...state.roles.values()].filter((r) => r === "owner" || r === "co_landlord").length;
-        if (managed >= 4) return "Du kan ha opptil fire boliger. Arkiver en bolig i appen for å legge til en ny.";
+        const managed = state.properties.filter((x) => isManager(x.id)).length;
+        if (managed >= 4) return "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
         const res = await act.createProperty(state.user.id, v);
         if (res.error) return act.explain(res.error);
         const id = res.data?.[0]?.id;
@@ -484,6 +494,84 @@ const propertyForm = (p) => {
       return null;
     },
   });
+};
+
+const closeSection = (title, rows, note) => {
+  const sec = h("section", "pt-sheet-section");
+  sec.append(h("h3", "pt-sheet-title", title));
+  const ul = h("ul", "pt-sheet-list");
+  for (const r of rows) ul.append(h("li", null, r));
+  sec.append(ul);
+  if (note) sec.append(h("p", "pt-field-help", note));
+  return sec;
+};
+
+// PropertyCloseConfirmationSheet: inspect first, then close_property with one
+// operation id per sheet so a retry is idempotent.
+const archiveDialog = async (p) => {
+  const res = await act.inspectPropertyClose(p.id);
+  if (res.error) return act.toast("Boligen kunne ikke kontrolleres akkurat nå. Prøv igjen.");
+  const i = res.data;
+  const n = (k) => Number(i[k] ?? 0);
+  const blockers = act.closeBlockers(i);
+  const sections = [closeSection("Bolig", [addressOf(p).line])];
+  if (blockers.length) sections.push(closeSection("Dette må gjøres først", blockers));
+  const consequences = ["Boligen arkiveres og skjules fra den aktive listen."];
+  if (n("pending_co_landlord_invitation_count")) consequences.push(`${n("pending_co_landlord_invitation_count")} invitasjon til medeier venter fortsatt.`);
+  consequences.push("Historikk, dokumenter og økonomi blir liggende.");
+  sections.push(closeSection("Dette skjer", consequences));
+  sections.push(closeSection("Dette beholdes", [
+    `Vedlikehold: ${n("open_maintenance_count")}`,
+    `Kalender: ${n("active_calendar_count")}`,
+    `Dokumenter: ${n("ready_document_count")}`,
+    `Bilder: ${n("ready_image_count")}`,
+    `Økonomi: ${n("non_voided_economy_count")}`,
+  ], "Disse opplysningene blir værende etter at boligen er arkivert."));
+  const operationId = crypto.randomUUID();
+  return act.openForm({
+    title: "Arkiver bolig",
+    intro: "Arkiver boligen når alle leieforhold er avsluttet.",
+    sections,
+    submitLabel: "Arkiver bolig",
+    submitClass: "pt-btn-destructive",
+    submitDisabled: blockers.length > 0,
+    fields: [{ name: "reason", label: "Årsak", type: "select", options: act.CLOSE_REASONS, value: "management_ended", required: true }],
+    onSubmit: async (v) => {
+      const out = await act.closeProperty(p.id, v.reason, operationId);
+      if (!out.ok) return out.message;
+      try { sessionStorage.removeItem("pt-property"); } catch { /* ignore */ }
+      await refresh("Boligen er avsluttet og arkivert. Historikken er bevart.");
+      location.hash = "#boliger";
+      return null;
+    },
+  });
+};
+
+const CLOSE_REASON_LABEL = Object.fromEntries(act.CLOSE_REASONS);
+const archivedCard = async () => {
+  const c = card("Avsluttede og arkiverte boliger", "history");
+  c.append(h("p", "pt-muted", "Se boliger du har avsluttet og arkivert."));
+  const res = await act.listClosedProperties();
+  if (res.error) {
+    c.append(inline("Kunne ikke hente arkivet"));
+    return c;
+  }
+  const rows = res.data ?? [];
+  if (!rows.length) {
+    c.append(inline("Ingen arkiverte boliger ennå. Når du avslutter en bolig, finner du den her."));
+    return c;
+  }
+  const list = h("ul", "pt-list");
+  for (const r of rows) {
+    const li = h("li", "pt-row");
+    const main = h("div", "pt-row-main");
+    main.append(h("strong", null, r.display_address || "Bolig"),
+      h("span", null, [r.closed_at ? `Avsluttet ${dateText(r.closed_at)}` : null, `Årsak: ${CLOSE_REASON_LABEL[r.close_reason_code] ?? "Registrert årsak"}`].filter(Boolean).join(" · ")));
+    li.append(icon("building"), main, h("span", "pt-chip", "Avsluttet og arkivert"));
+    list.append(li);
+  }
+  c.append(list);
+  return c;
 };
 
 const photoForm = (p) =>
@@ -802,7 +890,7 @@ const PAGES = {
     privacy.href = "/personvern";
     links.append(out, privacy);
     c.append(dl, h("p", "pt-muted", "Profil, utseende og abonnement endres i appen."), links);
-    return [c];
+    return isLandlord() ? [c, await archivedCard()] : [c];
   },
 };
 
