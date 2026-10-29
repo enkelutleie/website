@@ -273,7 +273,7 @@ export const updateTransaction = (row, v) =>
 export const voidTransaction = (id) => supabase.rpc("void_financial_transaction", { requested_transaction_id: id });
 
 /* ---------- Boliger (PropertyListController.swift / RentalProperty.swift) ---------- */
-export const HOUSING_KINDS = [["standard", "Hel bolig"], ["rental_unit", "Utleiedel / hybel"]];
+export const HOUSING_KINDS = [["standard", "Hel bolig"], ["shared", "Bofellesskap"], ["rental_unit", "Utleiedel / hybel"]];
 export const RENTAL_USE = [
   ["other_home", "Utleie av annen bolig (langtid)"],
   ["own_home", "Del av egen bolig (langtid)"],
@@ -534,6 +534,102 @@ export async function invitableRooms(propertyId) {
     .map((u) => ({ id: u.id, label: u.display_label || "Rom", blocked: blocked.get(u.id) ?? null }));
   return { data: rooms };
 }
+
+/* ---------- Rom i bofellesskap (PropertyUnit.swift, TenancyController) ---------- */
+// The same SECURITY DEFINER RPCs as the app. Rooms are never deleted: a vacant
+// room is retired and keeps its history.
+export const ROOM_LIMIT = 10;
+const roomMsg = (error, map, fallback) => {
+  const d = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
+  for (const [code, text] of map) if (d.includes(code)) return text;
+  return fallback;
+};
+const ROOM_DUPLICATE = "Det finnes allerede et rom med dette navnet.";
+const ROOM_INVALID = "Skriv inn et gyldig navn på rommet.";
+
+export async function propertyRooms(propertyId) {
+  const [units, tenancies] = await Promise.all([
+    supabase.from("property_units").select("id, property_id, kind, display_label, operational_status").eq("property_id", propertyId),
+    supabase.from("tenancies").select("unit_id, status").eq("property_id", propertyId).in("status", ["draft", "invited", "active"]).is("archived_at", null),
+  ]);
+  if (units.error || tenancies.error) return { error: units.error ?? tenancies.error };
+  const occupied = new Map();
+  for (const t of tenancies.data ?? []) {
+    if (!t.unit_id) continue;
+    if (t.status === "active") occupied.set(t.unit_id, "Har et aktivt leieforhold");
+    else if (!occupied.has(t.unit_id)) occupied.set(t.unit_id, "Har en ventende invitasjon");
+  }
+  const rooms = (units.data ?? [])
+    .filter((u) => u.operational_status === "active" && u.kind !== "whole_property")
+    .sort((a, b) => (a.display_label ?? "").localeCompare(b.display_label ?? "", "nb", { numeric: true }))
+    .map((u) => ({ id: u.id, kind: u.kind, label: u.display_label || "Rom", status: occupied.get(u.id) ?? null, canRetire: u.kind === "room" && !occupied.has(u.id) }));
+  return { data: rooms };
+}
+
+// PropertyRoomDraft: trimmed, 1–80 characters, unique among active rooms.
+export function roomLabelError(label, rooms, exceptId = null) {
+  const t = (label ?? "").trim();
+  if (!t) return "Skriv inn et navn på rommet.";
+  if (t.length > 80) return "Navnet kan ikke være lengre enn 80 tegn.";
+  if (rooms.some((r) => r.id !== exceptId && r.label.trim().toLowerCase() === t.toLowerCase())) return ROOM_DUPLICATE;
+  return null;
+}
+
+export const nextRoomLabel = (rooms) => {
+  const used = new Set(rooms.map((r) => r.label.trim().toLowerCase()));
+  let i = 1;
+  while (used.has(`rom ${i}`)) i += 1;
+  return `Rom ${i}`;
+};
+
+export async function createRoom(propertyId, label) {
+  const { data, error } = await supabase.rpc("create_property_room_unit", { requested_property_id: propertyId, requested_display_label: label.trim() });
+  if (error || !first(data)) return { error: roomMsg(error, [["room_limit_reached", "Et bofellesskap kan ha opptil 10 rom."], ["unit_label_already_exists", ROOM_DUPLICATE], ["invalid_unit_label", ROOM_INVALID]], "Kunne ikke legge til rommet. Prøv igjen.") };
+  return { data: first(data) };
+}
+
+export async function renameRoom(unitId, label) {
+  const { data, error } = await supabase.rpc("rename_property_room_unit", { requested_unit_id: unitId, requested_display_label: label.trim() });
+  if (error || !first(data)) return { error: roomMsg(error, [["unit_label_already_exists", ROOM_DUPLICATE], ["invalid_unit_label", ROOM_INVALID], ["unit_not_renamable", "Dette rommet kan ikke døpes om."]], "Kunne ikke endre romnavnet. Prøv igjen.") };
+  return { data: first(data) };
+}
+
+export async function retireRoom(unitId) {
+  const { data, error } = await supabase.rpc("retire_property_room_unit", { requested_unit_id: unitId });
+  if (error || !first(data)) return { error: roomMsg(error, [["unit_has_current_tenancy", "Rommet har et aktivt leieforhold. Avslutt leieforholdet først."], ["unit_not_retirable", "Denne enheten kan ikke lukkes."]], "Kunne ikke lukke rommet. Prøv igjen.") };
+  return { data: first(data) };
+}
+
+// SharedRoomCount.missingRoomLabels: add «Rom 1..N» until the property has
+// `target` active rooms. Never removes rooms.
+export function missingRoomLabels(target, existingLabels) {
+  const clamped = Math.min(Math.max(target, 0), ROOM_LIMIT);
+  const labels = new Set(existingLabels.map((l) => l.trim().toLowerCase()));
+  const result = [];
+  let i = 1;
+  while (existingLabels.length + result.length < clamped) {
+    if (!labels.has(`rom ${i}`)) { result.push(`Rom ${i}`); labels.add(`rom ${i}`); }
+    i += 1;
+  }
+  return result;
+}
+
+export async function ensureSharedRooms(propertyId, target) {
+  const res = await propertyRooms(propertyId);
+  if (res.error) return { error: "Kunne ikke legge til rommet. Prøv igjen." };
+  for (const label of missingRoomLabels(target, res.data.filter((r) => r.kind === "room").map((r) => r.label))) {
+    const c = await createRoom(propertyId, label);
+    if (c.error) return c;
+  }
+  return { data: true };
+}
+
+export const parseRoomCount = (text) => {
+  const t = (text ?? "").trim();
+  if (!/^[0-9]+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= 1 && n <= ROOM_LIMIT ? n : null;
+};
 
 /* ---------- Navn (list_linked_profile_contacts, samme RPC som iOS) ---------- */
 export async function linkedContactNames(userIds) {
