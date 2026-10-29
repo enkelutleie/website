@@ -1937,7 +1937,8 @@ const maintenanceDetail = async (pid, rid) => {
           }
         } else row.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på den planlagte datoen ennå."));
       } else if (shared && !manager && !finished()) {
-        if (item.tenant_response === "accepted") row.append(responseBox("is-success", "Du har godtatt hendelsen", mtDateTime(at)));
+        // After the tenant approves the date no green box is shown (the toast confirms it).
+        if (item.tenant_response === "accepted") { /* nothing */ }
         else if (item.tenant_response === "declined") row.append(responseBox("is-danger", "Avslaget er sendt i chat", item.tenant_response_comment || "Svaret ligger i chatten."));
         else {
           row.append(responseBox("is-warning", "Passer denne dagen?", "Godta hendelsen, eller avslå og skriv i chatten hvilken dag som passer bedre."));
