@@ -1259,6 +1259,10 @@ export function rescheduleMaintenanceVisit(item, startsAt) {
     requested_ends_at: ends ? ends.toISOString().replace(/\.\d{3}Z$/, "Z") : null, requested_all_day: item.all_day,
   });
 }
+// One calendar item for #kalender/<id> (CalendarView detail). RLS decides who may read it.
+export const calendarItem = (itemId) =>
+  supabase.from("property_calendar_items").select("id, property_id, tenancy_id, maintenance_request_id, title, description, item_type, category, starts_at, due_at, ends_at, all_day, visibility, status, tenant_response, tenant_response_comment, tenant_responded_at")
+    .eq("id", itemId).maybeSingle();
 export const respondToCalendarItem = (itemId, decision, comment) =>
   supabase.rpc("respond_to_calendar_item", { requested_calendar_item_id: itemId, requested_decision: decision, requested_comment: comment || null });
 
@@ -1285,6 +1289,65 @@ export function subscribeMaintenance(requestId, { onEvent, onResync }) {
       if (stopped || ch !== channel) return;
       if (status === "SUBSCRIBED") {
         if (hadConnection || attempt > 0) onResync?.();
+        hadConnection = true;
+        attempt = 0;
+      } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
+        channel = null;
+        supabase.removeChannel(ch);
+        const delay = Math.min(30_000, 1000 * 2 ** attempt);
+        attempt += 1;
+        clearTimeout(timer);
+        timer = setTimeout(connect, delay);
+      }
+    });
+  };
+  connect();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    if (channel) supabase.removeChannel(channel);
+    channel = null;
+  };
+}
+
+/* ---------- Varsler (NotificationsRemote) ---------- */
+export const NOTIFICATION_PAGE_SIZE = 30;
+// Keyset paging like iOS: the cursor is the last row's (relevant_at, notification_id).
+export const listNotifications = (scope, before = null) =>
+  supabase.rpc("list_my_notifications", {
+    requested_role_scope: scope,
+    requested_before_relevant_at: before?.relevant_at ?? null,
+    requested_before_notification_id: before?.notification_id ?? null,
+    requested_limit: NOTIFICATION_PAGE_SIZE,
+  });
+export const markNotificationRead = (scope, notificationId) =>
+  supabase.rpc("mark_my_notification_read", { requested_role_scope: scope, requested_notification_id: notificationId });
+export const markAllNotificationsRead = (scope) =>
+  supabase.rpc("mark_my_notifications_read", { requested_role_scope: scope });
+
+// NotificationsRealtimeRemote: one channel, the same tables as iOS. Payloads are never
+// read; every change only asks for a refetch through list_my_notifications (RLS).
+export function subscribeNotifications(onChange) {
+  let channel = null;
+  let stopped = false;
+  let attempt = 0;
+  let timer = null;
+  let hadConnection = false;
+  const wake = () => { if (!stopped) onChange(); };
+  const connect = () => {
+    if (stopped) return;
+    const ch = supabase.channel(`notifications-domain:${crypto.randomUUID()}`);
+    channel = ch;
+    ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "maintenance_events" }, wake)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "property_calendar_items" }, wake)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "property_calendar_items" }, wake)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "tenancy_members", filter: "invitation_status=eq.accepted" }, wake)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "tenancy_members", filter: "invitation_status=eq.accepted" }, wake)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notification_inbox_wakes" }, wake);
+    ch.subscribe((status) => {
+      if (stopped || ch !== channel) return;
+      if (status === "SUBSCRIBED") {
+        if (hadConnection || attempt > 0) wake();
         hadConnection = true;
         attempt = 0;
       } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
