@@ -49,12 +49,11 @@ const NAV = [
     { id: "bilder", label: "Bilder", icon: "photo" },
   ] },
   { group: "Leieforhold", items: [
-    { id: "overtakelse", label: "Overtakelse", icon: "handover" },
-    { id: "inn-utflytting", label: "Inn-/utflytting", icon: "checklist" },
+    { id: "inn-utflytting", label: "Inn- og utflytting", icon: "handover" },
     { id: "leiekontrakt", label: "Leiekontrakt", icon: "contract" },
     { id: "dokumenter", label: "Dokumenter", tenantLabel: "Delte dokumenter", icon: "folder" },
     { id: "meldinger", label: "Meldinger", icon: "chat" },
-    { id: "historikk", label: "Historikk", icon: "history", landlordOnly: true },
+    { id: "historikk", label: "Leiehistorikk", icon: "history", landlordOnly: true },
   ] },
   { group: "Konto", items: [{ id: "innstillinger", label: "Innstillinger", icon: "gear" }] },
 ];
@@ -178,13 +177,30 @@ const band = () => {
   return b;
 };
 
+// PropertyHomeNextStep.swift: Bolig -> Leietaker -> Kontrakt -> Innflytting.
+// Completion is stored per property (get/mark_property_home_guide_completed).
 const onboarding = async () => {
   const p = property();
-  const own = state.tenancies.filter((t) => t.property_id === p.id);
-  const insp = await inspections(p.id);
-  const movedIn = (insp.data ?? []).some((i) => i.type !== "move_out" && i.status === "finalized");
-  const done = [true, own.some((t) => t.status === "invited" || t.status === "active"), own.some((t) => t.status === "active"), movedIn];
-  if (done.every(Boolean)) return null;
+  if (!isManager(p.id)) return null;
+  const stored = await supabase.rpc("get_property_home_guide_completed", { requested_property_id: p.id });
+  if (stored.error || stored.data === true) return null;
+  const own = state.tenancies.filter((t) => t.property_id === p.id && !t.archived_at);
+  const active = own.filter((t) => t.status === "active");
+  const [people, agreements, insp] = await Promise.all([tenancyPeople(p.id), act.listAgreements(p.id), inspections(p.id)]);
+  if (people.error || agreements.error || insp.error) return null;
+  const hasTenant = (people.data ?? []).some((m) => m.role === "tenant");
+  const tenantPending = !hasTenant && own.some((t) => t.status === "invited");
+  const byTenancy = (statuses) => new Set((agreements.data ?? []).filter((a) => statuses.includes(a.agreement_status)).map((a) => a.tenancy_id));
+  const signedIds = byTenancy(["signed"]);
+  const waitingIds = byTenancy(["awaiting_signatures", "partially_signed"]);
+  const signed = active.length > 0 && active.every((t) => signedIds.has(t.id));
+  const contractWaiting = hasTenant && !signed && active.length > 0 && active.every((t) => signedIds.has(t.id) || waitingIds.has(t.id));
+  const moveInStarted = (insp.data ?? []).some((i) => i.type !== "move_out");
+  const done = [true, hasTenant, signed, signed && moveInStarted];
+  if (done.every(Boolean)) {
+    await supabase.rpc("mark_property_home_guide_completed", { requested_property_id: p.id });
+    return null;
+  }
   const current = done.indexOf(false);
   const wrap = h("section", "pt-onboarding");
   wrap.append(h("p", "pt-label", "Kom i gang"));
@@ -197,11 +213,19 @@ const onboarding = async () => {
     li.append(dot, h("span", null, label));
     steps.append(li);
   });
-  const next = [null, ["Inviter leietaker", "#leiekontrakt"], ["Opprett leiekontrakt", "#leiekontrakt"], ["Start innflytting", "#inn-utflytting"]][current];
-  const btn = h("a", "pt-btn pt-btn-primary", next[0]);
-  btn.href = next[1];
-  const help = [null, "Neste steg er å invitere leietakeren. Det gjør du i appen.", "Neste steg er leiekontrakten. Den lages og signeres i appen.", "Neste steg er innflyttingen med målere, nøkler og sjekkliste."][current];
-  wrap.append(steps, btn, h("p", "pt-onboarding-text", help));
+  wrap.append(steps);
+  const waiting = (current === 1 && tenantPending) || (current === 2 && contractWaiting);
+  if (waiting) {
+    wrap.append(h("p", "pt-onboarding-text", current === 1 ? "Venter på at leietaker godtar invitasjonen" : "Venter på leietakers godkjenning og signering"));
+    return wrap;
+  }
+  if (current === 1) wrap.append(button("Inviter leietaker", "pt-btn-primary", () => inviteForm(p.id)));
+  else {
+    const [label, href] = current === 2 ? ["Skriv leiekontrakt", "#leiekontrakt"] : ["Start innflytting", "#inn-utflytting"];
+    const link = h("a", "pt-btn pt-btn-primary", label);
+    link.href = href;
+    wrap.append(link);
+  }
   return wrap;
 };
 
@@ -218,7 +242,6 @@ const kpis = async (pid) => {
     ["Inntekt", "income", "is-success", "is-income", has ? money(income) : "–", note],
     ["Utgift", "expense", "is-danger", "is-expense", has ? money(expense) : "–", note],
     ["Netto", "net", "", "", has ? money(income - expense) : "–", note],
-    ["Skatt", "tax", "is-tax", "", "–", "Skatteestimatet finnes i appen"],
   ];
   for (const [label, ic, tone, bg, value, n] of tiles) {
     const c = h("section", `pt-card pt-kpi ${bg}`.trim());
@@ -870,16 +893,33 @@ const PAGES = {
     return [emptyPage("wrench", "Vedlikehold", `${open != null ? `Åpne saker på boligen: ${open}. ` : ""}Saksliste og detaljer kommer på nettsiden. Til da håndteres vedlikehold i appen.`)];
   },
   async bilder() { return [emptyPage("photo", "Bilder", "Bildealbum for boligen kommer på nettsiden. Til da finner du bildene i appen.")]; },
-  async overtakelse() {
+  async "inn-utflytting"() {
+    const p = property();
+    if (!p) return [noProperty()];
+    const res = await inspections(p.id);
+    const rows = res.error ? null : res.data ?? [];
+    const status = (type) => {
+      if (!rows) return null;
+      const list = rows.filter((i) => (type === "move_out" ? i.type === "move_out" : i.type !== "move_out"));
+      if (!list.length) return ["Ikke startet", ""];
+      return list.some((i) => i.status === "finalized") ? ["Ferdigstilt", " is-success"] : ["Pågår", " is-warning"];
+    };
+    const info = card("Dokumenter boligens tilstand", "info");
+    info.append(h("p", "pt-muted", "Sjekklister ved inn- og utflytting gir en trygg oversikt og kan brukes som dokumentasjon ved depositumsoppgjør."));
     const tiles = h("section", "pt-tiles");
-    [["Målere", "bolt", "is-warning", "Strøm, vann og varme med bilde av måleren."], ["Nøkler", "key", "", "Antall og type nøkler som overleveres."], ["Sjekkliste", "checklist", "is-success", "Rom for rom ved inn- og utflytting."]].forEach(([l, ic, tone, txt]) => {
+    [["Innflytting", "checklist", "is-success", "Sjekkliste og dokumentasjon", status("move_in")],
+      ["Utflytting", "handover", "is-warning", "Sjekkliste og sammenligning med innflytting", status("move_out")],
+      ["Depositumsoppgjør", "key", "", "Oppsummering og eventuelle trekk", null]].forEach(([l, ic, tone, txt, st]) => {
       const t = h("article", "pt-tile");
       t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, l), h("p", null, txt));
+      if (st) t.append(h("span", `pt-chip${st[1]}`, st[0]));
       tiles.append(t);
     });
-    return [emptyPage("handover", "Overtakelse", "Overtakelsen fylles ut i appen. Oversikten kommer på nettsiden."), tiles];
+    const out = [info, tiles];
+    if (res.error) out.push(inline("Statusen kunne ikke hentes akkurat nå."));
+    if (isManager(p.id)) out.push(h("p", "pt-muted", "Innflytting og utflytting er valgfritt. Du kan hoppe over det. Leietaker ser sjekklistene først når du har startet."));
+    return out;
   },
-  async "inn-utflytting"() { return [emptyPage("checklist", "Inn-/utflytting", "Innflytting, utflytting og depositumsoppgjør kommer på nettsiden. Til da gjøres dette i appen.")]; },
   async leiekontrakt() {
     const p = property();
     if (!p) return [noProperty()];
@@ -941,7 +981,7 @@ const PAGES = {
   },
   async dokumenter() { return [emptyPage("folder", isLandlord() ? "Dokumenter og maler" : "Delte dokumenter", "Dokumentene kommer på nettsiden. Til da finner du dem i appen.")]; },
   async meldinger() { return [emptyPage("chat", "Meldinger", "Samtaler med utleier og leietaker kommer på nettsiden. Til da bruker du chatten i appen.")]; },
-  async historikk() { return [emptyPage("history", "Historikk", "Tidligere leieforhold og hendelser kommer på nettsiden.")]; },
+  async historikk() { return [emptyPage("history", "Leiehistorikk", "Ingen tidligere leieforhold ennå.")]; },
   async innstillinger() {
     const c = card("Konto", "person");
     const dl = h("dl", "pt-facts");
@@ -987,6 +1027,7 @@ let renderToken = 0;
 const render = async () => {
   const items = allItems();
   let id = location.hash.slice(1);
+  if (id === "overtakelse") id = "inn-utflytting";
   if (!items.some((i) => i.id === id)) id = "oversikt";
   renderNav(id);
   const item = items.find((i) => i.id === id);
