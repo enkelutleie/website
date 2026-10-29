@@ -306,3 +306,22 @@ svg { flex: none; }
 .pt-mt-composer .pt-links { margin-top: 0; }
 .pt-mt-chosen { display: flex; flex-wrap: wrap; gap: var(--space-s); }
 .pt-mt-chosen-chip { gap: var(--space-s); }
+/* Inn- og utflytting */
+.pt-chip.is-danger { background: var(--danger-icon-bg); color: var(--danger); }
+.pt-ho-tile { color: var(--ink); text-decoration: none; }
+.pt-ho-tile:hover strong { color: var(--brand); }
+.pt-ho-tile .pt-chip { align-self: flex-start; }
+.pt-ho-tenancy { margin-bottom: var(--space-m); }
+.pt-ho-items, .pt-ho-checks, .pt-ho-comments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pt-ho-item, .pt-ho-comment { padding: 12px 0; border-top: 1px solid var(--brand-soft); display: flex; flex-direction: column; gap: var(--space-s); }
+.pt-ho-item:first-child, .pt-ho-comment:first-child { border-top: 0; }
+.pt-ho-item-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-m); flex-wrap: wrap; }
+.pt-ho-condition { width: auto; }
+.pt-ho-note { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary-ink); font-size: var(--fs-subheadline); }
+.pt-ho-comment p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pt-ho-check { padding: 6px 0; }
+.pt-ho-check label, .pt-ho-toggle { display: flex; align-items: center; gap: var(--space-s); cursor: pointer; }
+.pt-ho-toggle { margin: var(--space-m) 0; font-weight: 600; }
+.pt-ho-status { font-weight: 600; margin: var(--space-s) 0; }
+.pt-ho-error { color: var(--danger); font-size: var(--fs-subheadline); }
+.pt-card > .pt-label { margin-top: var(--space-m); }

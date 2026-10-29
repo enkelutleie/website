@@ -2073,6 +2073,586 @@ const maintenanceDetail = async (pid, rid) => {
   return [wrap];
 };
 
+/* ---------- Inn- og utflytting (PropertyHandoverSection, MoveOutFlow, DepositSettlementView) ---------- */
+const HO_AREA = new Map(act.INSPECTION_AREAS);
+const HO_CONDITION = new Map(act.INSPECTION_CONDITIONS);
+const HO_KEY_KIND = { frontDoor: "Hoveddør", mailbox: "Postkasse", storage: "Bod", commonArea: "Fellesareal", garage: "Garasje" };
+const HO_METER = { electricity: "Strøm (kWh)", water: "Vann (m³)", heating: "Fjernvarme (MWh)" };
+const HO_POINT_PREFIX = "property.detail.handover.";
+const HO_POINTS = {
+  "moveIn.item.appliances": "Sjekk at alle hvitevarer fungerer", "moveIn.item.electricity": "Kontroller strøm og bryterskap",
+  "moveIn.item.keys": "Sjekk at alle nøkler er levert", "moveIn.item.lamps": "Sjekk at alle lamper fungerer",
+  "moveIn.item.meters": "Registrer målerstander (strøm/vann)", "moveIn.item.photo": "Fotografer hele boligen",
+  "moveIn.item.smoke": "Test røykvarslere og brannslukker", "moveIn.item.taps": "Sjekk vannkraner og toalett",
+  "moveIn.item.walls": "Kontroller vegger og gulv for skader", "moveIn.item.windows": "Test alle vinduer og dører",
+  "moveOut.item.appliances": "Rens kjøleskap og ovn", "moveOut.item.belongings": "Fjern alle personlige eiendeler",
+  "moveOut.item.cleaning": "Rengjøring av hele boligen", "moveOut.item.damage": "Sjekk at intet er ødelagt",
+  "moveOut.item.floors": "Kontroller gulv for riper/skader", "moveOut.item.internet": "Avslutt internett og abonnement",
+  "moveOut.item.keys": "Lever alle nøkler", "moveOut.item.meters": "Registrer avsluttende målerstander",
+  "moveOut.item.photo": "Fotografer boligen ved utflytting", "moveOut.item.walls": "Sjekk vegger – hull og merker",
+};
+const HO_MARK = {
+  tenant_confirmed: "Bekreftet av leietaker",
+  landlord_prepared: "Utarbeidet av utleier. Ikke nødvendigvis godkjent av begge.",
+  not_confirmed_by_tenant: "Ikke bekreftet av leietaker",
+};
+const HO_SCOPE = { whole_tenancy: "Hele leieforholdet", one_room: "Ett rom", one_tenant: "Én leietaker" };
+const hoBack = () => mtBack("#inn-utflytting", "Inn- og utflytting");
+let hoTenancyId = null;
+const hoTenancies = (pid) => state.tenancies.filter((t) => t.property_id === pid && t.status === "active" && (isManager(pid) || state.tenantOf.has(t.id)));
+const hoTenancy = (pid) => {
+  const list = hoTenancies(pid);
+  return list.find((t) => t.id === hoTenancyId) ?? list[0] ?? null;
+};
+const hoLatest = (rows, test) => [...rows].reverse().find(test) ?? null;
+const hoLoad = async (t) => {
+  const [insp, proc, dep] = await Promise.all([act.listInspections(t.id), act.listMoveOutProcesses([t.id]), act.depositPointer(t.id)]);
+  if (insp.error || proc.error) return null;
+  const list = insp.data ?? [];
+  const procs = proc.data ?? [];
+  const process = hoLatest(procs, (p) => act.OPEN_MOVE_OUT.includes(p.state)) ?? hoLatest(procs, (p) => p.state === "ended");
+  const moveOut = process?.inspection_id ? list.find((i) => i.id === process.inspection_id) ?? null : null;
+  return { moveIn: hoLatest(list, (i) => i.type === "move_in"), moveOut, process, deposit: dep.error ? null : dep.data ?? null };
+};
+const hoChip = ([text, tone]) => h("span", `pt-chip${tone}`, text);
+const hoMoveInStatus = (i, manager) => {
+  if (!i) return ["Ikke startet", ""];
+  if (i.status === "finalized") {
+    if (i.protocol_mark === "tenant_confirmed") return ["Bekreftet av leietaker", " is-success"];
+    if (i.sent_for_review_at && !i.tenant_decision) return manager ? ["Venter på leietaker", " is-warning"] : ["Klar til godkjenning", " is-warning"];
+    return ["Ferdigstilt", " is-success"];
+  }
+  if (manager && i.tenant_may_fill && !i.tenant_fill_done_at) return ["Venter på leietaker", " is-warning"];
+  return ["Pågår", " is-warning"];
+};
+const hoMoveOutStatus = (d) => {
+  const s = d.process?.state;
+  if (!s) return ["Ikke startet", ""];
+  if (s === "ended") return ["Ferdig", " is-success"];
+  if (d.moveOut?.status === "finalized" || s === "approved" || s === "deposit") return ["Ferdigstilt", " is-success"];
+  if (s === "notice_given") return ["Oppsigelsen er registrert", " is-info"];
+  return ["Pågår", " is-warning"];
+};
+const hoDepositStatus = (d) => {
+  if (!d.deposit) return d.moveOut?.status === "finalized" ? ["Ikke startet", ""] : ["Låst", ""];
+  const s = d.deposit.status;
+  if (s === "accepted" || s === "full_refund") return ["Ferdig", " is-success"];
+  if (s === "claims_pending") return ["Venter på leietaker", " is-warning"];
+  if (s === "open" || s === "declined") return ["Pågår", " is-warning"];
+  return ["Uenighet", " is-danger"];
+};
+const hoReloadPage = async (message) => {
+  state.cache.clear();
+  await render();
+  if (message) act.toast(message);
+};
+const hoRun = async (res, errorOf, message) => {
+  const err = errorOf(res);
+  if (err) {
+    act.toast(err);
+    return false;
+  }
+  await hoReloadPage(message);
+  return true;
+};
+
+const hoConditionChip = (item) => {
+  const tone = { ok: " is-success", note: " is-warning", damage: " is-danger" }[item.condition] ?? "";
+  return h("span", `pt-chip${tone}`, item.condition ? HO_CONDITION.get(item.condition) ?? item.condition : "Ikke fylt ut");
+};
+const hoSaveFailed = async (res) => {
+  act.toast(act.inspectionError(res) ?? "Kunne ikke lagre punktet. Prøv igjen.");
+  if (/version_conflict/.test(String(res.error?.message))) await hoReloadPage();
+};
+const hoChecklist = (items, editable) => {
+  const c = card("Tilstand i boligen", "checklist");
+  const list = h("ul", "pt-ho-items");
+  for (const item of items) {
+    const li = h("li", "pt-ho-item");
+    const head = h("div", "pt-ho-item-head");
+    head.append(h("strong", null, HO_AREA.get(item.area_code) ?? item.area_code));
+    const visible = item.area_code === "other" ? act.visibleNote(item.note) : (item.note ?? "").trim();
+    if (!editable) {
+      head.append(hoConditionChip(item));
+      li.append(head);
+      if (visible) li.append(h("p", "pt-ho-note", visible));
+      list.append(li);
+      continue;
+    }
+    const sel = h("select", "pt-select pt-ho-condition");
+    sel.setAttribute("aria-label", "Tilstand");
+    if (!item.condition) {
+      const o = h("option", null, "Velg tilstand");
+      o.value = "";
+      sel.append(o);
+    }
+    for (const [v, l] of act.INSPECTION_CONDITIONS) {
+      const o = h("option", null, l);
+      o.value = v;
+      sel.append(o);
+    }
+    sel.value = item.condition ?? "";
+    const note = h("textarea", "pt-input pt-textarea");
+    note.rows = 2;
+    note.placeholder = "Valgfri merknad";
+    note.setAttribute("aria-label", "Valgfri merknad");
+    note.value = visible;
+    const save = button("Lagre", "pt-btn-secondary pt-btn-small", async () => {
+      if (!sel.value) return act.toast("Velg tilstand.");
+      const text = item.area_code === "other" ? act.withVisibleNote(item.note, note.value) : note.value.trim();
+      if ((text ?? "").length > act.INSPECTION_NOTE_LIMIT) return act.toast("Merknaden er for lang.");
+      save.disabled = true;
+      const res = await act.updateInspectionItem(item, sel.value, text);
+      save.disabled = false;
+      if (res.error || !res.data) return hoSaveFailed(res);
+      Object.assign(item, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
+      act.toast("Lagret.");
+    });
+    head.append(sel);
+    li.append(head, note, actionsRow(save));
+    list.append(li);
+  }
+  c.append(list);
+  return c;
+};
+// Shared data the app keeps on the "Annet" note: checklist points, keys and meters.
+const hoShared = (items, phase, editable) => {
+  const other = items.find((i) => i.area_code === "other");
+  const data = other ? act.handoverData(other.note) : null;
+  if (!data) return null;
+  const listKey = phase === "move_out" ? "out" : "in";
+  const c = card("Nøkler, målere og sjekkpunkter", "key");
+  const points = (Array.isArray(data[listKey]) ? data[listKey] : []).map((row, index) => ({ row, index }))
+    .filter(({ row }) => row && !row.x && (row.k || row.t));
+  if (points.length) {
+    c.append(h("p", "pt-label", "Sjekkliste"));
+    const ul = h("ul", "pt-ho-checks");
+    for (const { row, index } of points) {
+      const li = h("li", "pt-ho-check");
+      const label = h("label");
+      const box = h("input");
+      box.type = "checkbox";
+      box.checked = row.d === true;
+      box.disabled = !editable;
+      label.append(box, h("span", null, row.t || HO_POINTS[String(row.k).replace(HO_POINT_PREFIX, "")] || "Sjekkpunkt"));
+      li.append(label);
+      if (row.c) li.append(h("p", "pt-ho-note", row.c));
+      box.addEventListener("change", async () => {
+        const next = act.withChecklistDone(other.note, listKey, index, box.checked);
+        if (!next || next.length > act.INSPECTION_NOTE_LIMIT) {
+          box.checked = !box.checked;
+          return act.toast("Kunne ikke lagre punktet. Prøv igjen.");
+        }
+        box.disabled = true;
+        const res = await act.updateInspectionItem(other, other.condition ?? "ok", next);
+        box.disabled = false;
+        if (res.error || !res.data) {
+          box.checked = !box.checked;
+          return hoSaveFailed(res);
+        }
+        Object.assign(other, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
+      });
+      ul.append(li);
+    }
+    c.append(ul);
+  }
+  const keys = (Array.isArray(data.keys) ? data.keys : []).filter((k) => HO_KEY_KIND[k?.kind]);
+  if (keys.length) {
+    c.append(h("p", "pt-label", "Nøkler"));
+    const dl = h("dl", "pt-facts");
+    for (const k of keys) {
+      const d = h("div");
+      const counts = [`Utlevert ${Number(k.issued) || 0}`];
+      if (phase === "move_out") counts.push(`Levert tilbake ${Number(k.returned) || 0}`);
+      d.append(h("dt", null, HO_KEY_KIND[k.kind]), h("dd", null, counts.join(" · ")));
+      dl.append(d);
+    }
+    c.append(dl);
+  }
+  const meters = (Array.isArray(data.meters) ? data.meters : []).filter((m) => HO_METER[m?.kind] && !m.na && (m.in || m.out));
+  if (meters.length) {
+    c.append(h("p", "pt-label", "Målerstander"));
+    const dl = h("dl", "pt-facts");
+    for (const m of meters) {
+      const d = h("div");
+      const values = [m.in ? `Ved innflytting ${m.in}` : null, phase === "move_out" && m.out ? `Ved utflytting ${m.out}` : null].filter(Boolean);
+      d.append(h("dt", null, HO_METER[m.kind]), h("dd", null, values.join(" · ") || "Ikke registrert"));
+      dl.append(d);
+    }
+    c.append(dl);
+  }
+  c.append(h("p", "pt-muted", "Nøkler, målerstander og bilder registreres i appen."));
+  return c;
+};
+const hoComments = async (inspection, canComment) => {
+  const c = card("Kommentarer", "chat");
+  const list = h("ul", "pt-ho-comments");
+  const draw = async () => {
+    const res = await act.listInspectionComments(inspection.id);
+    const rows = res.data ?? [];
+    list.replaceChildren(...rows.map((r) => {
+      const li = h("li", "pt-ho-comment");
+      li.append(h("strong", null, r.author_role === "tenant" ? "Leietaker" : "Utleier"), h("span", "pt-muted", ` · ${mtDateTime(r.created_at)}`), h("p", null, r.body));
+      return li;
+    }));
+    if (!rows.length) list.append(inline("Ingen kommentarer ennå."));
+  };
+  await draw();
+  c.append(list);
+  if (canComment) {
+    const text = h("textarea", "pt-input pt-textarea");
+    text.rows = 2;
+    text.maxLength = 2000;
+    text.placeholder = "Skriv en kommentar …";
+    text.setAttribute("aria-label", "Kommentar");
+    const add = button("Legg til kommentar", "pt-btn-secondary pt-btn-small", async () => {
+      const body = text.value.trim();
+      if (!body) return;
+      add.disabled = true;
+      const res = await act.addProtocolComment(inspection.id, body);
+      add.disabled = false;
+      if (res.error) return act.toast(act.inspectionError(res));
+      text.value = "";
+      await draw();
+    });
+    c.append(text, actionsRow(add));
+  }
+  return c;
+};
+const hoProtocolCards = async (inspection, editable, canComment) => {
+  const items = await act.listInspectionItems(inspection.id);
+  if (items.error) return [inline("Sjekklisten kunne ikke hentes akkurat nå.")];
+  const rows = items.data ?? [];
+  return [hoChecklist(rows, editable), hoShared(rows, inspection.type, editable), await hoComments(inspection, canComment)].filter(Boolean);
+};
+const hoTenantFillToggle = (i) => {
+  const label = h("label", "pt-ho-toggle");
+  const box = h("input");
+  box.type = "checkbox";
+  box.checked = Boolean(i.tenant_may_fill);
+  box.addEventListener("change", async () => {
+    box.disabled = true;
+    const res = await act.setTenantMayFill(i.id, box.checked);
+    box.disabled = false;
+    if (res.error) {
+      box.checked = !box.checked;
+      return act.toast(act.inspectionError(res));
+    }
+    i.tenant_may_fill = box.checked;
+  });
+  label.append(box, h("span", null, "La leietaker fylle ut"));
+  return label;
+};
+
+const hoMoveInPage = async (p, t, d) => {
+  const manager = isManager(p.id);
+  const i = d.moveIn;
+  const head = card("Innflytting", "checklist");
+  head.querySelector(".pt-card-head").append(hoChip(hoMoveInStatus(i, manager)));
+  if (!i) {
+    if (!manager) {
+      head.append(h("p", "pt-muted", "Innflytting åpnes når utleier har startet den."));
+      return [hoBack(), head];
+    }
+    head.append(h("p", "pt-muted", "Sjekklister ved inn- og utflytting gir en trygg oversikt og kan brukes som dokumentasjon ved depositumsoppgjør."),
+      actionsRow(button("Start innflytting", "pt-btn-primary", async () => {
+        hoRun(await act.createMoveIn(t.id), act.inspectionError);
+      })));
+    return [hoBack(), head];
+  }
+  const draft = i.status === "draft";
+  const tenantFilling = !manager && draft && i.tenant_may_fill && !i.tenant_fill_done_at && !i.sent_for_review_at;
+  if (draft && manager) {
+    head.append(h("p", "pt-muted", "Fyll ut tilstanden i hvert rom. Når du ferdigstiller, låses sjekklisten og sendes til leietaker for godkjenning."));
+    if (i.tenant_may_fill && i.tenant_fill_done_at) head.append(h("p", "pt-ho-status", "Leietaker har sendt sjekklisten til deg."));
+    head.append(hoTenantFillToggle(i), actionsRow(
+      button("Ferdigstill og send til leietaker", "pt-btn-primary", async () => {
+        const ok = await act.confirmAction({ title: "Ferdigstill og send til leietaker", text: "Sjekklisten låses og sendes til leietaker. Manglende svar er ikke en godkjenning. Du kan ferdigstille uten svar.", confirmLabel: "Ferdigstill", destructive: false });
+        if (ok) hoRun(await act.finalizeInspection(i, { sendMoveIn: true }), act.inspectionError, "Innflyttingen er ferdigstilt og sendt til leietaker.");
+      }),
+      i.sent_for_review_at ? null : button("Avbryt innflytting", "pt-btn-quiet-destructive", async () => {
+        const ok = await act.confirmAction({ title: "Avbryt innflytting", text: "Sjekklisten og bildene for innflyttingen slettes. Dette kan ikke angres.", confirmLabel: "Avbryt innflytting" });
+        if (ok) hoRun(await act.cancelMoveIn(t.id), act.inspectionError, "Innflyttingen er avbrutt.");
+      }),
+    ));
+  } else if (tenantFilling) {
+    head.append(h("p", "pt-muted", "Dette er innflyttingsprotokollen for boligen. Her dokumenteres målerstander, nøkler og tilstanden i boligen ved innflytting. Utleier har bedt deg fylle ut sjekklisten. Når du er ferdig, sendes den til utleier for godkjenning."),
+      actionsRow(button("Ferdig", "pt-btn-primary", async () => {
+        hoRun(await act.markTenantFillDone(i.id), act.inspectionError, "Sendt til utleier");
+      })));
+  } else if (draft) {
+    head.append(h("p", "pt-muted", i.tenant_fill_done_at ? "Sendt til utleier" : "Venter på at utleier sender protokollen."));
+  } else {
+    head.append(h("p", "pt-ho-status", HO_MARK[i.protocol_mark] ?? "Ferdigstilt"));
+    if (i.finalized_at) head.append(h("p", "pt-muted", `Ferdigstilt ${dateText(i.finalized_at)}`));
+    if (!manager && i.sent_for_review_at && !i.tenant_decision) {
+      head.append(h("p", "pt-muted", "Utleier har ferdigstilt og sendt innflyttingsprotokollen til deg for gjennomgang."),
+        actionsRow(button("Godkjenn", "pt-btn-primary", async () => {
+          hoRun(await act.approveMoveIn(i.id), act.inspectionError, "Innflytting er godkjent");
+        })));
+    } else if (manager && i.sent_for_review_at && !i.tenant_decision) {
+      head.append(h("p", "pt-muted", "Manglende svar er ikke en godkjenning."));
+    }
+  }
+  const editable = draft && (manager || tenantFilling);
+  const canComment = draft && (manager || Boolean(i.sent_for_review_at));
+  return [hoBack(), head, ...(await hoProtocolCards(i, editable, canComment))];
+};
+
+const hoNoticeForm = async (p, t, manager) => {
+  const people = await tenancyPeople(p.id);
+  const tenants = (people.data ?? []).filter((m) => m.tenancy_id === t.id && m.role === "tenant");
+  const scopes = [[p.housing_kind === "shared" ? "one_room" : "whole_tenancy", p.housing_kind === "shared" ? "Ett rom" : "Hele leieforholdet"]];
+  if (tenants.length > 1) scopes.push(["one_tenant", "Én leietaker"]);
+  const fields = [
+    { name: "date", label: "Utflyttingsdato", type: "date", required: true, min: todayISO() },
+    { name: "scope", label: "Omfang", type: "select", options: scopes, required: true },
+  ];
+  if (tenants.length > 1 && manager) {
+    fields.push({ name: "subject", label: "Leietaker", type: "select", options: tenants.map((m) => [m.user_id, m.name ?? "Leietaker"]), required: true });
+  }
+  return act.openForm({
+    title: "Registrer oppsigelse", intro: "Starter utflytting. Første steg er oppsigelsen.",
+    fields, submitLabel: "Registrer oppsigelse",
+    onSubmit: async (v) => {
+      if (!v.date) return "Velg utflyttingsdato.";
+      const subject = v.scope === "one_tenant" ? (manager ? v.subject : state.user.id) : null;
+      const res = await act.registerMoveOutNotice(t.id, v.scope, subject, v.date);
+      const err = act.moveOutError(res);
+      if (err) return err;
+      hoReloadPage("Oppsigelsen er registrert");
+      return null;
+    },
+  });
+};
+const hoMoveOutPage = async (p, t, d) => {
+  const manager = isManager(p.id);
+  const proc = d.process;
+  const i = d.moveOut;
+  const head = card("Utflytting", "handover");
+  head.querySelector(".pt-card-head").append(hoChip(hoMoveOutStatus(d)));
+  if (!proc) {
+    head.append(h("p", "pt-muted", manager ? "Registrer oppsigelsen for å starte utflyttingen." : "Når leieforholdet sies opp, registreres oppsigelsen her."),
+      actionsRow(button(manager ? "Start utflytting" : "Registrer oppsigelse", "pt-btn-primary", () => hoNoticeForm(p, t, manager))));
+    return [hoBack(), head];
+  }
+  const facts = h("dl", "pt-facts");
+  [["Utflyttingsdato", dateText(proc.move_out_on)], ["Omfang", HO_SCOPE[proc.scope] ?? proc.scope],
+    ["Status", act.MOVE_OUT_STATE[proc.state] ?? proc.state]].forEach(([k, v]) => {
+    const row = h("div");
+    row.append(h("dt", null, k), h("dd", null, v));
+    facts.append(row);
+  });
+  head.append(facts);
+  const open = act.OPEN_MOVE_OUT.includes(proc.state);
+  const finalized = i?.status === "finalized";
+  const buttons = [];
+  if (manager && proc.state === "notice_given") {
+    buttons.push(button("Start utflytting", "pt-btn-primary", async () => {
+      hoRun(await act.openMoveOutChecklist(proc.id), act.moveOutError);
+    }));
+  }
+  if (manager && i && !finalized) {
+    buttons.push(button("Ferdigstill utflytting", "pt-btn-primary", async () => {
+      const ok = await act.confirmAction({ title: "Ferdigstill utflytting", text: "Utflyttingslisten låses. Deretter åpnes depositumsoppgjøret.", confirmLabel: "Ferdigstill", destructive: false });
+      if (ok) hoRun(await act.finalizeInspection(i), act.inspectionError, "Utflyttingslisten er ferdigstilt");
+    }));
+  }
+  if (manager && open && (proc.state === "approved" || proc.state === "deposit")) {
+    const s = d.deposit?.status;
+    const ready = !d.deposit || s === "accepted" || s === "full_refund";
+    if (ready) {
+      head.append(h("p", "pt-ho-status", "Klar til å avslutte leieforholdet"));
+      buttons.push(button("Avslutt leieforholdet", "pt-btn-primary", async () => {
+        const ok = await act.confirmAction({ title: "Er du sikker?", text: "Leieforholdet avsluttes. Dette kan ikke angres.", confirmLabel: "Avslutt leieforholdet" });
+        if (ok) hoRun(await act.completeMoveOut(proc.id), act.moveOutError, "Leieforholdet er avsluttet.");
+      }));
+    } else {
+      head.append(h("p", "pt-muted", "Depositumsoppgjøret må være godtatt før utflyttingen kan fullføres"));
+    }
+  }
+  if (manager && open && !finalized && proc.state !== "approved" && proc.state !== "deposit") {
+    buttons.push(button("Avbryt utflytting", "pt-btn-quiet-destructive", async () => {
+      const ok = await act.confirmAction({ title: "Avbryt utflytting", text: "Oppsigelsen og utflyttingslisten avbrytes.", confirmLabel: "Avbryt utflytting" });
+      if (ok) hoRun(await act.cancelMoveOut(proc.id), act.moveOutError, "Utflyttingen er avbrutt.");
+    }));
+  }
+  if (manager && i && !finalized) head.append(hoTenantFillToggle(i));
+  if (finalized) {
+    head.append(h("p", "pt-ho-status", "Utflyttingslisten er ferdigstilt"));
+    const link = h("a", "pt-btn pt-btn-secondary", "Depositumsoppgjør");
+    link.href = "#inn-utflytting/depositum";
+    buttons.push(link);
+  } else if (!manager && proc.state === "notice_given") {
+    head.append(h("p", "pt-muted", "Utflytting åpnes når utleier har startet den."));
+  }
+  if (buttons.length) head.append(actionsRow(...buttons));
+  if (!i) return [hoBack(), head];
+  const tenantFilling = !manager && !finalized && i.tenant_may_fill;
+  return [hoBack(), head, ...(await hoProtocolCards(i, !finalized && (manager || tenantFilling), manager && !finalized))];
+};
+
+const hoClaimForm = (snap, claim) => act.openForm({
+  title: claim ? "Endre krav" : "Legg til krav",
+  fields: [
+    { name: "description", label: "Skade eller mangel", type: "textarea", rows: 3, maxLength: 500, required: true, value: claim?.description ?? "" },
+    { name: "amount", label: "Beløp du krever fra depositumet (kr)", type: "money", required: true, value: claim ? act.kronerOf(claim.amount_minor) : "" },
+  ],
+  onSubmit: async (v) => {
+    const description = v.description.trim();
+    const minor = act.minorOf(v.amount);
+    if (!description) return "Beskriv skaden eller mangelen.";
+    if (!minor || minor <= 0) return "Skriv et gyldig beløp.";
+    const res = claim ? await act.updateDepositClaim(claim.id, description, minor) : await act.addDepositClaim(snap.id, description, minor);
+    const err = act.depositError(res);
+    if (err) return err;
+    hoReloadPage();
+    return null;
+  },
+});
+const hoDepositPage = async (p, t, d) => {
+  const manager = isManager(p.id);
+  const head = card("Depositumsoppgjør", "banknote");
+  head.querySelector(".pt-card-head").append(hoChip(hoDepositStatus(d)));
+  const canOpen = d.deposit || (manager && d.moveOut?.status === "finalized");
+  if (!canOpen) {
+    head.append(h("p", "pt-muted", "Depositumsoppgjøret åpnes når utflyttingen er fullført."));
+    return [hoBack(), head];
+  }
+  const res = await act.openDepositSettlement(t.id, d.deposit?.id, d.moveOut?.id);
+  const snap = res.data;
+  if (res.error || !snap?.id) {
+    head.append(inline(act.depositError(res) ?? "Depositumsoppgjøret kunne ikke hentes akkurat nå."));
+    return [hoBack(), head];
+  }
+  const known = ["open", "claims_pending", "accepted", "declined", "full_refund", "disputed"];
+  const status = known.includes(snap.status) ? snap.status : "disputed";
+  const claims = (snap.claims ?? []).slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  const total = claims.reduce((a, c) => a + Number(c.amount_minor || 0), 0);
+  const deposit = Number(snap.deposit_amount_minor || 0);
+  const amounts = h("dl", "pt-facts");
+  [["Opprinnelig depositum", money(deposit)], ["Totalt krav", money(total)], ["Tilbakebetales", money(Math.max(0, deposit - total))]].forEach(([k, v]) => {
+    const row = h("div");
+    row.append(h("dt", null, k), h("dd", null, v));
+    amounts.append(row);
+  });
+  head.append(amounts);
+  const canEdit = manager && (status === "open" || status === "declined");
+  const statusText = {
+    claims_pending: manager ? "Venter på leietaker" : "Utleier har sendt krav mot depositumet. Godta eller bestrid oppgjøret.",
+    accepted: "Godkjent av begge parter.",
+    full_refund: "Utflyttingen er godkjent uten krav.",
+    declined: "Leietaker avslo kravene. Endre og send på nytt.",
+    disputed: "Uenighet. Utleier kan ikke trekke depositumet automatisk.",
+  }[status];
+  if (statusText) head.append(h("p", "pt-ho-status", statusText));
+  if (status === "disputed" && snap.dispute_reason) head.append(h("p", "pt-ho-note", `Begrunnelse: ${snap.dispute_reason}`));
+  if ((status === "accepted" || status === "full_refund") && !manager) {
+    head.append(h("p", "pt-muted", "PDF-en av oppgjøret lagres når du åpner depositumsoppgjøret i appen."));
+  }
+  const buttons = [];
+  if (canEdit) {
+    if (total > deposit && snap.security_type !== "guarantee") head.append(h("p", "pt-ho-error", "Kravene kan ikke være større enn depositumet."));
+    buttons.push(button(claims.length ? "Send krav til leietaker" : "Godkjenn og send til leietaker", "pt-btn-primary", async () => {
+      if (!claims.length) {
+        const ok = await act.confirmAction({ title: "Godkjenn og send til leietaker", text: "Hele depositumet tilbakebetales uten krav.", confirmLabel: "Godkjenn", destructive: false });
+        if (ok) hoRun(await act.approveDepositFullRefund(snap.id), act.depositError, "Utflyttingen er godkjent uten krav.");
+        return;
+      }
+      const ok = await act.confirmAction({ title: "Send krav til leietaker", text: "Leietaker kan godta eller bestride kravene.", confirmLabel: "Send", destructive: false });
+      if (ok) hoRun(await act.submitDepositClaims(snap.id), act.depositError, "Kravene er sendt til leietaker.");
+    }));
+    if (claims.length < act.DEPOSIT_CLAIM_LIMIT) buttons.push(button("Legg til krav", "pt-btn-secondary", () => hoClaimForm(snap)));
+  }
+  if (manager && status === "disputed") {
+    buttons.push(button("Endre og send på nytt", "pt-btn-primary", async () => {
+      hoRun(await act.reviseDisputedDeposit(snap.id), act.depositError);
+    }));
+  }
+  if (!manager && status === "claims_pending") {
+    buttons.push(
+      button("Godta oppgjør", "pt-btn-primary", async () => {
+        const ok = await act.confirmAction({ title: "Godta oppgjør", text: `Du godtar krav på ${money(total)}. ${money(Math.max(0, deposit - total))} tilbakebetales.`, confirmLabel: "Godta oppgjør", destructive: false });
+        if (ok) hoRun(await act.respondDeposit(snap.id, true), act.depositError, "Depositumsoppgjøret er fullført");
+      }),
+      button("Bestrid oppgjør", "pt-btn-quiet-destructive", () => act.openForm({
+        title: "Bestrid oppgjør",
+        fields: [{ name: "reason", label: "Begrunnelse", type: "textarea", rows: 4, maxLength: 1000, required: true, placeholder: "Skriv hvorfor du bestrider oppgjøret" }],
+        submitLabel: "Bestrid oppgjør",
+        onSubmit: async (v) => {
+          const reason = v.reason.trim();
+          if (!reason) return "Skriv en begrunnelse for å bestride.";
+          const r = await act.disputeDeposit(snap.id, reason);
+          const err = act.depositError(r);
+          if (err) return err;
+          hoReloadPage("Oppgjøret er bestridt.");
+          return null;
+        },
+      })),
+    );
+  }
+  if (buttons.length) head.append(actionsRow(...buttons));
+  const list = card("Krav mot depositum", "doc");
+  if (!claims.length) list.append(inline("Ingen krav."));
+  const ul = h("ul", "pt-ho-items");
+  for (const c of claims) {
+    const li = h("li", "pt-ho-item");
+    const row = h("div", "pt-ho-item-head");
+    row.append(h("strong", null, money(c.amount_minor)));
+    li.append(row, h("p", "pt-ho-note", c.description));
+    if (canEdit) {
+      li.append(actionsRow(
+        button("Endre", "pt-btn-secondary pt-btn-small", () => hoClaimForm(snap, c)),
+        button("Fjern", "pt-btn-quiet-destructive pt-btn-small", async () => {
+          const ok = await act.confirmAction({ title: "Fjern krav", text: c.description, confirmLabel: "Fjern" });
+          if (ok) hoRun(await act.removeDepositClaim(c.id), act.depositError);
+        }),
+      ));
+    }
+    ul.append(li);
+  }
+  if (claims.length) list.append(ul);
+  list.append(h("p", "pt-muted", "Bilder og kvitteringer til kravene legges til i appen."));
+  return [hoBack(), head, list];
+};
+
+const hoOverview = async (p, t, d) => {
+  const manager = isManager(p.id);
+  const out = [];
+  const tenancies = hoTenancies(p.id);
+  if (tenancies.length > 1) {
+    const people = await tenancyPeople(p.id);
+    const sel = h("select", "pt-select pt-ho-tenancy");
+    sel.setAttribute("aria-label", "Leieforhold");
+    tenancies.forEach((x, n) => {
+      const names = (people.data ?? []).filter((m) => m.tenancy_id === x.id && m.role === "tenant").map((m) => m.name).filter(Boolean);
+      const o = h("option", null, names.length ? names.join(", ") : `Leieforhold ${n + 1}`);
+      o.value = x.id;
+      sel.append(o);
+    });
+    sel.value = t.id;
+    sel.addEventListener("change", () => {
+      hoTenancyId = sel.value;
+      render();
+    });
+    out.push(sel);
+  }
+  const info = card("Dokumenter boligens tilstand", "info");
+  info.append(h("p", "pt-muted", "Sjekklister ved inn- og utflytting gir en trygg oversikt og kan brukes som dokumentasjon ved depositumsoppgjør."));
+  const tiles = h("section", "pt-tiles");
+  [["innflytting", "Innflytting", "checklist", "is-success", "Sjekkliste og dokumentasjon", hoMoveInStatus(d.moveIn, manager)],
+    ["utflytting", "Utflytting", "handover", "is-warning", "Sjekkliste og sammenligning med innflytting", hoMoveOutStatus(d)],
+    ["depositum", "Depositumsoppgjør", "key", "", "Oppsummering og eventuelle trekk", hoDepositStatus(d)]].forEach(([sub, l, ic, tone, txt, st]) => {
+    const a = h("a", "pt-tile pt-ho-tile");
+    a.href = `#inn-utflytting/${sub}`;
+    a.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, l), h("p", null, txt), hoChip(st));
+    tiles.append(a);
+  });
+  out.push(info, tiles);
+  if (manager) out.push(h("p", "pt-muted", "Innflytting og utflytting er valgfritt. Du kan hoppe over det. Leietaker ser sjekklistene først når du har startet."));
+  return out;
+};
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
@@ -2168,32 +2748,17 @@ const PAGES = {
     return maintenanceList(state.propertyId);
   },
   async bilder() { return [emptyPage("photo", "Bilder", "Bildealbum for boligen kommer på nettsiden. Til da finner du bildene i appen.")]; },
-  async "inn-utflytting"() {
+  async "inn-utflytting"(sub) {
     const p = property();
     if (!p) return [noProperty()];
-    const res = await inspections(p.id);
-    const rows = res.error ? null : res.data ?? [];
-    const status = (type) => {
-      if (!rows) return null;
-      const list = rows.filter((i) => (type === "move_out" ? i.type === "move_out" : i.type !== "move_out"));
-      if (!list.length) return ["Ikke startet", ""];
-      return list.some((i) => i.status === "finalized") ? ["Ferdigstilt", " is-success"] : ["Pågår", " is-warning"];
-    };
-    const info = card("Dokumenter boligens tilstand", "info");
-    info.append(h("p", "pt-muted", "Sjekklister ved inn- og utflytting gir en trygg oversikt og kan brukes som dokumentasjon ved depositumsoppgjør."));
-    const tiles = h("section", "pt-tiles");
-    [["Innflytting", "checklist", "is-success", "Sjekkliste og dokumentasjon", status("move_in")],
-      ["Utflytting", "handover", "is-warning", "Sjekkliste og sammenligning med innflytting", status("move_out")],
-      ["Depositumsoppgjør", "key", "", "Oppsummering og eventuelle trekk", null]].forEach(([l, ic, tone, txt, st]) => {
-      const t = h("article", "pt-tile");
-      t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, l), h("p", null, txt));
-      if (st) t.append(h("span", `pt-chip${st[1]}`, st[0]));
-      tiles.append(t);
-    });
-    const out = [info, tiles];
-    if (res.error) out.push(inline("Statusen kunne ikke hentes akkurat nå."));
-    if (isManager(p.id)) out.push(h("p", "pt-muted", "Innflytting og utflytting er valgfritt. Du kan hoppe over det. Leietaker ser sjekklistene først når du har startet."));
-    return out;
+    const t = hoTenancy(p.id);
+    if (!t) return [emptyPage("handover", "Inn- og utflytting", "Inn- og utflytting åpnes når det finnes et aktivt leieforhold.")];
+    const d = await hoLoad(t);
+    if (!d) return [inline("Statusen kunne ikke hentes akkurat nå.")];
+    if (sub === "innflytting") return hoMoveInPage(p, t, d);
+    if (sub === "utflytting") return hoMoveOutPage(p, t, d);
+    if (sub === "depositum") return hoDepositPage(p, t, d);
+    return hoOverview(p, t, d);
   },
   async leiekontrakt() {
     const p = property();

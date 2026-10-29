@@ -1305,3 +1305,183 @@ export function subscribeMaintenance(requestId, { onEvent, onResync }) {
     channel = null;
   };
 }
+
+/* ---------- Inn- og utflytting (InspectionRemote, MoveOutProcessRemote, DepositSettlementRemote) ---------- */
+export const INSPECTION_AREAS = [["entrance", "Entré"], ["kitchen", "Kjøkken"], ["bathroom", "Bad"], ["living_room", "Stue"],
+  ["bedroom", "Soverom"], ["floors", "Gulv"], ["walls_ceiling", "Vegger og tak"], ["windows_doors", "Vinduer og dører"],
+  ["inventory", "Inventar"], ["other", "Annet"]];
+export const INSPECTION_CONDITIONS = [["ok", "Ingen merknad"], ["note", "Merknad"], ["damage", "Skade"]];
+export const INSPECTION_NOTE_LIMIT = 8000;
+const one = (res) => (res.error ? res : { data: Array.isArray(res.data) ? res.data[0] ?? null : res.data });
+
+export const listInspections = (tenancyId) =>
+  supabase.from("inspections").select("*").eq("tenancy_id", tenancyId).order("created_at", { ascending: true });
+export const listInspectionItems = (inspectionId) =>
+  supabase.from("inspection_items").select("*").eq("inspection_id", inspectionId).order("sort_order", { ascending: true });
+export const listInspectionComments = (inspectionId) =>
+  supabase.from("inspection_comments").select("id, author_id, author_role, body, created_at").eq("inspection_id", inspectionId).order("created_at", { ascending: true });
+export const createMoveIn = (tenancyId) =>
+  supabase.rpc("create_inspection", { requested_tenancy_id: tenancyId, requested_type: "move_in" }).then(one);
+export const setTenantMayFill = (inspectionId, enabled) =>
+  supabase.rpc("set_inspection_tenant_may_fill", { p_inspection_id: inspectionId, p_enabled: enabled });
+export const markTenantFillDone = (inspectionId) => supabase.rpc("mark_move_in_tenant_fill_done", { p_inspection_id: inspectionId });
+export const approveMoveIn = (inspectionId) => supabase.rpc("approve_move_in_protocol", { p_inspection_id: inspectionId });
+export const addProtocolComment = (inspectionId, body) =>
+  supabase.rpc("add_inspection_protocol_comment", { p_inspection_id: inspectionId, p_body: body });
+
+// The "other" note carries the app's shared handover data after the visible text:
+// "[[eu-handover:{json}]]" (PropertyHandoverSharedNote). The portal edits only the
+// visible text and the done flag of a checklist point; the rest is copied as stored.
+const HANDOVER_PREFIX = "[[eu-handover:";
+const HANDOVER_SUFFIX = "]]";
+export const visibleNote = (note) => {
+  const text = note ?? "";
+  const at = text.indexOf(HANDOVER_PREFIX);
+  return (at < 0 ? text : text.slice(0, at)).trim();
+};
+const markerOf = (note) => {
+  const text = note ?? "";
+  const at = text.indexOf(HANDOVER_PREFIX);
+  return at < 0 ? "" : text.slice(at);
+};
+export function handoverData(note) {
+  const marker = markerOf(note);
+  if (!marker) return null;
+  const end = marker.indexOf(HANDOVER_SUFFIX, HANDOVER_PREFIX.length);
+  if (end < 0) return null;
+  try {
+    const obj = JSON.parse(marker.slice(HANDOVER_PREFIX.length, end));
+    return obj && typeof obj === "object" ? obj : null;
+  } catch {
+    return null;
+  }
+}
+export const withVisibleNote = (existing, visible) => {
+  const marker = markerOf(existing);
+  const text = (visible ?? "").trim();
+  if (!marker) return text || null;
+  return text ? `${text}\n${marker}` : marker;
+};
+// Toggles `d` on one point of the "in"/"out" list; every other field is kept.
+export function withChecklistDone(existing, list, index, done) {
+  const obj = handoverData(existing);
+  if (!obj || !Array.isArray(obj[list]) || !obj[list][index]) return null;
+  obj[list][index] = { ...obj[list][index], d: done };
+  const marker = markerOf(existing);
+  const rest = marker.slice(marker.indexOf(HANDOVER_SUFFIX, HANDOVER_PREFIX.length) + HANDOVER_SUFFIX.length);
+  const visible = visibleNote(existing);
+  const next = `${HANDOVER_PREFIX}${JSON.stringify(obj)}${HANDOVER_SUFFIX}${rest}`;
+  return visible ? `${visible}\n${next}` : next;
+}
+export const updateInspectionItem = (item, condition, note) =>
+  supabase.rpc("update_inspection_item", {
+    requested_item_id: item.id, requested_condition: condition,
+    requested_note: note && note.trim() ? note : null, expected_updated_at: item.updated_at,
+  }).then(one);
+
+// One button in the app: send the move-in to the tenant (once), then lock it.
+// The row is read fresh so a retry never finalizes an older version or sends twice.
+export async function finalizeInspection(inspection, { sendMoveIn = false, deleteIncomplete = false } = {}) {
+  const fresh = await supabase.from("inspections").select("*").eq("id", inspection.id).maybeSingle();
+  if (fresh.error || !fresh.data) return { error: fresh.error ?? { message: "missing" } };
+  let current = fresh.data;
+  if (current.status === "finalized") return { data: current };
+  if (sendMoveIn && current.type === "move_in" && !current.sent_for_review_at) {
+    const sent = await supabase.rpc("send_move_in_for_review", { p_inspection_id: current.id }).then(one);
+    if (sent.error) return sent;
+    if (sent.data?.updated_at) current = sent.data;
+    else {
+      const again = await supabase.from("inspections").select("*").eq("id", current.id).maybeSingle();
+      if (again.error || !again.data) return { error: again.error ?? { message: "missing" } };
+      current = again.data;
+    }
+  }
+  return supabase.rpc("finalize_inspection", {
+    requested_inspection_id: current.id, expected_updated_at: current.updated_at, p_delete_incomplete: deleteIncomplete,
+  }).then(one);
+}
+// CancelMoveInChecklist: the RPC returns the stored photo paths; the app removes them, then confirms.
+export async function cancelMoveIn(tenancyId) {
+  const res = await supabase.rpc("cancel_move_in_checklist", { requested_tenancy_id: tenancyId });
+  if (res.error) return res;
+  const paths = (res.data ?? []).map((r) => r?.storage_path).filter(Boolean);
+  if (!paths.length) return res;
+  const removed = await supabase.storage.from("property-images").remove(paths);
+  const names = (removed.data ?? []).map((f) => f.name).filter((n) => paths.includes(n));
+  if (names.length) await supabase.rpc("complete_cancelled_move_in_photos", { requested_paths: names });
+  return res;
+}
+export const INSPECTION_ERROR_TEXT = {
+  move_in_not_sent_for_review: "Venter på at utleier sender protokollen.",
+  move_in_comment_not_available: "Kommentarer kan bare legges til før protokollen er ferdigstilt.",
+  inspection_image_lifecycle_unsettled: "Et bilde er ikke ferdig lastet opp. Vent litt, eller slett bildet og ta det på nytt.",
+  inspection_items_incomplete: "Sjekklisten er ufullstendig. Åpne den på nytt og fyll ut punktene før du ferdigstiller.",
+  inspection_checklist_note_missing: "Sjekklisten er ufullstendig. Åpne den på nytt og fyll ut punktene før du ferdigstiller.",
+  inspection_version_conflict: "Gjennomgangen ble endret et annet sted. Den nyeste versjonen er lastet inn; kontroller den og prøv igjen.",
+  inspection_item_version_conflict: "Gjennomgangen ble endret et annet sted. Den nyeste versjonen er lastet inn; kontroller den og prøv igjen.",
+};
+export const inspectionError = (res) => {
+  const msg = String(res?.error?.message ?? "");
+  const key = Object.keys(INSPECTION_ERROR_TEXT).find((k) => msg.includes(k));
+  return key ? INSPECTION_ERROR_TEXT[key] : res?.error ? explain(res.error) : null;
+};
+
+export const MOVE_OUT_STATE = { notice_given: "Oppsigelsen er registrert", checklist_open: "Pågår", review: "Pågår", approved: "Ferdigstilt", deposit: "Depositumsoppgjør", ended: "Ferdig", cancelled: "Avbrutt" };
+export const OPEN_MOVE_OUT = ["notice_given", "checklist_open", "review", "approved", "deposit"];
+export const listMoveOutProcesses = (tenancyIds) =>
+  supabase.from("move_out_processes").select("id, tenancy_id, property_id, scope, subject_member_id, move_out_on, notice_party, state, inspection_id, notice_given_at")
+    .in("tenancy_id", tenancyIds).order("notice_given_at", { ascending: true });
+export const registerMoveOutNotice = (tenancyId, scope, subjectUserId, moveOutOn) =>
+  supabase.rpc("register_move_out_notice", { p_tenancy_id: tenancyId, p_scope: scope, p_subject_user_id: subjectUserId ?? null, p_move_out_on: moveOutOn });
+export const openMoveOutChecklist = (processId) => supabase.rpc("open_move_out_checklist", { p_process_id: processId });
+export const cancelMoveOut = (processId) => supabase.rpc("cancel_move_out_process", { p_process_id: processId });
+export const completeMoveOut = (processId) => supabase.rpc("complete_move_out", { p_process_id: processId });
+export const MOVE_OUT_ERROR_TEXT = {
+  scope_not_whole_home: "Feil omfang for denne boligtypen. Velg ett rom eller hele boligen.",
+  scope_not_a_room: "Feil omfang for denne boligtypen. Velg ett rom eller hele boligen.",
+  move_out_date_in_past: "Utflyttingsdatoen kan ikke være før i dag.",
+  move_out_already_open: "Det finnes allerede en åpen utflytting for dette leieforholdet.",
+  tenancy_not_active: "Leieforholdet er ikke aktivt.",
+  tenant_not_active_member: "Leietakeren er ikke et aktivt medlem av leieforholdet.",
+  invalid_move_out_request: "Ugyldig oppsigelse. Sjekk dato og omfang.",
+  deposit_not_finished: "Depositumsoppgjøret må være godtatt før utflyttingen kan fullføres",
+};
+export const moveOutError = (res) => {
+  const msg = String(res?.error?.message ?? "");
+  const key = Object.keys(MOVE_OUT_ERROR_TEXT).find((k) => msg.includes(k));
+  return key ? MOVE_OUT_ERROR_TEXT[key] : res?.error ? explain(res.error) : null;
+};
+
+export const DEPOSIT_STATUS = { open: "Ikke sendt", claims_pending: "Venter på leietaker", accepted: "Godkjent av begge parter", declined: "Avslått", full_refund: "Godkjent uten krav", disputed: "Uenighet" };
+export const DEPOSIT_CLAIM_LIMIT = 20;
+export const depositPointer = (tenancyId) =>
+  supabase.from("deposit_settlements").select("id, status, tenancy_id, move_out_inspection_id")
+    .eq("tenancy_id", tenancyId).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
+// The inspection id is passed only when there is no settlement id yet.
+export const openDepositSettlement = (tenancyId, settlementId, inspectionId) =>
+  supabase.rpc("open_deposit_settlement", {
+    requested_inspection_id: settlementId ? null : inspectionId ?? null,
+    requested_settlement_id: settlementId ?? null, requested_tenancy_id: tenancyId,
+  });
+export const addDepositClaim = (settlementId, description, amountMinor) =>
+  supabase.rpc("add_deposit_settlement_claim", { requested_settlement_id: settlementId, requested_description: description, requested_amount_minor: amountMinor });
+export const updateDepositClaim = (claimId, description, amountMinor) =>
+  supabase.rpc("update_deposit_settlement_claim", { requested_claim_id: claimId, requested_description: description, requested_amount_minor: amountMinor });
+export const removeDepositClaim = (claimId) => supabase.rpc("remove_deposit_settlement_claim", { requested_claim_id: claimId });
+export const submitDepositClaims = (settlementId) => supabase.rpc("submit_deposit_settlement_claims", { requested_settlement_id: settlementId });
+export const approveDepositFullRefund = (settlementId) => supabase.rpc("approve_deposit_full_refund", { requested_settlement_id: settlementId });
+export const reviseDisputedDeposit = (settlementId) => supabase.rpc("revise_disputed_deposit_settlement", { requested_settlement_id: settlementId });
+export const respondDeposit = (settlementId, accept) =>
+  supabase.rpc("respond_deposit_settlement", { requested_settlement_id: settlementId, requested_accept: accept });
+export const disputeDeposit = (settlementId, reason) =>
+  supabase.rpc("dispute_deposit_settlement", { requested_settlement_id: settlementId, requested_reason: reason });
+export const DEPOSIT_ERROR_TEXT = {
+  exceed: "Kravene kan ikke være større enn depositumet.",
+  deposit_claim_limit: "Du kan legge inn opptil 20 krav.",
+  deposit_dispute_reason_required: "Skriv en begrunnelse for å bestride.",
+};
+export const depositError = (res) => {
+  const msg = String(res?.error?.message ?? "");
+  const key = Object.keys(DEPOSIT_ERROR_TEXT).find((k) => msg.includes(k));
+  return key ? DEPOSIT_ERROR_TEXT[key] : res?.error ? explain(res.error) : null;
+};
