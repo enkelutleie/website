@@ -309,7 +309,10 @@ const tenancyCard = async (pid) => {
     if (isManager(pid)) c.append(actionsRow(button("Inviter leietaker", "pt-btn-primary pt-btn-small", () => inviteForm(pid))));
     return c;
   }
-  const res = await tenancyPeople(pid);
+  const [res, inv] = await Promise.all([
+    tenancyPeople(pid),
+    isManager(pid) ? cached(`inv:${pid}`, () => act.pendingInvitations(own.map((t) => t.id))) : { data: [] },
+  ]);
   for (const t of own) {
     const sub = h("div");
     const head = h("p", "pt-label", "Leietaker");
@@ -334,8 +337,15 @@ const tenancyCard = async (pid) => {
       if (i === 0) li.append(status.cloneNode(true));
       list.append(li);
     });
+    for (const i of (inv.data ?? []).filter((x) => x.tenancy_id === t.id)) list.append(invitationRow(i));
     sub.append(list);
-    if (isManager(pid) && !tenants.length) sub.append(actionsRow(button("Inviter leietaker", "pt-btn-soft pt-btn-small", () => inviteForm(pid, t))));
+    if (isManager(pid)) {
+      sub.append(actionsRow(
+        !tenants.length && button("Inviter leietaker", "pt-btn-soft pt-btn-small", () => inviteForm(pid, t)),
+        t.status === "active" && button("Avslutt leieforhold", "pt-btn-quiet-destructive pt-btn-small", () => lifecycleForm(t, true)),
+        (t.status === "draft" || t.status === "invited") && button("Kanseller leieforhold", "pt-btn-quiet-destructive pt-btn-small", () => lifecycleForm(t, false)),
+      ));
+    }
     c.append(sub);
   }
   // A whole home has one active tenancy; shared housing can invite per room.
@@ -716,31 +726,362 @@ const inviteForm = async (pid, tenancy) => {
   });
 };
 
+/* ---------- Kontraktflyt ---------- */
+// Open the tab during the click so the browser does not treat it as a pop-up.
+const pdfButton = (label, cls, load) => button(label, cls, async (e) => {
+  const b = e.currentTarget;
+  const tab = window.open("", "_blank");
+  b.disabled = true;
+  b.textContent = "Henter PDF …";
+  const pdf = await load();
+  b.disabled = false;
+  b.textContent = label;
+  if (!pdf.url) {
+    tab?.close();
+    return act.toast(pdf.message);
+  }
+  if (tab) tab.location.href = pdf.url;
+  else act.toast("Tillat nye faner for å åpne kontrakten.");
+  setTimeout(() => URL.revokeObjectURL(pdf.url), 300_000);
+});
+
+const PARTY_ROLE = { landlord: "Utleier", co_landlord: "Utleier", tenant: "Leietaker", guarantor: "Garantist" };
+const partyState = (p) => (p.has_signature ? ["Signert", " is-success"] : p.has_approved ? ["Godkjent", ""] : p.required_to_sign ? ["Venter", " is-warning"] : ["Ikke signert", ""]);
+const signaturesList = (parties) => {
+  const wrap = h("div");
+  wrap.append(h("p", "pt-label", "Signaturer"));
+  const ul = h("ul", "pt-list");
+  for (const p of parties) {
+    const li = h("li", "pt-row");
+    const main = h("div", "pt-row-main");
+    main.append(h("strong", null, p.display_name || PARTY_ROLE[p.party_role] || "Part"), h("span", null, PARTY_ROLE[p.party_role] ?? ""));
+    const [label, tone] = partyState(p);
+    li.append(main, h("span", `pt-chip${tone}`, label));
+    ul.append(li);
+  }
+  wrap.append(ul);
+  return wrap;
+};
+
+// TenantLeaseContractController phases.
+const leasePhase = (lease) => {
+  if (!lease?.agreement_id) return "notSent";
+  if (lease.agreement_status === "signed" || lease.both_parties_signed_confirmed) return lease.document_id ? "fullySigned" : "signatureSaved";
+  if (lease.awaiting_caller_signature) return "awaitingCaller";
+  if (lease.agreement_status === "ready_for_review" || lease.agreement_status === "draft") return "waitingForLandlord";
+  if (lease.recorded_signature_count > 0) return "waitingForOthers";
+  return "waitingForLandlord";
+};
+const LEASE_PHASE = {
+  notSent: ["Ingen leiekontrakt ennå", null],
+  waitingForLandlord: ["Venter på utleier", " is-warning"],
+  awaitingCaller: ["Venter på din signatur", " is-warning"],
+  waitingForOthers: ["Du har signert. Venter på øvrige.", " is-warning"],
+  signatureSaved: ["Signaturen er lagret. Den signerte PDF-en er ikke klar ennå.", ""],
+  fullySigned: ["Kontrakten er signert.", " is-success"],
+};
+
+const tenantSignForm = (lease, title = "Godkjenn og signer") =>
+  act.signatureForm({
+    title,
+    intro: "Les kontrakten. Fyll inn sted og dato, skriv navnet ditt og tegn signaturen. En signatur tegnet her kan binde partene. Det er ikke BankID.",
+    name: state.name,
+    submitLabel: "Signer",
+    onSubmit: async (ink) => {
+      const res = await act.signAsTenant(lease, ink);
+      if (res.message) return res.message;
+      await refresh(res.outcome === "signed" ? "Kontrakten er signert." : "Signaturen er lagret.");
+      return null;
+    },
+  });
+
+const rejectForm = (lease) =>
+  act.openForm({
+    title: "Avvis kontrakten",
+    intro: "Utleier ser begrunnelsen og kan lage et nytt utkast.",
+    submitLabel: "Avvis",
+    submitClass: "pt-btn-destructive",
+    fields: [{ name: "reason", label: "Begrunnelse", type: "textarea", required: true, maxLength: 500, rows: 3 }],
+    onSubmit: async (v) => {
+      const err = rpcError(await act.rejectAgreement(lease, v.reason.trim()));
+      if (err) return err;
+      await refresh("Kontrakten er avvist.");
+      return null;
+    },
+  });
+
+const changeRow = (ch, extra = []) => {
+  const li = h("li", "pt-row");
+  const main = h("div", "pt-row-main");
+  const approvals = ch.required_tenant_count ? `Godkjent av ${ch.accepted_tenant_count ?? 0} av ${ch.required_tenant_count} leietakere` : "";
+  main.append(h("strong", null, ch.request_kind === "revision" ? "Endring av kontrakten" : "Avslutning av kontrakten"), h("span", null, approvals));
+  li.append(main, h("span", `pt-chip${ch.status === "completed" ? " is-success" : ""}`, act.CHANGE_STATUS[ch.status] ?? ch.status));
+  if (extra.length) {
+    const actions = h("div", "pt-row-actions");
+    actions.append(...extra);
+    li.append(actions);
+  }
+  return li;
+};
+// A revision is approved by signing the new contract (contract_change_signature_required).
+const respondButtons = (ch) => (ch.can_respond ? [
+  ...(ch.request_kind === "revision" ? [] : [button("Godkjenn", "pt-btn-primary pt-btn-small", async () => {
+    const err = rpcError(await act.respondChange(ch.id, true));
+    if (err) act.toast(err); else refresh("Svaret er lagret.");
+  })]),
+  button("Avslå", "pt-btn-quiet-destructive pt-btn-small", async () => {
+    if (!(await act.confirmAction({ title: "Avslå forslaget?", text: "Kontrakten gjelder som før.", confirmLabel: "Avslå" }))) return;
+    const err = rpcError(await act.respondChange(ch.id, false));
+    if (err) act.toast(err); else refresh("Svaret er lagret.");
+  }),
+] : []);
+const OPEN_CHANGE = ["draft", "pending", "accepted"];
+
+// Tenant view: one card per own tenancy on this property (TenantLeaseContractView).
+const tenantContractCards = async (p) => {
+  const mine = state.tenancies.filter((t) => t.property_id === p.id && state.tenantOf.has(t.id));
+  if (!mine.length) return [emptyPage("contract", "Leiekontrakt", `Leiekontrakten for ${p.display_name || "boligen"} vises her når den er tilgjengelig.`)];
+  const cards = [];
+  for (const t of mine) {
+    const c = card("Leiekontrakt", "contract");
+    const res = await act.myTenancyLease(t.id);
+    if (res.error) {
+      c.append(inline("Leiekontrakten kunne ikke lastes. Prøv igjen."));
+      cards.push(c);
+      continue;
+    }
+    const lease = res.data;
+    const phase = leasePhase(lease);
+    const [label, tone] = LEASE_PHASE[phase];
+    const head = h("div", "pt-row");
+    const main = h("div", "pt-row-main");
+    main.append(h("strong", null, label), h("span", null, t.start_date ? `Leieforhold fra ${dateText(t.start_date)}` : "Leieforhold"));
+    head.append(icon("contract"), main);
+    if (tone != null) head.append(h("span", `pt-chip${tone}`, phase === "fullySigned" ? "Signert" : phase === "awaitingCaller" ? "Venter på signering" : "Venter"));
+    c.append(head);
+    if (phase === "notSent") {
+      c.append(inline(`Leiekontrakten for ${p.display_name || "boligen"} vises her når den er tilgjengelig.`));
+      cards.push(c);
+      continue;
+    }
+    if (res.parties.length) c.append(signaturesList(res.parties));
+    const buttons = [];
+    if (lease.document_id) {
+      buttons.push(pdfButton(phase === "fullySigned" ? "Last ned signert PDF" : "Åpne PDF", "pt-btn-secondary pt-btn-small", () => act.documentPdf(lease.document_id)));
+    }
+    if (phase === "awaitingCaller") {
+      buttons.push(button("Godkjenn og signer", "pt-btn-primary pt-btn-small", () => tenantSignForm(lease)));
+      buttons.push(button("Avvis", "pt-btn-quiet-destructive pt-btn-small", () => rejectForm(lease)));
+    }
+    if (buttons.length) c.append(actionsRow(...buttons));
+    // Proposed changes to a signed contract: approve/decline, then sign the replacement.
+    if (phase === "fullySigned" || phase === "signatureSaved") {
+      const ch = await act.listChanges(lease.agreement_id);
+      const open = (ch.data ?? []).filter((x) => OPEN_CHANGE.includes(x.status));
+      if (open.length) {
+        const ul = h("ul", "pt-list");
+        for (const x of open) {
+          const extra = respondButtons(x);
+          if (x.replacement_agreement_id && x.status !== "draft") {
+            const rep = await act.agreementLease(x.replacement_agreement_id);
+            if (rep.data?.awaiting_caller_signature) {
+              if (rep.data.document_id) extra.push(pdfButton("Åpne ny kontrakt", "pt-btn-secondary pt-btn-small", () => act.documentPdf(rep.data.document_id)));
+              extra.push(button("Signer ny kontrakt", "pt-btn-primary pt-btn-small", () => tenantSignForm(rep.data, "Signer ny kontrakt")));
+            }
+          }
+          ul.append(changeRow(x, extra));
+        }
+        const wrap = h("div");
+        wrap.append(h("p", "pt-label", "Forslag til endringer"), ul);
+        c.append(wrap);
+      }
+    }
+    cards.push(c);
+  }
+  return cards;
+};
+
+const landlordSignForm = (a) =>
+  act.signatureForm({
+    title: "Signer",
+    intro: "Signer det godkjente utkastet. Leietaker får kontrakten til signering etterpå. En signatur tegnet her kan binde partene. Det er ikke BankID. Posten-signering kommer senere.",
+    name: state.name,
+    submitLabel: "Signer og send",
+    onSubmit: async (ink) => {
+      const res = await act.signAsLandlord(a, ink);
+      if (res.message) return res.message;
+      await refresh("Kontrakten er signert og sendt til leietaker.");
+      return null;
+    },
+  });
+
+const editContract = async (pid, a) => {
+  const res = await act.getAgreement(a.agreement_id);
+  if (res.error) return act.toast("Leiekontrakten kunne ikke lastes. Prøv igjen.");
+  contractForm(pid, res.data);
+};
+
+const agreementRow = async (pid, a, replacementIds) => {
+  const STATUS = { draft: "Utkast", ready_for_review: "Klar til gjennomgang", awaiting_signatures: "Venter på signatur", partially_signed: "Venter på signatur", signed: "Signert", cancelled: "Avbrutt", rejected: "Avvist", declined: "Avslått", superseded: "Erstattet" };
+  const st = a.agreement_status;
+  const li = h("li", "pt-row");
+  const main = h("div", "pt-row-main");
+  const t = state.tenancies.find((x) => x.id === a.tenancy_id);
+  main.append(h("strong", null, replacementIds.has(a.agreement_id) ? "Forslag til ny leiekontrakt" : "Leiekontrakt"),
+    h("span", null, t?.start_date ? `Leieforhold fra ${dateText(t.start_date)}` : "Leieforhold"));
+  li.append(icon("contract"), main, h("span", `pt-chip${st === "signed" ? " is-success" : ["awaiting_signatures", "partially_signed"].includes(st) ? " is-warning" : ""}`, STATUS[st] ?? st));
+  const actions = h("div", "pt-row-actions");
+  const extra = [];
+  // #1417: drafts and proposals are view-only previews; the signed PDF is the stored document.
+  if (a.current_version_id && (st === "draft" || st === "ready_for_review")) {
+    actions.append(pdfButton("Forhåndsvis", "pt-btn-soft pt-btn-small", () => act.previewAgreementPdf(a)));
+  }
+  if (st === "draft") {
+    actions.append(button("Rediger", "pt-btn-secondary pt-btn-small", () => editContract(pid, a)));
+    actions.append(button("Klar til gjennomgang", "pt-btn-primary pt-btn-small", async () => {
+      if (!(await act.confirmAction({ title: "Klar til gjennomgang?", text: "Se gjennom kontrakten som PDF før du godkjenner utkastet. Etterpå signerer du her, og leietaker får kontrakten til signering.", confirmLabel: "Fortsett", destructive: false }))) return;
+      const err = rpcError(await act.markAgreementReady(a));
+      if (err) act.toast(err); else refresh("Kontrakten er klar til gjennomgang.");
+    }));
+  }
+  if (st === "ready_for_review") actions.append(button("Signer", "pt-btn-primary pt-btn-small", () => landlordSignForm(a)));
+  if (st === "draft" || st === "ready_for_review") {
+    actions.append(button("Slett utkast", "pt-btn-quiet-destructive pt-btn-small", async () => {
+      if (!(await act.confirmAction({ title: "Slett utkast?", text: "Utkastet slettes. Leieforholdet påvirkes ikke.", confirmLabel: "Slett utkast" }))) return;
+      const err = rpcError(await act.cancelAgreement(a));
+      if (err) act.toast(err); else refresh("Utkastet er slettet.");
+    }));
+  }
+  if (["awaiting_signatures", "partially_signed", "signed"].includes(st)) {
+    const lease = await act.agreementLease(a.agreement_id);
+    if (lease.data?.document_id) {
+      actions.append(pdfButton(st === "signed" ? "Last ned signert PDF" : "Åpne PDF", "pt-btn-secondary pt-btn-small", () => act.documentPdf(lease.data.document_id)));
+    }
+    if (lease.parties?.length) extra.push(signaturesList(lease.parties));
+  }
+  if (st === "signed") {
+    const ch = await act.listChanges(a.agreement_id);
+    const changes = ch.data ?? [];
+    if (!changes.some((x) => OPEN_CHANGE.includes(x.status))) {
+      actions.append(button("Foreslå endringer", "pt-btn-soft pt-btn-small", async () => {
+        if (!(await act.confirmAction({ title: "Foreslå endringer i kontrakten?", text: "Det lages et nytt utkast basert på den signerte kontrakten. Den gjeldende kontrakten gjelder til den nye er signert av alle.", confirmLabel: "Lag utkast", destructive: false }))) return;
+        const err = rpcError(await act.requestRevision(a));
+        if (err) act.toast(err); else refresh("Et nytt utkast er laget under Leiekontrakter.");
+      }));
+    }
+    if (changes.length) {
+      const ul = h("ul", "pt-list");
+      for (const x of changes.slice(0, 5)) ul.append(changeRow(x, respondButtons(x)));
+      const wrap = h("div");
+      wrap.append(h("p", "pt-label", "Endringer"), ul);
+      extra.push(wrap);
+    }
+  }
+  li.append(actions);
+  return [li, ...extra];
+};
+
+const landlordContractCard = async (p) => {
+  const c = card("Leiekontrakter", "contract");
+  const hasTenancy = state.tenancies.some((t) => t.property_id === p.id);
+  c.append(actionsRow(hasTenancy
+    ? button("Opprett leiekontrakt", "pt-btn-primary pt-btn-small", () => contractForm(p.id))
+    : button("Inviter leietaker først", "pt-btn-secondary pt-btn-small", () => inviteForm(p.id))));
+  const res = await act.listAgreements(p.id);
+  if (res.error) {
+    c.append(inline("Kontraktene kunne ikke hentes akkurat nå."));
+    return c;
+  }
+  const rows = (res.data ?? []).filter((a) => a.agreement_status !== "cancelled");
+  if (!rows.length) {
+    c.append(inline("Ingen leiekontrakter ennå."));
+    return c;
+  }
+  // Replacement drafts made by a change request are named as such.
+  const replacementIds = new Set();
+  await Promise.all(rows.filter((a) => a.agreement_status === "signed").map(async (a) => {
+    const ch = await act.listChanges(a.agreement_id);
+    for (const x of ch.data ?? []) if (x.replacement_agreement_id) replacementIds.add(x.replacement_agreement_id);
+  }));
+  const list = h("ul", "pt-list");
+  for (const a of rows) {
+    const [li, ...extra] = await agreementRow(p.id, a, replacementIds);
+    list.append(li);
+    for (const x of extra) {
+      const sub = h("li", "pt-row");
+      sub.append(x);
+      list.append(sub);
+    }
+  }
+  c.append(list);
+  return c;
+};
+
+/* ---------- Leieforhold: avslutt, kanseller, trekk tilbake invitasjon ---------- */
+const lifecycleForm = (t, end) => {
+  const operationId = crypto.randomUUID(); // one id per attempt, reused on retry
+  return act.openForm({
+    title: end ? "Avslutt leieforhold" : "Kanseller leieforhold",
+    intro: end ? "Leieforholdet avsluttes på sluttdatoen. Historikken blir liggende under Leiehistorikk." : "Leieforholdet startet aldri og fjernes fra boligen.",
+    submitLabel: end ? "Avslutt leieforhold" : "Kanseller leieforhold",
+    submitClass: "pt-btn-destructive",
+    fields: [
+      { name: "reason", label: "Årsak", type: "select", required: true, options: end ? act.TERMINATION_REASONS : act.CANCELLATION_REASONS },
+      ...(end ? [{ name: "end", label: "Sluttdato", type: "date", value: todayISO(), required: true }] : []),
+    ],
+    onSubmit: async (v) => {
+      const res = end ? await act.terminateTenancy(t.id, v.reason, v.end, operationId) : await act.cancelTenancy(t.id, v.reason, operationId);
+      const err = act.lifecycleError(res);
+      if (err) return err;
+      await refresh(end ? "Leieforholdet er avsluttet." : "Leieforholdet er kansellert.");
+      return null;
+    },
+  });
+};
+const INVITE_CANCEL_TEXT = { accepted: "Invitasjonen er allerede godtatt.", expired: "Invitasjonen er utløpt.", inactive: "Invitasjonen er ikke aktiv lenger." };
+const invitationRow = (inv) => {
+  const li = h("li", "pt-row");
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, inv.email), h("span", null, `Invitasjon sendt ${dateText(inv.created_at?.slice(0, 10))}`));
+  li.append(h("span", "pt-avatar pt-avatar-sm", (inv.email || "?").charAt(0).toUpperCase()), main, h("span", "pt-chip is-warning", "Venter"));
+  li.append(button("Trekk tilbake", "pt-btn-quiet-destructive pt-btn-small", async () => {
+    if (!(await act.confirmAction({ title: "Trekk tilbake invitasjonen?", text: `Lenken til ${inv.email} slutter å virke.`, confirmLabel: "Trekk tilbake" }))) return;
+    const res = await act.cancelInvitation(inv.id);
+    if (res.error) return act.toast(act.explain(res.error));
+    const out = (Array.isArray(res.data) ? res.data[0] : res.data) ?? {};
+    if (INVITE_CANCEL_TEXT[out.invitation_status]) return act.toast(INVITE_CANCEL_TEXT[out.invitation_status]);
+    refresh("Invitasjonen er trukket tilbake.");
+  }));
+  return li;
+};
+
 // ContractDraftAuthoringView: every term is optional in a draft (start date too,
 // migration contract_draft_without_start_date); the tenancy is untouched until signed.
-const contractForm = (pid) => {
+// `detail` (get_rental_agreement payload) switches the form to «Rediger utkast».
+const contractForm = (pid, detail) => {
   const tenancies = state.tenancies.filter((t) => t.property_id === pid);
   const p = state.properties.find((x) => x.id === pid);
+  const f = detail ? act.termsForForm(detail.version?.snapshot?.terms) : null;
   return act.openForm({
-    title: "Ny leiekontrakt",
-    intro: "Utkastet lagres med samme felter som i appen. Du kan fylle ut resten senere. Signering skjer i appen.",
+    title: detail ? "Rediger utkast" : "Ny leiekontrakt",
+    intro: detail ? "Endringene lagres i utkastet. Andre vilkår du har lagt inn i appen beholdes." : "Utkastet lagres med samme felter som i appen. Du kan fylle ut resten senere.",
     submitLabel: "Lagre utkast",
     fields: [
-      { name: "tenancy", label: "Leieforhold", type: "select", required: true, options: tenancies.map((t) => [t.id, `${TENANCY_LABEL[t.status] ?? t.status}${t.start_date ? ` · fra ${dateText(t.start_date)}` : ""}`]) },
-      { name: "termType", label: "Avtaletype", type: "select", options: [["indefinite", "Løpende"], ["fixed", "Fast periode"]], value: "indefinite", required: true },
-      { name: "start", label: "Startdato", type: "date", value: tenancies[0]?.start_date ?? "" },
-      { name: "end", label: "Sluttdato", type: "date", hidden: true },
-      { name: "rent", label: "Månedsleie", type: "money" },
-      { name: "payday", label: "Betalingsdag (1–31)", type: "number", min: 1, max: 31 },
-      { name: "deposit", label: "Depositum", type: "money", help: "Maks seks måneders husleie." },
-      { name: "notice", label: "Oppsigelsestid (måneder)", type: "number", min: 1, max: 12, value: "3" },
-      { name: "account", label: "Kontonummer for husleie", type: "text", maxLength: 20 },
-      { name: "special", label: "Særlige avtaler", type: "textarea", maxLength: 4000 },
+      ...(detail ? [] : [{ name: "tenancy", label: "Leieforhold", type: "select", required: true, options: tenancies.map((t) => [t.id, `${TENANCY_LABEL[t.status] ?? t.status}${t.start_date ? ` · fra ${dateText(t.start_date)}` : ""}`]) }]),
+      { name: "termType", label: "Avtaletype", type: "select", options: [["indefinite", "Løpende"], ["fixed", "Fast periode"]], value: f?.termType ?? "indefinite", required: true },
+      { name: "start", label: "Startdato", type: "date", value: f ? f.start : (tenancies[0]?.start_date ?? "") },
+      { name: "end", label: "Sluttdato", type: "date", value: f?.end ?? "", hidden: f?.termType !== "fixed" },
+      { name: "rent", label: "Månedsleie", type: "money", value: f?.rent ?? "" },
+      { name: "payday", label: "Betalingsdag (1–31)", type: "number", min: 1, max: 31, value: f?.payday ?? "" },
+      { name: "deposit", label: "Depositum", type: "money", help: "Maks seks måneders husleie.", value: f?.deposit ?? "" },
+      { name: "notice", label: "Oppsigelsestid (måneder)", type: "number", min: 1, max: 12, value: f ? f.notice : "3" },
+      { name: "account", label: "Kontonummer for husleie", type: "text", maxLength: 20, value: f?.account ?? "" },
+      { name: "special", label: "Særlige avtaler", type: "textarea", maxLength: 4000, value: f?.special ?? "" },
     ],
     onChange: (inputs, show) => show("end", inputs.termType.value === "fixed"),
     onSubmit: async (v) => {
-      const tenancy = tenancies.find((t) => t.id === v.tenancy);
-      if (!tenancy) return "Velg et leieforhold.";
+      const tenancy = detail ? null : tenancies.find((t) => t.id === v.tenancy);
+      if (!detail && !tenancy) return "Velg et leieforhold.";
       const rentMinor = v.rent ? act.minorOf(v.rent) : null;
       const depositMinor = v.deposit ? act.minorOf(v.deposit) : null;
       if (v.rent && !rentMinor) return "Skriv en gyldig månedsleie.";
@@ -750,10 +1091,14 @@ const contractForm = (pid) => {
       if (v.payday && !(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Betalingsdagen må være mellom 1 og 31.";
       if (v.notice && !(Number(v.notice) >= 1 && Number(v.notice) <= 12)) return "Oppsigelsestiden må være mellom 1 og 12 måneder.";
       if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummer må være 11 siffer";
-      const res = await act.createAgreementDraft(tenancy, { ...v, rentMinor, depositMinor, housingKind: p?.housing_kind });
+      const values = { ...v, rentMinor, depositMinor, housingKind: p?.housing_kind };
+      const res = detail ? await act.updateAgreementDraft(detail, values) : await act.createAgreementDraft(tenancy, values);
       if (res.message) return res.message;
-      if (res.error) return act.explain(res.error);
-      await refresh("Utkastet er lagret.");
+      if (res.error) {
+        if (/open_conflict/.test(res.error.message)) return "Det finnes allerede en åpen leiekontrakt for dette leieforholdet.";
+        return /version_conflict|revision/i.test(res.error.message) ? "Kontrakten er endret. Last inn på nytt." : act.explain(res.error);
+      }
+      await refresh(detail ? "Utkastet er oppdatert." : "Utkastet er lagret.");
       return null;
     },
   });
@@ -930,61 +1275,8 @@ const PAGES = {
   async leiekontrakt() {
     const p = property();
     if (!p) return [noProperty()];
-    if (!isManager(p.id)) return [emptyPage("contract", "Leiekontrakt", "Du leser og signerer leiekontrakten i appen.")];
-    const c = card("Leiekontrakter", "contract");
-    const hasTenancy = state.tenancies.some((t) => t.property_id === p.id);
-    c.append(actionsRow(hasTenancy
-      ? button("Opprett leiekontrakt", "pt-btn-primary pt-btn-small", () => contractForm(p.id))
-      : button("Inviter leietaker først", "pt-btn-secondary pt-btn-small", () => inviteForm(p.id))));
-    const res = await act.listAgreements(p.id);
-    if (res.error) {
-      c.append(inline("Kontraktene kunne ikke hentes akkurat nå."));
-      return [c];
-    }
-    const rows = res.data ?? [];
-    if (!rows.length) {
-      c.append(inline("Ingen leiekontrakter ennå."));
-      return [c];
-    }
-    const STATUS = { draft: "Utkast", ready_for_review: "Klar til gjennomgang", awaiting_signatures: "Venter på signatur", signed: "Signert", cancelled: "Avbrutt", rejected: "Avvist" };
-    const list = h("ul", "pt-list");
-    for (const a of rows) {
-      const li = h("li", "pt-row");
-      const main = h("div", "pt-row-main");
-      const t = state.tenancies.find((x) => x.id === a.tenancy_id);
-      main.append(h("strong", null, "Leiekontrakt"), h("span", null, t?.start_date ? `Leieforhold fra ${dateText(t.start_date)}` : "Leieforhold"));
-      li.append(icon("contract"), main, h("span", `pt-chip${a.agreement_status === "signed" ? " is-success" : ""}`, STATUS[a.agreement_status] ?? a.agreement_status));
-      // #1417: drafts and proposals are view-only (no download); signed contracts are downloaded in the app.
-      if (a.current_version_id && (a.agreement_status === "draft" || a.agreement_status === "ready_for_review")) {
-        li.append(button("Forhåndsvis", "pt-btn-soft pt-btn-small", async (e) => {
-          const b = e.currentTarget;
-          // Open the tab during the click so the browser does not treat it as a pop-up.
-          const tab = window.open("", "_blank");
-          b.disabled = true;
-          b.textContent = "Lager PDF …";
-          const pdf = await act.previewAgreementPdf(a);
-          b.disabled = false;
-          b.textContent = "Forhåndsvis";
-          if (!pdf.url) {
-            tab?.close();
-            return act.toast(pdf.message);
-          }
-          if (tab) tab.location.href = pdf.url;
-          else act.toast("Tillat nye faner for å forhåndsvise kontrakten.");
-          setTimeout(() => URL.revokeObjectURL(pdf.url), 300_000);
-        }));
-      }
-      if (a.agreement_status === "draft") {
-        li.append(button("Klar til gjennomgang", "pt-btn-primary pt-btn-small", async () => {
-          if (!(await act.confirmAction({ title: "Klar til gjennomgang?", text: "Utkastet låses for gjennomgang. Signering gjøres i appen.", confirmLabel: "Fortsett", destructive: false }))) return;
-          const err = rpcError(await act.markAgreementReady(a));
-          if (err) act.toast(err); else refresh("Kontrakten er klar til gjennomgang.");
-        }));
-      }
-      list.append(li);
-    }
-    c.append(list);
-    return [c];
+    if (!isManager(p.id)) return tenantContractCards(p);
+    return [await landlordContractCard(p)];
   },
   async dokumenter() { return [emptyPage("folder", isLandlord() ? "Dokumenter og maler" : "Delte dokumenter", "Dokumentene kommer på nettsiden. Til da finner du dem i appen.")]; },
   async meldinger() { return [emptyPage("chat", "Meldinger", "Samtaler med utleier og leietaker kommer på nettsiden. Til da bruker du chatten i appen.")]; },

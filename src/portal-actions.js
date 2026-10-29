@@ -492,9 +492,20 @@ export async function createAgreementDraft(tenancy, v) {
   const parties = [];
   for (const id of landlords) parties.push({ user_id: id, party_role: "landlord", required_to_sign: true, signing_order: parties.length + 1 });
   for (const id of tenants) parties.push({ user_id: id, party_role: "tenant", required_to_sign: true, signing_order: parties.length + 1 });
-  // Draft terms are encodeIfPresent in the app: empty fields are left out.
+  return supabase.rpc("create_rental_agreement_draft", {
+    requested_tenancy_id: tenancy.id,
+    requested_legal_rule_version: "pending_l1_l10",
+    requested_language_code: "nb",
+    requested_snapshot: { contract_schema_version: 1, terms: termsOf(v) },
+    requested_parties: parties,
+    requested_operation_id: crypto.randomUUID(),
+  });
+}
+
+// Draft terms are encodeIfPresent in the app: empty fields are left out.
+const termsOf = (v) => {
   const digits = (v.account ?? "").replace(/\D/g, "");
-  const terms = {
+  return {
     lease_term_type: v.termType,
     ...(v.start ? { start_date: v.start } : {}),
     ...(v.termType === "fixed" && v.end ? { end_date: v.end } : {}),
@@ -510,15 +521,10 @@ export async function createAgreementDraft(tenancy, v) {
     // ContractTenancyKind: a bofellesskap is always shared_housing; otherwise left out.
     ...(v.housingKind === "shared" ? { tenancy_kind: "shared_housing" } : {}),
   };
-  return supabase.rpc("create_rental_agreement_draft", {
-    requested_tenancy_id: tenancy.id,
-    requested_legal_rule_version: "pending_l1_l10",
-    requested_language_code: "nb",
-    requested_snapshot: { contract_schema_version: 1, terms },
-    requested_parties: parties,
-    requested_operation_id: crypto.randomUUID(),
-  });
-}
+};
+// The portal form owns these keys; every other term set in the app is kept as is.
+const FORM_TERM_KEYS = ["lease_term_type", "start_date", "end_date", "rent_amount_minor", "payment_day",
+  "deposit_amount_minor", "security_type", "security_amount_minor", "notice_period_months", "special_terms", "payment_account"];
 
 export const markAgreementReady = (a) =>
   supabase.rpc("mark_rental_agreement_ready_for_review", {
@@ -563,6 +569,231 @@ export async function previewAgreementPdf(a) {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   if (String.fromCharCode(...bytes.slice(0, 4)) !== "%PDF") return { message: "Tjenesten returnerte ikke en gyldig PDF." };
   return { url: URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })), filename: payload.filename || "leiekontrakt.pdf" };
+}
+
+/* ---------- Kontraktflyt (ContractSigningFoundation / TenantLeaseContractController) ---------- */
+// get_rental_agreement -> rows[0].payload { agreement, version, parties, actor_access }.
+export async function getAgreement(agreementId) {
+  const { data, error } = await supabase.rpc("get_rental_agreement", { requested_agreement_id: agreementId });
+  if (error) return { error };
+  const payload = first(data)?.payload;
+  return payload ? { data: payload } : { error: new Error("Kontrakten finnes ikke.") };
+}
+
+export const termsForForm = (terms = {}) => ({
+  termType: terms.lease_term_type === "fixed" ? "fixed" : "indefinite",
+  start: terms.start_date ?? "",
+  end: terms.end_date ?? "",
+  rent: terms.rent_amount_minor ? kronerOf(terms.rent_amount_minor) : "",
+  payday: terms.payment_day ? String(terms.payment_day) : "",
+  deposit: terms.deposit_amount_minor != null ? kronerOf(terms.deposit_amount_minor) : "",
+  notice: terms.notice_period_months ? String(terms.notice_period_months) : "",
+  account: terms.payment_account ?? "",
+  special: terms.special_terms ?? "",
+});
+
+// update_rental_agreement_draft replaces the snapshot: keep everything the form does not edit.
+export function updateAgreementDraft(detail, v) {
+  const snapshot = detail.version?.snapshot ?? {};
+  const kept = { ...(snapshot.terms ?? {}) };
+  for (const k of FORM_TERM_KEYS) delete kept[k];
+  return supabase.rpc("update_rental_agreement_draft", {
+    requested_agreement_id: detail.agreement.id,
+    expected_version_id: detail.version.id,
+    expected_draft_revision: detail.agreement.draft_revision,
+    requested_legal_rule_version: detail.version.legal_rule_version ?? "pending_l1_l10",
+    requested_language_code: detail.version.language_code ?? "nb",
+    // The draft payload allows only these two root keys; the stored snapshot is the server-built one.
+    requested_snapshot: { contract_schema_version: 1, terms: { ...termsOf(v), ...kept } },
+  });
+}
+
+// cancelDraft: «Slett utkast» for draft and ready_for_review.
+export const cancelAgreement = (a) =>
+  supabase.rpc("cancel_rental_agreement", {
+    requested_agreement_id: a.agreement_id,
+    expected_draft_revision: a.draft_revision,
+    requested_operation_id: crypto.randomUUID(),
+  });
+
+const fnOutcome = async (error) => {
+  try { return (await error.context?.json?.())?.outcome ?? null; } catch { return null; }
+};
+const SIGN_OUTCOME_TEXT = {
+  version_conflict: "Kontrakten er endret. Last inn på nytt.",
+  document_mismatch: "Kontrakten er endret. Last inn på nytt.",
+  forbidden: "Du har ikke tilgang til å signere denne kontrakten.",
+  unauthenticated: "Økten er utløpt. Logg inn på nytt og prøv igjen.",
+  invalid_request: "Tegn signaturen på nytt.",
+};
+const signResult = async ({ data, error }, okOutcomes) => {
+  let body = data;
+  if (typeof data === "string") { try { body = JSON.parse(data); } catch { body = null; } }
+  const outcome = error ? await fnOutcome(error) : body?.outcome;
+  if (okOutcomes.includes(outcome)) return { outcome };
+  if (error && !outcome && (error.name === "FunctionsFetchError" || error.name === "FunctionsRelayError")) {
+    return { message: "Nettleseren fikk ikke kontakt med signeringstjenesten. Prøv igjen om litt." };
+  }
+  return { message: SIGN_OUTCOME_TEXT[outcome] ?? "Signaturen ble ikke registrert på kontrakten. Last inn på nytt og prøv igjen." };
+};
+
+// signApprovedContract: contract-pdf intent "deliver" with landlord_ink, only from ready_for_review.
+export async function signAsLandlord(a, ink) {
+  const res = await supabase.functions.invoke("contract-pdf", {
+    body: { agreement_id: a.agreement_id, version_id: a.current_version_id, revision: Number(a.draft_revision), intent: "deliver", landlord_ink: ink },
+  });
+  return signResult(res, ["ready"]);
+}
+
+// TenantLeaseContractController.submitSignature: contract-pdf intent "sign" with tenant_ink.
+export async function signAsTenant(lease, ink) {
+  const res = await supabase.functions.invoke("contract-pdf", {
+    body: { agreement_id: lease.agreement_id, version_id: lease.version_id, intent: "sign", tenant_ink: ink },
+  });
+  return signResult(res, ["signature_recorded", "signed", "already_signed"]);
+}
+
+export const rejectAgreement = (lease, reason) =>
+  supabase.rpc("reject_rental_agreement", {
+    requested_agreement_id: lease.agreement_id,
+    requested_version_id: lease.version_id,
+    requested_reason: reason,
+  });
+
+// Lease pointer + signature rows: by tenancy for tenants, by agreement for managers.
+export async function myTenancyLease(tenancyId) {
+  const [lease, parties] = await Promise.all([
+    supabase.rpc("get_my_tenancy_lease", { requested_tenancy_id: tenancyId }),
+    supabase.rpc("list_my_tenancy_lease_parties", { requested_tenancy_id: tenancyId }),
+  ]);
+  if (lease.error) return { error: lease.error };
+  return { data: first(lease.data) ?? null, parties: parties.data ?? [] };
+}
+export async function agreementLease(agreementId) {
+  const [lease, parties] = await Promise.all([
+    supabase.rpc("get_rental_agreement_lease_by_id", { requested_agreement_id: agreementId }),
+    supabase.rpc("list_rental_agreement_lease_parties_by_id", { requested_agreement_id: agreementId }),
+  ]);
+  if (lease.error) return { error: lease.error };
+  return { data: first(lease.data) ?? null, parties: parties.data ?? [] };
+}
+
+// downloadLeasePDF: documents row (status ready) -> documents bucket, under RLS.
+export async function documentPdf(documentId) {
+  const { data, error } = await supabase.from("documents").select("storage_path, status, original_file_name, title")
+    .eq("id", documentId).limit(1);
+  const row = data?.[0];
+  if (error || !row || row.status !== "ready" || !row.storage_path) return { message: "PDF-en kunne ikke vises. Prøv igjen." };
+  const file = await supabase.storage.from("documents").download(row.storage_path);
+  if (file.error || !file.data) return { message: "PDF-en kunne ikke vises. Prøv igjen." };
+  const blob = new Blob([await file.data.arrayBuffer()], { type: "application/pdf" });
+  return { url: URL.createObjectURL(blob), filename: row.original_file_name || "Leiekontrakt.pdf" };
+}
+
+// ContractChanges.swift
+export const listChanges = (agreementId) =>
+  supabase.rpc("list_rental_agreement_changes", { requested_agreement_id: agreementId });
+export const requestRevision = (a) =>
+  supabase.rpc("request_rental_agreement_change", {
+    requested_agreement_id: a.agreement_id,
+    expected_version_id: a.signed_version_id ?? a.current_version_id,
+    requested_kind: "revision",
+    requested_operation_id: crypto.randomUUID(),
+  });
+export const respondChange = (requestId, accept) =>
+  supabase.rpc("respond_rental_agreement_change", { requested_request_id: requestId, requested_response: accept ? "accepted" : "rejected" });
+export const CHANGE_STATUS = { draft: "Utkast", pending: "Venter på at leietaker signerer", accepted: "Godkjent – venter på signaturer", rejected: "Avslått", declined: "Avslått", completed: "Fullført", cancelled: "Avbrutt" };
+
+/* ---------- Leieforhold (LifecycleB1Controller / TenancyController) ---------- */
+export const TERMINATION_REASONS = [["lease_completed", "Avtalt leieperiode er ferdig"], ["mutual_agreement", "Partene er enige"],
+  ["manager_terminated", "Avsluttet av utleier"], ["tenant_moved_out", "Leietaker har flyttet ut"], ["other_operational", "Annen driftsmessig årsak"]];
+export const CANCELLATION_REASONS = [["never_started", "Leieforholdet startet aldri"], ["invitation_withdrawn", "Invitasjonen trekkes tilbake"],
+  ["agreement_abandoned", "Avtalen ble ikke gjennomført"], ["manager_cancelled", "Kansellert av utleier"], ["other_operational", "Annen driftsmessig årsak"]];
+export const terminateTenancy = (tenancyId, reason, endDate, operationId) =>
+  supabase.rpc("terminate_tenancy", { requested_tenancy_id: tenancyId, requested_reason_code: reason, requested_operation_id: operationId, p_end_date: endDate || null });
+export const cancelTenancy = (tenancyId, reason, operationId) =>
+  supabase.rpc("cancel_tenancy", { requested_tenancy_id: tenancyId, requested_reason_code: reason, requested_operation_id: operationId });
+export const LIFECYCLE_ERROR_TEXT = {
+  end_date_before_start_date: "Sluttdato kan ikke være før startdato.",
+  tenancy_not_active: "Leieforholdet er ikke aktivt lenger. Last siden på nytt.",
+  tenancy_not_cancellable: "Leieforholdet kan ikke kanselleres. Last siden på nytt.",
+  manager_access_required: "Du har ikke tilgang til å gjøre dette.",
+};
+export const lifecycleError = (res) => {
+  if (!res?.error) {
+    const out = first(res?.data)?.outcome;
+    return out && !["tenancy_terminated", "tenancy_cancelled", "tenancy_ended"].includes(out) && LIFECYCLE_ERROR_TEXT[out] ? LIFECYCLE_ERROR_TEXT[out] : null;
+  }
+  const code = Object.keys(LIFECYCLE_ERROR_TEXT).find((k) => String(res.error.message).includes(k));
+  return code ? LIFECYCLE_ERROR_TEXT[code] : explain(res.error);
+};
+// PropertyTenancyListing: tenant invitations on the property's tenancies.
+export const pendingInvitations = (tenancyIds) =>
+  supabase.from("invitations").select("id, tenancy_id, email, status, created_at")
+    .in("tenancy_id", tenancyIds).eq("intended_role", "tenant").eq("status", "pending").order("created_at", { ascending: true });
+export const cancelInvitation = (invitationId) =>
+  supabase.rpc("cancel_tenancy_invitation", { requested_invitation_id: invitationId });
+
+/* ---------- Signatur på skjerm (ContractScreenSignature) ---------- */
+// The ink is a JPEG (contract-pdf screen-ink.mjs: 32 B–350 KB, ≤ 4000 px) plus name, place and date.
+export function signatureForm({ title, intro, name, submitLabel, onSubmit }) {
+  const pad = h("div", "pt-signature");
+  const canvas = h("canvas", "pt-signature-canvas");
+  canvas.width = 720;
+  canvas.height = 240;
+  canvas.setAttribute("aria-label", "Tegn signaturen");
+  const ctx = canvas.getContext("2d");
+  const blank = () => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#1b3a6b";
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
+  blank();
+  let drawing = false;
+  let points = 0;
+  const at = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * (canvas.width / r.width), (e.clientY - r.top) * (canvas.height / r.height)];
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    drawing = true;
+    canvas.setPointerCapture(e.pointerId);
+    ctx.beginPath();
+    ctx.moveTo(...at(e));
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drawing) return;
+    ctx.lineTo(...at(e));
+    ctx.stroke();
+    points += 1;
+  });
+  const stop = () => { drawing = false; };
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointercancel", stop);
+  const clear = h("button", "pt-btn pt-btn-secondary pt-btn-small", "Tøm");
+  clear.type = "button";
+  clear.addEventListener("click", () => { blank(); points = 0; });
+  pad.append(h("span", "pt-field-label", "Signatur"), canvas, clear);
+  const today = new Date();
+  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  return openForm({
+    title, intro, submitLabel,
+    sections: [pad],
+    fields: [
+      { name: "name", label: "Navn", type: "text", value: name ?? "", required: true, maxLength: 120 },
+      { name: "place", label: "Sted for signatur", type: "text", maxLength: 80, help: "Maks 80 tegn" },
+      { name: "date", label: "Dato", type: "date", value: iso, required: true },
+    ],
+    onSubmit: async (v) => {
+      if (points < 8) return "Tegn signaturen før du lagrer.";
+      const jpeg = canvas.toDataURL("image/jpeg", 0.82).split(",")[1] ?? "";
+      if (jpeg.length < 200 || jpeg.length > 466_000) return "Signaturen kunne ikke brukes. Tegn den på nytt.";
+      return onSubmit({ jpeg_base64: jpeg, width: canvas.width, height: canvas.height, signer_name: v.name, place: v.place, date: v.date });
+    },
+  });
 }
 
 /* ---------- Kalender (CalendarController.swift) ---------- */
