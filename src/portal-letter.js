@@ -80,7 +80,7 @@ const dash = (v) => (String(v ?? "").trim() ? String(v).trim() : "–");
 
 /**
  * blocks: [{type:"title",text}|{type:"subtitle",text}|{type:"section",text}|{type:"row",label,value}
- *          |{type:"paragraph",text}|{type:"callout",title,body}
+ *          |{type:"paragraph",text}|{type:"item",text,indent,bold}|{type:"callout",title,body}
  *          |{type:"signature",place,date,name,strokes:[[{x,y}]]}]
  * logo: { jpeg: Uint8Array, width, height } or null.
  */
@@ -139,6 +139,11 @@ export function letterPdf(blocks, { logo = null, title = "Dokument" } = {}) {
       y -= 2;
       lines(dash(b.text), MARGIN, 10.5, false, INK, contentW, 15);
       y -= 4;
+    } else if (b.type === "item") {
+      // Indented outline row (privacy export: PrivacyExportPDFRow).
+      const x = MARGIN + Math.min(b.indent ?? 0, 8) * 14;
+      lines(b.text, x, 10, Boolean(b.bold), INK, PAGE_W - MARGIN - x, 14);
+      y -= 2;
     } else if (b.type === "callout") {
       const pad = 12;
       const tl = wrap(b.title, 11, true, contentW - 2 * pad);
