@@ -419,16 +419,12 @@ const sendInvitation = (invitationId) =>
     body: { invitation_id: invitationId, request_id: crypto.randomUUID(), action: "send" },
   });
 
-export async function inviteNewTenancy(propertyId, v) {
-  const { data, error } = await supabase.rpc("create_tenancy_invitation", {
-    requested_property_id: propertyId,
-    requested_tenant_email: v.email,
-    requested_start_date: v.start,
-    requested_end_date: v.end || null,
-    requested_rent_amount_minor: v.rentMinor,
-    requested_payment_day: v.payday ? Number(v.payday) : null,
-    requested_deposit_amount_minor: v.depositMinor,
-  });
+// CreateTenancyInvitationPayload: only property, e-mail and (for shared housing) the room.
+// The lease terms are set later in the contract, as in the app.
+export async function inviteNewTenancy(propertyId, email, unitId) {
+  const payload = { requested_property_id: propertyId, requested_tenant_email: email.trim().toLowerCase() };
+  if (unitId) payload.requested_unit_id = unitId;
+  const { data, error } = await supabase.rpc(unitId ? "create_tenancy_invitation_for_unit" : "create_tenancy_invitation", payload);
   if (error) return { error };
   const id = first(data)?.invitation_id;
   const sent = id ? await sendInvitation(id) : { error: true };
@@ -437,12 +433,32 @@ export async function inviteNewTenancy(propertyId, v) {
 
 export async function inviteToExisting(tenancyId, email) {
   const { data, error } = await supabase.rpc("invite_tenant_to_existing_tenancy", {
-    requested_tenancy_id: tenancyId, requested_tenant_email: email,
+    requested_tenancy_id: tenancyId, requested_tenant_email: email.trim().toLowerCase(),
   });
   if (error) return { error };
   const id = first(data)?.invitation_id;
   const sent = id ? await sendInvitation(id) : { error: true };
   return { sent: !sent.error };
+}
+
+// TenancyInvitationUnitPicker: active rooms, each marked when it already has a tenancy.
+export async function invitableRooms(propertyId) {
+  const [units, tenancies] = await Promise.all([
+    supabase.from("property_units").select("id, property_id, kind, display_label, operational_status").eq("property_id", propertyId),
+    supabase.from("tenancies").select("unit_id, status").eq("property_id", propertyId).in("status", ["draft", "invited", "active"]).is("archived_at", null),
+  ]);
+  if (units.error || tenancies.error) return { error: units.error ?? tenancies.error };
+  const blocked = new Map();
+  for (const t of tenancies.data ?? []) {
+    if (!t.unit_id) continue;
+    if (t.status === "active") blocked.set(t.unit_id, "Har et aktivt leieforhold");
+    else if (!blocked.has(t.unit_id)) blocked.set(t.unit_id, "Har en ventende invitasjon");
+  }
+  const rooms = (units.data ?? [])
+    .filter((u) => u.kind === "room" && u.operational_status === "active")
+    .sort((a, b) => (a.display_label ?? "").localeCompare(b.display_label ?? "", "nb", { numeric: true }))
+    .map((u) => ({ id: u.id, label: u.display_label || "Rom", blocked: blocked.get(u.id) ?? null }));
+  return { data: rooms };
 }
 
 /* ---------- Navn (list_linked_profile_contacts, samme RPC som iOS) ---------- */
