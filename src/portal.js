@@ -5,6 +5,7 @@ import * as inv from "./portal-inventory.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
 import * as annual from "./portal-annual.js";
+import * as privacy from "./portal-privacy.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
@@ -4187,9 +4188,143 @@ const PAGES = {
     privacy.href = "/personvern";
     links.append(out, privacy);
     c.append(dl, h("p", "pt-muted", "Profil, utseende og abonnement endres i appen."), links);
-    return isLandlord() ? [c, await archivedCard()] : [c];
+    return isLandlord() ? [c, privacyExportCard(), await archivedCard()] : [c, privacyExportCard()];
   },
 };
+
+/* ---------- Last ned mine data (PrivacyCenterView / PrivacyExportDeliveryViewModel) ---------- */
+const PRIVACY_TEXT = {
+  idle: "Last ned en kopi av personopplysningene dine som PDF.",
+  preparing: "Klargjør dataene dine…",
+  reviewing: "Forespørselen din er under behandling. Du får beskjed når dataene er klare.",
+  delayed: "Det tar lengre tid enn vanlig å klargjøre dataene dine. Forespørselen er registrert, og du kan prøve igjen senere.",
+  timedOut: "Det tok for lang tid å klargjøre dataene dine. Prøv igjen.",
+  error: "Kunne ikke klargjøre data",
+  downloaded: "Dataene dine er lastet ned.",
+  blocked: "Nettleseren fikk ikke kontakt med eksporttjenesten. Dataene dine kan foreløpig lastes ned i appen under Mine personvernforespørsler.",
+};
+const PRIVACY_POLL_MS = 10_000;
+const PRIVACY_STALL_MS = 180_000;
+const PRIVACY_TOTAL_MS = 300_000;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function privacyExportCard() {
+  const c = card("Last ned mine data", "doc");
+  const text = h("p", "pt-muted");
+  const row = h("div", "pt-links");
+  c.append(text, row);
+  const uid = state.user.id;
+  let run = 0;
+  const show = (key, actions = []) => {
+    text.textContent = PRIVACY_TEXT[key];
+    row.replaceChildren(...actions);
+  };
+  const startButton = (label = "Last ned") => button(label, "pt-btn-primary pt-btn-small", () => start());
+  const busy = () => {
+    const b = button("Last ned", "pt-btn-primary pt-btn-small", () => {});
+    b.disabled = true;
+    return b;
+  };
+  const idle = () => show("idle", [startButton()]);
+
+  const save = async (caseId) => {
+    const dl = await act.downloadPrivacyExport(caseId);
+    if (dl.error) return dl.error;
+    let bytes;
+    try {
+      bytes = letter.letterPdf(privacy.exportBlocks(privacy.zipEntries(dl.zip)), { logo: await act.letterLogoJpeg(), title: privacy.PDF_TITLE });
+    } catch {
+      return "failed";
+    }
+    const a = h("a");
+    a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+    a.download = privacy.FILE_NAME;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+    // The browser has the file; finalize like completeUserSave.
+    if (await act.confirmPrivacyExportSaved(caseId)) act.privacyExportCase.clear(uid);
+    return "saved";
+  };
+
+  const start = async () => {
+    const mine = ++run;
+    const alive = () => mine === run && c.isConnected;
+    show("preparing", [busy()]);
+    let caseId = act.privacyExportCase.get(uid);
+    let replaced = false;
+    let failure = "error";
+    const fresh = async () => {
+      const r = await act.requestPrivacyExport();
+      if (r.error === "blocked") failure = "blocked";
+      if (!r.case_id) return false;
+      act.privacyExportCase.set(uid, r.case_id);
+      caseId = r.case_id;
+      return true;
+    };
+    if (!caseId && !(await fresh())) { if (alive()) show(failure, [startButton("Prøv igjen")]); return; }
+    const began = Date.now();
+    let progressAt = Date.now();
+    let lastStage = null;
+    while (alive()) {
+      const r = await act.privacyExportStatus(caseId);
+      if (!alive()) return;
+      const s = r.status;
+      const needsNew = r.error === "not_available" || s?.state === "expired" || s?.state === "downloaded";
+      if (needsNew) {
+        if (replaced || !(await fresh())) { show(failure, [startButton("Prøv igjen")]); return; }
+        replaced = true;
+        progressAt = Date.now();
+      } else if (r.error) {
+        show("error", [startButton("Prøv igjen")]);
+        return;
+      } else if (s.state === "processing" && s.processing_stage === "reviewing") {
+        show("reviewing");
+        return;
+      } else if (s.state === "failed") {
+        show("error", [startButton("Prøv igjen")]);
+        return;
+      } else if (s.state === "ready") {
+        const out = await save(caseId);
+        if (!alive()) return;
+        if (out === "saved") { show("downloaded", [startButton()]); return; }
+        if (out === "blocked") { show("blocked", [startButton("Prøv igjen")]); return; }
+        if (out === "not_available" && !replaced) { act.privacyExportCase.clear(uid); caseId = null; if (!(await fresh())) { show(failure, [startButton("Prøv igjen")]); return; } replaced = true; continue; }
+        show("error", [startButton("Prøv igjen")]);
+        return;
+      } else {
+        const stage = `${s.processing_stage}|${s.updated_at}`;
+        if (stage !== lastStage) { lastStage = stage; progressAt = Date.now(); }
+      }
+      if (Date.now() - began > PRIVACY_TOTAL_MS) { show("timedOut", [startButton("Prøv igjen")]); return; }
+      if (Date.now() - progressAt > PRIVACY_STALL_MS) {
+        show("delayed", [startButton("Prøv igjen"), button("Lukk", "pt-btn-secondary pt-btn-small", idle)]);
+        return;
+      }
+      await wait(PRIVACY_POLL_MS);
+    }
+  };
+
+  // restoreStatus: a stored case resumes where it was (no automatic download).
+  const restore = async () => {
+    const caseId = act.privacyExportCase.get(uid);
+    if (!caseId) return idle();
+    show("preparing", [busy()]);
+    const r = await act.privacyExportStatus(caseId);
+    if (!c.isConnected) return;
+    const s = r.status;
+    if (s?.state === "processing" && s.processing_stage === "reviewing") return show("reviewing");
+    if (s?.state === "processing") return start();
+    if (s?.state === "ready") return idle();
+    if (s?.state === "failed") return show("error", [startButton("Prøv igjen")]);
+    act.privacyExportCase.clear(uid);
+    return s?.state === "downloaded" ? show("downloaded", [startButton()]) : idle();
+  };
+  idle();
+  queueMicrotask(restore);
+  return c;
+}
 
 /* ---------- Varsler i bjella (NotificationsView) ---------- */
 const notificationTime = (value) => {

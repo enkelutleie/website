@@ -2129,3 +2129,71 @@ export async function acceptCoLandlordInvitation(invitationId) {
 export async function declineCoLandlordInvitation(invitationId) {
   return supabase.rpc("decline_property_co_landlord_invitation", { requested_invitation_id: invitationId });
 }
+
+/* ---------- Last ned mine data (PrivacyExportDelivery) ---------- */
+const PRIVACY_FN = "privacy-export-delivery";
+const privacyCaseKey = (uid) => `privacyExport.case.${uid}`;
+export const privacyExportCase = {
+  get: (uid) => { try { return localStorage.getItem(privacyCaseKey(uid)); } catch { return null; } },
+  set: (uid, id) => { try { localStorage.setItem(privacyCaseKey(uid), id); } catch { /* private mode */ } },
+  clear: (uid) => { try { localStorage.removeItem(privacyCaseKey(uid)); } catch { /* private mode */ } },
+};
+const PRIVACY_VALID = [
+  ["processing", "collecting", false, null], ["processing", "building", false, null],
+  ["processing", "reviewing", false, "review_required"], ["ready", null, true, null],
+  ["failed", null, false, "delivery_failed"], ["expired", null, true, "expired"],
+  ["expired", null, false, "revoked"], ["downloaded", null, false, "downloaded"],
+];
+
+/** → { case_id } | { error: "blocked" | "unavailable" | "invalid" } */
+export async function requestPrivacyExport() {
+  const { data, error } = await supabase.functions.invoke(PRIVACY_FN, { body: { action: "request" } });
+  // FunctionsFetchError: the browser blocked the call (the function sends no CORS origin today).
+  if (error) return { error: error.name === "FunctionsFetchError" ? "blocked" : "unavailable" };
+  const payload = typeof data === "string" ? (() => { try { return JSON.parse(data); } catch { return null; } })() : data;
+  return typeof payload?.case_id === "string" ? { case_id: payload.case_id } : { error: "invalid" };
+}
+
+/** → { status } | { error: "not_available" | "unavailable" | "invalid" } */
+export async function privacyExportStatus(caseId) {
+  const { data, error } = await supabase.rpc("get_my_privacy_export_delivery_status", { requested_case_id: caseId });
+  if (error) return { error: error.code === "P0002" ? "not_available" : "unavailable" };
+  const rows = Array.isArray(data) ? data : [];
+  if (rows.length !== 1) return { error: "invalid" };
+  const s = rows[0];
+  const ok = PRIVACY_VALID.some(([st, stage, exp, code]) =>
+    s.state === st && (s.processing_stage ?? null) === stage && Boolean(s.expires_at) === exp && (s.status_code ?? null) === code);
+  return ok ? { status: s } : { error: "invalid" };
+}
+
+/** ZIP bytes → { zip: Uint8Array } | { error: "blocked" | "not_available" | "failed" } */
+export async function downloadPrivacyExport(caseId) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: "failed" };
+  let res;
+  try {
+    // Raw fetch: functions.invoke would decode application/zip as text.
+    res = await fetch(`${supabase.functionsUrl}/${PRIVACY_FN}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}`, apikey: supabase.supabaseKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "download", case_id: caseId }),
+    });
+  } catch { return { error: "blocked" }; }
+  if (!res.ok) {
+    let outcome = null;
+    try { outcome = (await res.json())?.outcome ?? null; } catch { /* no body */ }
+    return { error: outcome === "not_available" ? "not_available" : "failed" };
+  }
+  const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  const disposition = (res.headers.get("content-disposition") ?? "").toLowerCase();
+  const zip = new Uint8Array(await res.arrayBuffer());
+  if (type !== "application/zip" || !disposition.includes('filename="enkel-utleie-persondata.zip"') || !zip.length) return { error: "failed" };
+  return { zip };
+}
+
+export async function confirmPrivacyExportSaved(caseId) {
+  const { data, error } = await supabase.functions.invoke(PRIVACY_FN, { body: { action: "confirm_saved", case_id: caseId } });
+  if (error) return false;
+  const payload = typeof data === "string" ? (() => { try { return JSON.parse(data); } catch { return null; } })() : data;
+  return payload?.outcome === "finalized";
+}
