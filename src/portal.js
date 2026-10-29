@@ -1820,6 +1820,95 @@ const maintenanceList = async (pid) => {
   return nodes;
 };
 
+/* ---------- Leiehistorikk (TenancyHistoryListPage / TenancyHistoryDetailPage) ---------- */
+const historyBack = () => mtBack("#historikk", "Leiehistorikk");
+const historyContact = (e) => {
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, act.historyTitle(e)));
+  [...act.historyPhones(e), ...act.historyEmails(e), act.historyPeriod(e.start_date, e.end_date)].filter(Boolean)
+    .forEach((t) => main.append(h("span", null, t)));
+  return main;
+};
+const historyRow = (main, actions = []) => {
+  const row = h("li", "pt-row");
+  const right = h("div", "pt-row-actions");
+  right.append(...actions);
+  row.append(main, right);
+  return row;
+};
+const historyLine = (title, sub) => {
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, title));
+  if (sub) main.append(h("span", null, sub));
+  return main;
+};
+const tenancyHistoryList = async (pid) => {
+  const res = await act.listTenancyHistory(pid);
+  const c = card("Leiehistorikk", "history");
+  if (res.error) {
+    c.append(h("p", "pt-muted", "Leiehistorikken kunne ikke lastes."), button("Prøv igjen", "pt-btn-secondary pt-btn-small", () => refresh()));
+    return [c];
+  }
+  if (!res.data.length) return [emptyPage("history", "Leiehistorikk", "Ingen tidligere leieforhold ennå.")];
+  const list = h("ul", "pt-list");
+  list.append(...res.data.map((e) => {
+    const open = h("a", "pt-btn-secondary pt-btn-small", "Åpne");
+    open.href = `#historikk/${e.tenancy_id}`;
+    return historyRow(historyContact(e), [open]);
+  }));
+  c.append(list);
+  return [c];
+};
+const tenancyHistoryDetail = async (pid, tid) => {
+  const res = await act.listTenancyHistory(pid);
+  const e = res.data?.find((x) => x.tenancy_id === tid);
+  if (!e) return [historyBack(), emptyPage("history", "Leieforholdet er ikke tilgjengelig", "Leiehistorikken kunne ikke lastes.")];
+  const head = card(act.historyTitle(e), "history");
+  head.append(h("p", "pt-chip", "Skrivebeskyttet"));
+  const contact = h("ul", "pt-list");
+  contact.append(historyRow(historyContact(e)));
+  head.append(contact);
+  const out = [historyBack(), head];
+  const contracts = Array.isArray(e.contracts) ? e.contracts : [];
+  if (contracts.length) {
+    const c = card("Leiekontrakter", "doc");
+    const list = h("ul", "pt-list");
+    list.append(...contracts.map((k) => historyRow(historyLine(k.title || "Leiekontrakt", k.signed_at ? `Signert ${dateText(k.signed_at)}` : null),
+      [pdfButton("Åpne", "pt-btn-secondary pt-btn-small", () => act.openListedDocument({ storage_path: k.storage_path, status: "ready", original_file_name: `${k.title || "Leiekontrakt"}.pdf` }))])));
+    c.append(list);
+    out.push(c);
+  }
+  const s = act.finishedSettlement(e.settlement);
+  if (s) {
+    const c = card("Depositumsoppgjør", "doc");
+    const list = h("ul", "pt-list");
+    if (s.document_storage_path) {
+      list.append(historyRow(historyLine(s.document_title || "Depositumsoppgjør som PDF", s.deposit_amount_minor != null ? `Depositum ${money(s.deposit_amount_minor)}` : null),
+        [pdfButton("Åpne", "pt-btn-secondary pt-btn-small", () => act.openListedDocument({ storage_path: s.document_storage_path, status: "ready", original_file_name: "depositumsoppgjor.pdf" }))]));
+    } else if (s.deposit_amount_minor != null) list.append(historyRow(historyLine("Depositum", money(s.deposit_amount_minor))));
+    c.append(list);
+    const claims = Array.isArray(s.claims) ? s.claims : [];
+    if (claims.length) {
+      c.append(h("h3", null, "Krav"));
+      const cl = h("ul", "pt-list");
+      cl.append(...claims.map((k) => historyRow(historyLine(k.description, money(k.amount_minor)),
+        k.receipt_path ? [pdfButton("Åpne dokumentasjon", "pt-btn-secondary pt-btn-small", () => act.openHistoryReceipt(k))] : [])));
+      c.append(cl);
+    }
+    out.push(c);
+  }
+  const checklists = act.visibleChecklists(e.settlement, e.checklists);
+  if (checklists.length) {
+    const c = card("Sjekklister", "doc");
+    const list = h("ul", "pt-list");
+    list.append(...checklists.map((k) => historyRow(historyLine(k.type === "move_in" ? "Innflytting" : "Utflytting",
+      [HO_MARK[k.protocol_mark], k.finalized_at ? `Ferdigstilt ${dateText(k.finalized_at)}` : null].filter(Boolean).join(" · ")))));
+    c.append(list);
+    out.push(c);
+  }
+  return out;
+};
+
 const maintenanceHistory = async (pid) => {
   if (!isManager(pid)) return maintenanceList(pid);
   const res = await act.listMaintenance(pid);
@@ -4171,7 +4260,12 @@ const PAGES = {
   },
   dokumenter: documentsPage,
   async meldinger() { return chatPage(); },
-  async historikk() { return [emptyPage("history", "Leiehistorikk", "Ingen tidligere leieforhold ennå.")]; },
+  async historikk(sub) {
+    const p = property();
+    if (!p) return [noProperty()];
+    if (!isManager(p.id)) return [emptyPage("history", "Leiehistorikk", "Ingen tidligere leieforhold ennå.")];
+    return sub ? tenancyHistoryDetail(p.id, sub) : tenancyHistoryList(p.id);
+  },
   async innstillinger() {
     const c = card("Konto", "person");
     const dl = h("dl", "pt-facts");
