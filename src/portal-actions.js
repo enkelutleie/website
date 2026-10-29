@@ -107,7 +107,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     cancel.addEventListener("click", () => close(false));
     dialog.addEventListener("cancel", (e) => {
       e.preventDefault();
-      if (!submit.disabled) close(false);
+      if (!cancel.disabled) close(false);
     });
     form.addEventListener("input", () => onChange?.(inputs, show));
     onChange?.(inputs, show);
@@ -190,7 +190,7 @@ const first = (data) => (Array.isArray(data) ? data[0] : data);
 /* ---------- Økonomi (EconomyController.swift) ---------- */
 export const INCOME_CATEGORIES = [["rent", "Husleie"], ["reimbursement", "Refusjon"], ["other_income", "Annen inntekt"]];
 export const EXPENSE_CATEGORIES = [["other_expense", "Utgift"], ["improvement", "Påkostning"], ["furnishings_equipment", "Møbler og inventar"]];
-export const RECURRENCE = [["none", "Ingen gjentakelse"], ["weekly", "Hver uke"], ["monthly", "Hver måned"], ["yearly", "Hvert år"]];
+export const RECURRENCE = [["monthly", "Hver måned"], ["weekly", "Hver uke"], ["yearly", "Hvert år"]];
 
 export async function createTransaction(propertyId, v, activeTenancyId) {
   const payload = {

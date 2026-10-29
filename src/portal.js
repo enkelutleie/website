@@ -15,6 +15,7 @@ const TENANCY_LABEL = { draft: "Utkast", invited: "Invitert", active: "Aktivt" }
 const CATEGORY = {
   rent: "Husleie", reimbursement: "Refusjon", other_income: "Annen inntekt", maintenance: "Vedlikehold",
   improvement: "Påkostning", electricity_heating: "Strøm og oppvarming",
+  other_expense: "Utgift", furnishings_equipment: "Møbler og inventar",
 };
 const HANDBOOK_TILES = [
   ["wifi", "Wi-Fi", "wifi", "is-success"],
@@ -131,7 +132,8 @@ const transactions = (pid) =>
     const yearStart = `${new Date().getFullYear()}-01-01`;
     return supabase.from("financial_transactions")
       .select("id, transaction_type, category, amount_minor, transaction_date, description, counterparty, maintenance_request_id, updated_at")
-      .eq("property_id", pid).is("voided_at", null).gte("transaction_date", yearStart)
+      // As in the app (#1468): future-dated posts (e.g. a recurring series) are not shown yet.
+      .eq("property_id", pid).is("voided_at", null).gte("transaction_date", yearStart).lte("transaction_date", todayISO())
       .order("transaction_date", { ascending: false }).limit(1000);
   });
 const calendarItems = (pid) =>
@@ -360,6 +362,28 @@ const propertiesTable = () => {
   return c;
 };
 
+const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long" });
+const transactionRow = (pid, r) => {
+  const inc = r.transaction_type === "income";
+  const li = h("li", "pt-row");
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, r.description || CATEGORY[r.category] || (inc ? "Inntekt" : "Utgift")), h("span", null, [dateText(r.transaction_date), CATEGORY[r.category]].filter(Boolean).join(" · ")));
+  li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
+    h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
+  if (isManager(pid)) {
+    li.append(
+      button("Endre", "pt-btn-soft pt-btn-small", () => transactionForm(pid, r.transaction_type, r)),
+      button("Slett", "pt-btn-quiet-destructive pt-btn-small", async () => {
+        if (!(await act.confirmAction({ title: "Slette posten?", text: `${inc ? "Inntekten" : "Utgiften"} på ${money(r.amount_minor)} blir annullert, som i appen.`, confirmLabel: "Slett" }))) return;
+        const err = rpcError(await act.voidTransaction(r.id));
+        if (err) act.toast(err); else refresh("Posten er slettet.");
+      }),
+    );
+  }
+  return li;
+};
+
+// EconomyTransactionMonthCards: one card per month, newest first, with an uppercase month header.
 const transactionList = async (pid) => {
   const c = card("Transaksjoner i år", "banknote");
   if (isManager(pid)) {
@@ -369,31 +393,31 @@ const transactionList = async (pid) => {
     ));
   }
   const res = await transactions(pid);
-  if (res.error) return c.append(inline("Transaksjonene kunne ikke hentes.")), c;
-  const rows = res.data ?? [];
-  if (!rows.length) return c.append(inline("Ingen transaksjoner ennå.")), c;
-  const list = h("ul", "pt-list");
-  for (const r of rows.slice(0, 100)) {
-    const inc = r.transaction_type === "income";
-    const li = h("li", "pt-row");
-    const main = h("div", "pt-row-main");
-    main.append(h("strong", null, r.description || CATEGORY[r.category] || (inc ? "Inntekt" : "Utgift")), h("span", null, [dateText(r.transaction_date), CATEGORY[r.category]].filter(Boolean).join(" · ")));
-    li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
-      h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
-    if (isManager(pid)) {
-      li.append(
-        button("Endre", "pt-btn-soft pt-btn-small", () => transactionForm(pid, r.transaction_type, r)),
-        button("Slett", "pt-btn-quiet-destructive pt-btn-small", async () => {
-          if (!(await act.confirmAction({ title: "Slette posten?", text: `${inc ? "Inntekten" : "Utgiften"} på ${money(r.amount_minor)} blir annullert, som i appen.`, confirmLabel: "Slett" }))) return;
-          const err = rpcError(await act.voidTransaction(r.id));
-          if (err) act.toast(err); else refresh("Posten er slettet.");
-        }),
-      );
-    }
-    list.append(li);
+  if (res.error) {
+    c.append(inline("Transaksjonene kunne ikke hentes."));
+    return [c];
   }
-  c.append(list);
-  return c;
+  const rows = res.data ?? [];
+  if (!rows.length) {
+    c.append(inline("Ingen transaksjoner ennå."));
+    return [c];
+  }
+  const months = new Map();
+  for (const r of rows) {
+    const key = r.transaction_date.slice(0, 7);
+    if (!months.has(key)) months.set(key, []);
+    months.get(key).push(r);
+  }
+  const cards = [c];
+  for (const [key, list] of months) {
+    const m = h("section", "pt-card pt-month");
+    m.append(h("h3", "pt-month-title", MONTH_FORMAT.format(new Date(`${key}-01T12:00:00`)).toLocaleUpperCase("nb-NO")));
+    const ul = h("ul", "pt-list");
+    for (const r of list) ul.append(transactionRow(pid, r));
+    m.append(ul);
+    cards.push(m);
+  }
+  return cards;
 };
 
 const button = (label, cls, onClick) => {
@@ -422,28 +446,43 @@ const todayISO = () => {
 const rpcError = (res) => (res?.error ? act.explain(res.error) : null);
 
 /* ---------- forms ---------- */
+const recurrenceCaption = (frequency, date) =>
+  frequency === "monthly" ? `Beløpet registreres automatisk den ${Number((date || todayISO()).slice(8, 10))}. hver måned.`
+    : frequency === "weekly" ? "Beløpet registreres automatisk hver uke." : "Beløpet registreres automatisk hvert år.";
+
+// FinancialTransactionComposer: type-specific labels, and income needs a description (#1486).
 const transactionForm = (pid, type, row) => {
-  const cats = type === "income" ? act.INCOME_CATEGORIES : act.EXPENSE_CATEGORIES;
+  const income = type === "income";
+  const cats = income ? act.INCOME_CATEGORIES : act.EXPENSE_CATEGORIES;
   const activeTenancy = state.tenancies.find((t) => t.property_id === pid && t.status === "active");
   return act.openForm({
-    title: row ? "Endre post" : type === "income" ? "Ny inntekt" : "Ny utgift",
+    title: row ? "Endre post" : income ? "Ny inntekt" : "Ny utgift",
     submitLabel: row ? "Lagre endringer" : "Lagre",
     fields: [
       { name: "category", label: "Kategori", type: "select", options: cats, value: row?.category && cats.some(([v]) => v === row.category) ? row.category : cats[0][0], required: true },
-      { name: "amount", label: "Beløp (kr)", type: "money", value: row ? act.kronerOf(row.amount_minor) : "", required: true, help: "For eksempel 12 500,00" },
+      { name: "amount", label: "Beløp", type: "money", value: row ? act.kronerOf(row.amount_minor) : "", required: true, placeholder: "0,00" },
       { name: "date", label: "Dato", type: "date", value: row?.transaction_date ?? todayISO(), required: true },
-      { name: "description", label: "Beskrivelse", type: "text", value: row?.description ?? "", maxLength: 500 },
-      { name: "counterparty", label: type === "income" ? "Betalt av" : "Betalt til", type: "text", value: row?.counterparty ?? "", maxLength: 200 },
-      ...(row ? [] : [{ name: "recurrence", label: "Gjentakelse", type: "select", options: act.RECURRENCE, value: "none", required: true }]),
+      income
+        ? { name: "description", label: "Hva gjelder inntekten?", type: "text", value: row?.description ?? "", maxLength: 500, required: true, placeholder: "Husleie for oktober" }
+        : { name: "description", label: "Hva gjelder utgiften?", type: "text", value: row?.description ?? "", maxLength: 500, placeholder: "Reparasjon av vaskemaskin" },
+      { name: "counterparty", label: income ? "Betalt av" : "Butikk eller leverandør", type: "text", value: row?.counterparty ?? "", maxLength: 200 },
+      ...(row ? [] : [
+        { name: "repeats", label: "Er dette en gjentakende betaling?", type: "select", options: [["no", "Nei"], ["yes", "Ja"]], value: "no", required: true },
+        { name: "recurrence", label: "Hvor ofte", type: "select", options: act.RECURRENCE, value: "monthly", required: true, hidden: true, help: " " },
+      ]),
     ],
-    onChange: (inputs) => {
-      if (!row && inputs.category.value === "rent" && !inputs.recurrence.dataset.touched) inputs.recurrence.value = "monthly";
-      inputs.recurrence?.addEventListener("change", () => { inputs.recurrence.dataset.touched = "1"; }, { once: true });
+    onChange: (inputs, show) => {
+      if (row) return;
+      if (inputs.category.value === "rent" && !inputs.repeats.dataset.touched) inputs.repeats.value = "yes";
+      inputs.repeats.addEventListener("change", () => { inputs.repeats.dataset.touched = "1"; }, { once: true });
+      show("recurrence", inputs.repeats.value === "yes");
+      const caption = inputs.recurrence.closest(".pt-field").querySelector(".pt-field-help");
+      if (caption) caption.textContent = recurrenceCaption(inputs.recurrence.value, inputs.date.value);
     },
     onSubmit: async (v) => {
       const amountMinor = act.minorOf(v.amount);
       if (!amountMinor || amountMinor <= 0) return "Skriv et gyldig beløp større enn 0.";
-      const values = { ...v, type, amountMinor, recurrence: v.recurrence ?? "none" };
+      const values = { ...v, type, amountMinor, recurrence: v.repeats === "yes" ? v.recurrence : "none" };
       const res = row ? await act.updateTransaction(row, values) : await act.createTransaction(pid, values, activeTenancy?.id);
       if (res.error) return act.explain(res.error);
       await refresh(row ? "Posten er oppdatert." : "Posten er lagret.");
@@ -760,7 +799,7 @@ const PAGES = {
   async okonomi() {
     const p = property();
     if (!p) return [noProperty()];
-    return [await kpis(p.id), await transactionList(p.id)];
+    return [await kpis(p.id), ...(await transactionList(p.id))];
   },
   async "om-boligen"() {
     const p = property();
