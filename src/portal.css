@@ -19,7 +19,7 @@ svg { flex: none; }
 .pt-brand-text strong { font-size: var(--fs-headline); font-weight: 600; }
 .pt-brand-text span { font-size: var(--fs-caption); color: var(--secondary-ink); }
 .pt-select-label { font-size: var(--fs-caption); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--secondary-ink); padding: 0 8px; }
-.pt-select { font: inherit; font-size: var(--fs-subheadline); color: var(--ink); background: var(--soft-surface); border: 1px solid var(--brand-border); border-radius: var(--radius-sm); padding: 10px 12px; min-height: var(--button-min-height); }
+.pt-select { font: inherit; font-size: var(--fs-subheadline); color: var(--ink); background: var(--field-surface); border: 1px solid var(--brand-border); border-radius: var(--radius-sm); padding: 10px 12px; min-height: var(--button-min-height); }
 .pt-nav { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
 .pt-nav-group { font-size: var(--fs-caption); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--secondary-ink); padding: 14px 10px 6px; }
 .pt-nav a { display: flex; align-items: center; gap: var(--space-m); padding: 9px 10px; border-radius: var(--radius-sm); color: var(--ink); font-size: var(--fs-subheadline); transition: background-color var(--ease); }
@@ -179,7 +179,7 @@ svg { flex: none; }
 .pt-field { display: flex; flex-direction: column; gap: 6px; }
 .pt-field-label { font-size: var(--fs-footnote); font-weight: 600; color: var(--secondary-ink); }
 .pt-field-help { font-size: var(--fs-caption); color: var(--secondary-ink); }
-.pt-input { font: inherit; font-size: var(--fs-subheadline); color: var(--ink); background: var(--soft-surface); border: 1px solid var(--brand-border); border-radius: var(--radius-sm); padding: 10px 12px; min-height: var(--button-min-height); width: 100%; }
+.pt-input { font: inherit; font-size: var(--fs-subheadline); color: var(--ink); background: var(--field-surface); border: 1px solid var(--brand-border); border-radius: var(--radius-sm); padding: 10px 12px; min-height: var(--button-min-height); width: 100%; }
 .pt-textarea { min-height: 96px; resize: vertical; line-height: 1.4; }
 .pt-form-error { color: var(--danger); font-size: var(--fs-footnote); font-weight: 600; }
 .pt-modal-actions { display: flex; justify-content: flex-end; gap: var(--space-s); }
@@ -190,3 +190,9 @@ svg { flex: none; }
 .pt-photo { width: 100%; max-height: 320px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: var(--space-l); }
 .pt-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50; margin: 0; background: var(--brand-dark); color: #fff; font-family: var(--font); font-size: var(--fs-subheadline); padding: 12px 20px; border-radius: 999px; box-shadow: var(--shadow-elevated); }
 .pt-empty .pt-btn { margin-top: var(--space-s); }
+
+/* Arkiver bolig (PropertyCloseConfirmationSheet) */
+.pt-archive-entry { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; border-top: 1px solid var(--brand-soft); padding-top: var(--space-m); }
+.pt-sheet-section { display: flex; flex-direction: column; gap: 6px; background: var(--soft-surface); border-radius: var(--radius-md); padding: var(--space-m) var(--space-l); }
+.pt-sheet-title { margin: 0; font-size: var(--fs-footnote); font-weight: 600; color: var(--secondary-ink); text-transform: uppercase; letter-spacing: .04em; }
+.pt-sheet-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }

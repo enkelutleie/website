@@ -29,10 +29,12 @@ export const kronerOf = (minor) => (minor == null ? "" : (Number(minor) / 100).t
 
 /**
  * fields: [{ name, label, type: text|number|money|date|datetime|select|textarea|file|email,
- *            options: [[value,label]], value, required, help, accept, maxLength, min, max }]
+ *            options: [[value,label]], value, required, help, placeholder, accept, maxLength, min, max }]
+ * sections: nodes shown above the fields. footer(close): node below the buttons.
+ * submitClass replaces the primary style (e.g. "pt-btn-destructive"); submitDisabled locks it.
  * onSubmit(values, form) -> string error | null | undefined
  */
-export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit, onChange }) {
+export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit, onChange, sections = [], footer, submitClass = "pt-btn-primary", submitDisabled = false }) {
   return new Promise((resolve) => {
     const dialog = h("dialog", "pt-modal");
     const form = h("form", "pt-modal-card");
@@ -41,6 +43,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     head.append(h("h2", null, title));
     form.append(head);
     if (intro) form.append(h("p", "pt-muted", intro));
+    form.append(...sections);
     const body = h("div", "pt-form");
     const inputs = {};
     for (const f of fields) {
@@ -68,6 +71,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       }
       input.name = f.name;
       if (f.maxLength) input.maxLength = f.maxLength;
+      if (f.placeholder) input.placeholder = f.placeholder;
       if (f.value != null && f.type !== "file") input.value = f.value;
       inputs[f.name] = input;
       wrap.append(input);
@@ -82,8 +86,9 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const actions = h("div", "pt-modal-actions");
     const cancel = h("button", "pt-btn pt-btn-secondary", "Avbryt");
     cancel.type = "button";
-    const submit = h("button", "pt-btn pt-btn-primary", submitLabel);
+    const submit = h("button", `pt-btn ${submitClass}`, submitLabel);
     submit.type = "submit";
+    submit.disabled = submitDisabled;
     actions.append(cancel, submit);
     form.append(status, actions);
     dialog.append(form);
@@ -98,6 +103,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       dialog.remove();
       resolve(result);
     };
+    if (footer) form.append(footer(() => close(false)));
     cancel.addEventListener("click", () => close(false));
     dialog.addEventListener("cancel", (e) => {
       e.preventDefault();
@@ -129,7 +135,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       } catch (err) {
         error = explain(err);
       }
-      submit.disabled = false;
+      submit.disabled = submitDisabled;
       cancel.disabled = false;
       submit.textContent = submitLabel;
       if (error) {
@@ -277,6 +283,52 @@ export const updateProperty = (p, v) =>
     municipality_number: null,
     municipality_name: null,
   }).eq("id", p.id);
+
+/* ---------- Arkiver bolig (LifecycleB1Controller.swift) ---------- */
+// The same SECURITY DEFINER RPCs as the app. There is no hard delete: a closed
+// property is archived and keeps its history, documents and economy.
+export const CLOSE_REASONS = [
+  ["management_ended", "Forvaltningen er avsluttet"],
+  ["no_longer_rented", "Boligen skal ikke lenger leies ut"],
+  ["property_sold", "Boligen er solgt"],
+  ["other_operational", "Annen driftsmessig årsak"],
+];
+const CLOSE_BLOCKER_CODES = ["not_active", "property_inactive", "non_terminal_tenancy_blocker", "pending_tenant_invitation_blocker", "unfinished_file_operation_blocker"];
+
+export async function inspectPropertyClose(propertyId) {
+  const { data, error } = await supabase.rpc("inspect_property_close", { requested_property_id: propertyId });
+  if (error) return { error };
+  const row = first(data);
+  return row ? { data: row } : { error: new Error("empty") };
+}
+
+export const closeBlockers = (i) => {
+  const n = (k) => Number(i?.[k] ?? 0);
+  const files = n("pending_document_operation_count") + n("deleting_document_operation_count") + n("pending_image_operation_count") + n("deleting_image_operation_count");
+  const list = [];
+  if (n("active_tenancy_count")) list.push(`${n("active_tenancy_count")} aktivt leieforhold må avsluttes først.`);
+  if (n("draft_tenancy_count") + n("invited_tenancy_count")) list.push(`${n("draft_tenancy_count") + n("invited_tenancy_count")} utkast eller invitert leieforhold må kanselleres først.`);
+  if (n("pending_tenant_invitation_count")) list.push("Ventende invitasjoner må avsluttes først.");
+  if (files) list.push(`${files} filoperasjon pågår fortsatt.`);
+  return list;
+};
+
+export async function closeProperty(propertyId, reason, operationId) {
+  const { data, error } = await supabase.rpc("close_property", {
+    requested_property_id: propertyId,
+    requested_reason_code: reason,
+    requested_operation_id: operationId,
+  });
+  if (!error && first(data)?.property_id) return { ok: true };
+  const msg = String(error?.message ?? "");
+  if (CLOSE_BLOCKER_CODES.some((c) => msg.includes(c))) {
+    return { message: "Boligen eller en blocker ble endret et annet sted. Kontroller den oppdaterte oversikten før du prøver igjen." };
+  }
+  if (error && /jwt|auth|401/i.test(msg)) return { message: explain(error) };
+  return { message: "Boligen kunne ikke avsluttes. Ingen delvis endring ble lagret. Prøv igjen." };
+}
+
+export const listClosedProperties = () => supabase.rpc("list_my_closed_property_summaries");
 
 /* ---------- Bilder (ImageController.swift, image-lifecycle) ---------- */
 const dataUrlOf = (blob) =>
