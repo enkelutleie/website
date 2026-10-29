@@ -340,7 +340,8 @@ const tenancyCard = async (pid) => {
   }
   // A whole home has one active tenancy; shared housing can invite per room.
   const shared = state.properties.find((x) => x.id === pid)?.housing_kind === "shared";
-  if (isManager(pid) && (shared || !own.some((t) => t.status === "active"))) {
+  // An invited tenancy already has its own "Inviter leietaker" for a new address.
+  if (isManager(pid) && (shared || !own.some((t) => t.status === "active" || t.status === "invited"))) {
     c.append(actionsRow(button("Inviter leietaker", "pt-btn-secondary pt-btn-small", () => inviteForm(pid))));
   }
   return c;
@@ -658,7 +659,13 @@ const photoForm = (p) =>
 const INVITE_PRIVACY = "Leietakeren får sin egen side i appen og har ikke tilgang til din økonomi eller annen privat informasjon.";
 const inviteDone = (res) => refresh(res.sent ? "Invitasjonen er sendt." : "Invitasjonen er opprettet, men e-postutsendingen ble ikke bekreftet.");
 const validEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
-const inviteError = (error) => (/active_tenancy|already.*active/i.test(String(error?.message ?? "")) ? "Boligen har allerede et aktivt leieforhold." : act.explain(error));
+// TenancyController.swift: active_tenancy_exists / unit_has_pending_invitation.
+const inviteError = (error) => {
+  const msg = String(error?.message ?? "");
+  if (/active_tenancy|already.*active/i.test(msg)) return "Boligen har allerede et aktivt leieforhold.";
+  if (/unit_has_pending_invitation/i.test(msg)) return "Dette rommet har en ventende invitasjon og kan ikke brukes til en ny leietaker.";
+  return act.explain(error);
+};
 
 // TenancyInvitationSheet: only the tenant's e-mail, plus the room for shared housing.
 const inviteForm = async (pid, tenancy) => {
