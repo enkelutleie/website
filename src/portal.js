@@ -1239,6 +1239,284 @@ const handbookForm = (pid, key, label, body) =>
 
 const noProperty = () => emptyPage("building", "Ingen bolig valgt", "Når du har en bolig i appen, kan du se den her.");
 
+/* ---------- Meldinger (ChatView / ChatController) ---------- */
+const chatTime = (iso) => {
+  const d = new Date(iso);
+  const today = new Date();
+  const time = d.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === today.toDateString()) return time;
+  const y = new Date(today);
+  y.setDate(today.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return `I går ${time}`;
+  return `${d.toLocaleDateString("nb-NO", { day: "numeric", month: "short" })} ${time}`;
+};
+const joinNames = (people) => {
+  const names = people.map((p) => p.display_name?.trim() || p.email?.trim()).filter(Boolean);
+  return names.length ? names.join(", ") : null;
+};
+// Who is on the other side of each row: tenants from tenancy_members + list_linked_profile_contacts
+// for landlords, the owner from list_my_tenancies for tenants (SupabaseChatListPeopleRemote).
+async function chatPeople(convs) {
+  const labels = new Map();
+  const tenantPresent = new Map();
+  const managed = convs.filter((c) => c.role_snapshot !== "tenant" && !c.is_property_chat);
+  if (managed.length) {
+    const members = await act.chatTenantMembers([...new Set(managed.map((c) => c.tenancy_id))]);
+    const rows = members.data ?? [];
+    const contacts = rows.length ? (await act.linkedContacts([...new Set(rows.map((m) => m.user_id))])).data ?? [] : [];
+    const byUser = new Map(contacts.map((c) => [c.user_id, c]));
+    for (const c of managed) {
+      const people = rows.filter((m) => m.tenancy_id === c.tenancy_id).map((m) => byUser.get(m.user_id) ?? {});
+      if (!members.error) tenantPresent.set(c.conversation_id, people.length > 0);
+      const name = joinNames(people);
+      if (name) labels.set(c.conversation_id, name);
+    }
+  }
+  if (convs.some((c) => c.role_snapshot === "tenant" && !c.is_property_chat)) {
+    const owners = (await act.myTenancies()).data ?? [];
+    for (const c of convs.filter((x) => x.role_snapshot === "tenant" && !x.is_property_chat)) {
+      const o = owners.find((t) => t.tenancy_id === c.tenancy_id);
+      const name = o && (o.owner_display_name?.trim() || o.owner_email?.trim());
+      if (name) labels.set(c.conversation_id, name);
+    }
+  }
+  return { labels, tenantPresent };
+}
+
+async function chatPage() {
+  await act.provisionChats();
+  const res = await act.listChatConversations();
+  if (res.error) return [emptyPage("chat", "Ingen samtaler", "Kunne ikke hente samtalene dine. Prøv igjen.")];
+  const all = res.data ?? [];
+  const p = property();
+  // A selected property shows its chats in the mode you have there (landlord or tenant), like the app's filter.
+  const tenantMode = p ? !isManager(p.id) : false;
+  const convs = p ? all.filter((c) => c.property_id === p.id && (c.role_snapshot === "tenant") === tenantMode) : all;
+  if (!all.length) return [emptyPage("chat", "Ingen samtaler", "Du har ikke et aktivt leieforhold med noen du kan chatte med ennå.")];
+  if (!convs.length) return [emptyPage("chat", "Ingen samtale", "Det finnes ingen samtale for denne boligen ennå. Inviter en leietaker for å starte en samtale, eller oppdater listen hvis leieforholdet allerede er aktivt.")];
+  await Promise.all(convs.filter((c) => !Array.isArray(c.counterpart_avatars)).map(async (c) => {
+    const r = await act.chatCounterpartAvatars(c.conversation_id);
+    c.counterpart_avatars = r.data ?? [];
+  }));
+  const { labels, tenantPresent } = await chatPeople(convs);
+  const titleOf = (c) => (c.is_property_chat ? "Alle i boligen" : labels.get(c.conversation_id) ?? (c.role_snapshot === "tenant" ? "Utleier" : "Leietaker"));
+  const placeOf = (c) => [c.property_display_name, c.unit_display_label].filter(Boolean).join(" · ");
+  const needsInvite = (c) => c.role_snapshot !== "tenant" && !c.is_property_chat && c.conversation_status === "active" && tenantPresent.get(c.conversation_id) === false;
+
+  const shell = h("section", "pt-card pt-chat");
+  const list = h("nav", "pt-chat-list");
+  list.setAttribute("aria-label", "Samtaler");
+  const thread = h("div", "pt-chat-thread");
+  shell.append(list, thread);
+  let current = null;
+
+  // Profile photo of the first person shown, else the room/chat icon (the app's round list avatar).
+  const chatAvatar = (c) => {
+    const fallback = icon(c.is_property_chat ? "house" : "chat");
+    const face = (c.counterpart_avatars ?? []).find((a) => a.avatar_revision);
+    if (!face) return fallback;
+    act.avatarDataUrl(face.user_id, face.avatar_revision).then((url) => {
+      if (!url || !fallback.isConnected) return;
+      const img = h("img", "pt-chat-avatar");
+      img.alt = "";
+      img.src = url;
+      fallback.replaceWith(img);
+    });
+    return fallback;
+  };
+  const drawList = () => {
+    list.replaceChildren();
+    for (const [status, title] of [["active", "Aktive leietakere"], ["closed", "Tidligere leietakere"]]) {
+      const group = convs.filter((c) => (c.conversation_status === "closed" ? "closed" : "active") === status);
+      if (!group.length) continue;
+      list.append(h("p", "pt-label", title));
+      for (const c of group) {
+        const b = h("button", "pt-chat-row");
+        b.type = "button";
+        if (current?.conversation_id === c.conversation_id) b.setAttribute("aria-current", "true");
+        const text = h("span", "pt-chat-row-text");
+        text.append(h("strong", null, titleOf(c)), h("span", null, placeOf(c)));
+        b.append(chatAvatar(c), text);
+        if (Number(c.unread_count) > 0) b.append(h("span", "pt-chip is-info", Number(c.unread_count) === 1 ? "1 ulest melding" : `${c.unread_count} uleste meldinger`));
+        b.addEventListener("click", () => open(c));
+        list.append(b);
+      }
+    }
+  };
+
+  let messages = [];
+  let cursors = [];
+  let replyTo = null;
+  let pendingFile = null;
+  const loadThread = async (c) => {
+    const [m, cur] = await Promise.all([act.listChatMessagesBefore(c.conversation_id, null, 50), act.listChatPeerCursors(c.conversation_id)]);
+    if (m.error) return false;
+    messages = [...(m.data ?? [])].sort((a, b) => a.sequence_no - b.sequence_no);
+    cursors = cur.data ?? [];
+    const last = messages.at(-1)?.sequence_no;
+    if (last && last > Number(c.last_seen_sequence_no ?? 0)) {
+      const seen = await act.advanceChatSeen(c.conversation_id, last);
+      if (!seen.error) { c.last_seen_sequence_no = last; c.unread_count = 0; }
+    }
+    return true;
+  };
+
+  const bubble = (c, m, seenSeq) => {
+    const mine = m.sender_member_id === c.member_id;
+    if (m.is_system) return h("p", "pt-chat-system", m.body);
+    const row = h("div", `pt-chat-msg ${mine ? "is-mine" : "is-theirs"}`);
+    const b = h("div", "pt-bubble");
+    const body = act.parseChatBody(m.body);
+    if (!mine) b.append(h("span", "pt-bubble-sender", m.sender_display_name_snapshot));
+    if (body.kind === "deleted") b.append(h("em", null, "Meldingen ble slettet"));
+    else if (body.kind === "reply") {
+      const target = messages.find((x) => x.message_id === body.replyTo);
+      const quoted = target ? act.parseChatBody(target.body) : null;
+      b.append(h("span", "pt-bubble-quote", quoted && ["text", "reply"].includes(quoted.kind) ? quoted.text : quoted?.title ?? "Originalmeldingen er ikke tilgjengelig"), h("p", null, body.text));
+    } else if (body.kind === "file") {
+      if (body.fileKind === "image") {
+        const img = h("img", "pt-bubble-image");
+        img.alt = body.title;
+        act.loadChatAttachment(body.attachmentId).then((r) => { if (r.dataUrl) img.src = r.dataUrl; else img.replaceWith(h("span", null, r.message)); });
+        b.append(img);
+      } else b.append(pdfButton(body.title, "pt-btn-secondary pt-btn-small", () => act.loadChatAttachment(body.attachmentId)));
+    } else if (body.kind === "doc") b.append(pdfButton(body.title, "pt-btn-secondary pt-btn-small", () => act.documentPdf(body.documentId)));
+    else b.append(h("p", null, body.text));
+    const meta = h("span", "pt-bubble-meta", chatTime(m.sent_at));
+    if (mine && seenSeq >= m.sequence_no && m === messages.filter((x) => x.sender_member_id === c.member_id).at(-1)) meta.textContent += " · Sett";
+    b.append(meta);
+    row.append(b);
+    const actions = h("div", "pt-chat-msg-actions");
+    if (body.kind !== "deleted" && c.is_writable && !needsInvite(c)) {
+      actions.append(button("Svar", "pt-btn-soft pt-btn-small", () => { replyTo = m; drawThread(c); }));
+    }
+    if (mine && body.kind !== "deleted" && Date.now() - new Date(m.sent_at).getTime() < act.CHAT_DELETE_WINDOW_MS) {
+      actions.append(button("Slett", "pt-btn-quiet-destructive pt-btn-small", async () => {
+        const r = await act.deleteChatMessage(c.conversation_id, m.message_id);
+        if (r.error || r.data !== true) act.toast("Meldingen kunne ikke slettes. Bare egne meldinger under 30 sekunder kan slettes.");
+        await reload(c);
+      }));
+    }
+    if (actions.childElementCount) row.append(actions);
+    return row;
+  };
+
+  const composer = (c) => {
+    const form = h("form", "pt-chat-composer");
+    if (replyTo) {
+      const r = h("div", "pt-chat-reply");
+      const quoted = act.parseChatBody(replyTo.body);
+      r.append(h("span", null, `Svar til ${replyTo.sender_display_name_snapshot}: ${quoted.text ?? quoted.title ?? ""}`.slice(0, 140)),
+        button("Avbryt svar", "pt-btn-soft pt-btn-small", () => { replyTo = null; drawThread(c); }));
+      form.append(r);
+    }
+    const area = h("textarea", "pt-input pt-chat-input");
+    area.placeholder = "Skriv en melding …";
+    area.rows = 2;
+    area.maxLength = act.CHAT_MAX_CHARS;
+    area.setAttribute("aria-label", "Melding");
+    const fileLabel = h("label", "pt-btn pt-btn-soft pt-btn-small pt-chat-attach");
+    const file = h("input", "pt-visually-hidden");
+    file.type = "file";
+    file.accept = "image/jpeg,image/png,application/pdf";
+    fileLabel.append(h("span", null, "Legg ved bilde eller fil"), file);
+    const chosen = h("div", "pt-chat-chosen");
+    const drawChosen = () => {
+      chosen.replaceChildren();
+      if (!pendingFile) return;
+      chosen.append(h("span", "pt-chip", `Valgt vedlegg, ikke sendt: ${pendingFile.name}`),
+        button("Fjern valgt vedlegg", "pt-btn-soft pt-btn-small", () => { pendingFile = null; file.value = ""; drawChosen(); }));
+    };
+    file.addEventListener("change", () => { pendingFile = file.files?.[0] ?? null; drawChosen(); });
+    drawChosen();
+    const status = h("p", "pt-chat-status");
+    status.setAttribute("role", "status");
+    const fail = (text) => { status.textContent = text; status.classList.add("is-error"); send.disabled = false; };
+    const send = h("button", "pt-btn pt-btn-primary", "Send");
+    send.type = "submit";
+    const row = h("div", "pt-chat-composer-row");
+    row.append(fileLabel, send);
+    form.append(area, chosen, row, status);
+    const submit = async () => {
+      const text = area.value;
+      // A chosen attachment may go without text; any text still follows the composer rules.
+      const err = !pendingFile || text.trim() ? act.chatBodyError(text) : null;
+      if (err) return fail(err);
+      send.disabled = true;
+      status.classList.remove("is-error");
+      status.textContent = "Sender…";
+      if (pendingFile) {
+        const err = await act.sendChatAttachment(c.conversation_id, pendingFile);
+        if (err) return fail(err);
+        pendingFile = null;
+      }
+      if (text.trim()) {
+        const body = replyTo ? act.replyBody(replyTo, text) : text;
+        const r = await act.sendChatMessage(c.conversation_id, crypto.randomUUID(), body);
+        if (r.error) return fail("Meldingen ble ikke sendt.");
+      }
+      replyTo = null;
+      await reload(c);
+    };
+    form.addEventListener("submit", (e) => { e.preventDefault(); submit(); });
+    area.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } });
+    return { form, area };
+  };
+
+  const drawThread = (c, failed = false) => {
+    const draft = thread.querySelector(".pt-chat-input")?.value ?? "";
+    thread.replaceChildren();
+    const head = h("header", "pt-chat-head");
+    head.append(h("h2", null, titleOf(c)), h("span", null, placeOf(c)));
+    thread.append(head);
+    const scroller = h("div", "pt-chat-messages");
+    if (failed) scroller.append(inline("Kunne ikke hente meldingene. Prøv igjen."));
+    else if (!messages.length) {
+      const e = h("div", "pt-chat-empty");
+      e.append(h("strong", null, "Ingen meldinger ennå"), h("p", null, c.is_writable ? "Skriv den første meldingen når du er klar." : "Det finnes ingen meldinger i denne avsluttede samtalen."));
+      scroller.append(e);
+    }
+    const seenSeq = Math.max(0, ...cursors.filter((x) => x.member_id !== c.member_id).map((x) => Number(x.last_seen_sequence_no)));
+    for (const m of messages) scroller.append(bubble(c, m, seenSeq));
+    thread.append(scroller);
+    if (c.conversation_status === "closed") thread.append(inline("Leieforholdet er avsluttet. Samtalen kan bare leses."));
+    else if (needsInvite(c)) thread.append(inline("Inviter leietakeren for å chatte."));
+    else if (!c.is_writable) thread.append(inline(c.is_property_chat ? "Du kan sende meldinger igjen når en leietaker er knyttet til boligen." : "Samtalen er ikke tilgjengelig"));
+    else {
+      const { form, area } = composer(c);
+      area.value = draft;
+      thread.append(form);
+    }
+    scroller.scrollTop = scroller.scrollHeight;
+  };
+
+  let reloading = null;
+  const reload = async (c) => {
+    if (reloading) return reloading;
+    reloading = (async () => {
+      const ok = await loadThread(c);
+      if (current?.conversation_id === c.conversation_id) { drawThread(c, !ok); drawList(); }
+    })().finally(() => { reloading = null; });
+    return reloading;
+  };
+
+  const open = async (c) => {
+    current = c;
+    replyTo = null;
+    pendingFile = null;
+    drawList();
+    thread.replaceChildren(inline("Henter meldinger …"));
+    setPageCleanup(act.subscribeChat(c.conversation_id, () => reload(c)));
+    const ok = await loadThread(c);
+    if (current === c) { drawThread(c, !ok); drawList(); }
+  };
+
+  drawList();
+  const first = convs.find((c) => Number(c.unread_count) > 0) ?? convs[0];
+  open(first);
+  return [shell];
+}
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
@@ -1366,7 +1644,7 @@ const PAGES = {
     return [await landlordContractCard(p)];
   },
   async dokumenter() { return [emptyPage("folder", isLandlord() ? "Dokumenter og maler" : "Delte dokumenter", "Dokumentene kommer på nettsiden. Til da finner du dem i appen.")]; },
-  async meldinger() { return [emptyPage("chat", "Meldinger", "Samtaler med utleier og leietaker kommer på nettsiden. Til da bruker du chatten i appen.")]; },
+  async meldinger() { return chatPage(); },
   async historikk() { return [emptyPage("history", "Leiehistorikk", "Ingen tidligere leieforhold ennå.")]; },
   async innstillinger() {
     const c = card("Konto", "person");
@@ -1410,7 +1688,11 @@ const renderNav = (current) => {
 };
 
 let renderToken = 0;
+// A page may leave something running (the chat's realtime channel); stop it on the next render.
+let pageCleanup = null;
+const setPageCleanup = (fn) => { pageCleanup?.(); pageCleanup = fn; };
 const render = async () => {
+  setPageCleanup(null);
   const items = allItems();
   let id = location.hash.slice(1);
   if (id === "overtakelse") id = "inn-utflytting";

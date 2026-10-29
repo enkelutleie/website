@@ -941,3 +941,154 @@ export async function attachReceipt(propertyId, transactionId, file) {
     return SAVE_FAILED;
   }
 }
+
+/* ---------- Meldinger (ChatRemote / ChatAttachmentRemote) ---------- */
+// The inbox uses the _v2 lists (v1 columns + counterpart_avatars, iOS #1509). If a _v2 call
+// fails, that list falls back to v1; «function not found» is remembered for the session.
+export const CHAT_MAX_CHARS = 4000;
+export const CHAT_DELETE_WINDOW_MS = 30_000;
+export const DELETED_MARKER = "eu-deleted v1";
+export const provisionChats = () => supabase.rpc("provision_my_chat_conversations");
+// The inbox: «Alle i boligen» first, then tenancy chats. A failing property list never hides the room chats.
+const missingV2 = new Set();
+async function listWithInlineAvatars(v2, v1) {
+  if (!missingV2.has(v2)) {
+    const res = await supabase.rpc(v2);
+    if (!res.error) return res;
+    if (["PGRST202", "42883"].includes(res.error.code)) missingV2.add(v2);
+  }
+  return supabase.rpc(v1);
+}
+export async function listChatConversations() {
+  const [tenancy, prop] = await Promise.all([
+    listWithInlineAvatars("list_my_chat_conversations_v2", "list_my_chat_conversations"),
+    listWithInlineAvatars("list_my_property_chat_conversations_v2", "list_my_property_chat_conversations"),
+  ]);
+  if (tenancy.error) return { error: tenancy.error };
+  const known = new Set((tenancy.data ?? []).map((c) => c.conversation_id));
+  const property = (prop.data ?? []).filter((c) => !known.has(c.conversation_id)).map((c) => ({ ...c, is_property_chat: true }));
+  return { data: [...property, ...(tenancy.data ?? [])] };
+}
+export const listChatMessagesBefore = (conversationId, beforeSequenceNo = null, limit = 50) =>
+  supabase.rpc("list_chat_messages_before", { requested_conversation_id: conversationId, requested_before_sequence_no: beforeSequenceNo, requested_limit: limit });
+export const listChatPeerCursors = (conversationId) =>
+  supabase.rpc("list_chat_peer_read_cursors", { requested_conversation_id: conversationId });
+export const advanceChatSeen = (conversationId, sequenceNo) =>
+  supabase.rpc("advance_chat_last_seen", { requested_conversation_id: conversationId, requested_sequence_no: sequenceNo });
+export const deleteChatMessage = (conversationId, messageId) =>
+  supabase.rpc("delete_chat_message", { requested_conversation_id: conversationId, requested_message_id: messageId });
+export const chatTenantMembers = (tenancyIds) =>
+  supabase.from("tenancy_members").select("tenancy_id, user_id").in("tenancy_id", tenancyIds).eq("role", "tenant").eq("invitation_status", "accepted");
+export const linkedContacts = (userIds) => supabase.rpc("list_linked_profile_contacts", { requested_user_ids: userIds });
+export const myTenancies = () => supabase.rpc("list_my_tenancies");
+// Rows without counterpart_avatars (v1 server) get one list_chat_counterpart_avatars call each.
+export const chatCounterpartAvatars = (conversationId) =>
+  supabase.rpc("list_chat_counterpart_avatars", { requested_conversation_id: conversationId });
+// Profile photo from the private "profile-avatars" bucket ({user_id}/avatar.jpg), as a data: URL (CSP).
+const avatarUrls = new Map();
+export function avatarDataUrl(userId, revision) {
+  const key = `${userId}:${revision}`;
+  if (!avatarUrls.has(key)) {
+    avatarUrls.set(key, supabase.storage.from("profile-avatars").download(`${userId}/avatar.jpg`)
+      .then((r) => (r.error ? null : dataUrlOf(r.data))).catch(() => null));
+  }
+  return avatarUrls.get(key);
+}
+
+// Composer validation as ChatController: trimmed, not empty, at most 4 000 characters, no NUL.
+export function chatBodyError(body) {
+  if (!body.trim()) return "Skriv en melding først.";
+  if ([...body].length > CHAT_MAX_CHARS) return "Meldingen kan inneholde opptil 4 000 tegn.";
+  if (body.includes("\u0000")) return "Meldingen inneholder et tegn som ikke kan sendes.";
+  return null;
+}
+export const replyBody = (target, text) => `eu-reply v1\n${target.message_id}\n${target.sequence_no}\n${text}`;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Message bodies: plain text, or the app's eu-reply / eu-file / eu-doc / eu-deleted markers.
+export function parseChatBody(body) {
+  if (body === DELETED_MARKER) return { kind: "deleted" };
+  const lines = body.replace(/\r\n?/g, "\n").split("\n");
+  if (lines[0] === "eu-reply v1" && lines.length >= 4 && UUID_RE.test(lines[1]) && Number(lines[2]) > 0) {
+    const text = lines.slice(3).join("\n");
+    if (text.trim()) return { kind: "reply", replyTo: lines[1], replySeq: Number(lines[2]), text };
+  }
+  if (lines[0] === "eu-file v1" && lines.length >= 4 && UUID_RE.test(lines[1]) && ["image", "file"].includes(lines[2])) {
+    const title = lines.slice(3).join("\n").trim();
+    if (title && title.length <= 160 && !title.includes("\n")) return { kind: "file", attachmentId: lines[1], fileKind: lines[2], title };
+  }
+  if (lines[0] === "eu-doc v1" && lines.length >= 3 && UUID_RE.test(lines[1])) {
+    const title = lines.slice(2).join("\n").trim();
+    if (title && title.length <= 160 && !title.includes("\n")) return { kind: "doc", documentId: lines[1], title };
+  }
+  return { kind: "text", text: body };
+}
+
+export async function sendChatMessage(conversationId, requestId, body) {
+  const { data, error } = await supabase.rpc("send_chat_message", { requested_conversation_id: conversationId, requested_client_request_id: requestId, requested_body: body });
+  if (error || !data?.[0]) return { error: error ?? new Error("missing") };
+  return { data: data[0] };
+}
+
+const cardTitle = (s, fallback) => s.replace(/\s+/g, " ").trim().slice(0, 160) || fallback;
+const safeName = (raw, fallback, ext) => {
+  const last = raw.split(/[\\/]/).pop() ?? "";
+  const stem = last.replace(/\.[^.]*$/, "");
+  const cleaned = stem.replace(/[^\p{L}\p{N}_-]/gu, "-").split("-").filter(Boolean).join("-");
+  return `${(cleaned || fallback).slice(0, 80)}.${ext}`;
+};
+// ChatAttachmentCodec + send: images become JPEG, PDFs must start with %PDF-; max 10 MB.
+export async function sendChatAttachment(conversationId, file) {
+  const FAILED = "Meldingen ble ikke sendt.";
+  if (!file) return FAILED;
+  try {
+    let bytes, mime, kind, name;
+    const head = new TextDecoder().decode(new Uint8Array(await file.slice(0, 5).arrayBuffer()));
+    if (head === "%PDF-") {
+      bytes = new Uint8Array(await file.arrayBuffer());
+      mime = "application/pdf"; kind = "file"; name = safeName(file.name, "dokument", "pdf");
+    } else if (["image/jpeg", "image/png"].includes(file.type)) {
+      bytes = new Uint8Array(await (await toJpeg(file)).arrayBuffer());
+      mime = "image/jpeg"; kind = "image"; name = safeName(file.name, "bilde", "jpg");
+    } else return "Filen kunne ikke åpnes.";
+    if (!bytes.length || bytes.length > MAX_DOCUMENT_BYTES) return "Filen kunne ikke åpnes.";
+    const res = await supabase.rpc("reserve_chat_attachment", {
+      requested_conversation_id: conversationId, requested_reservation_key: crypto.randomUUID(),
+      requested_original_file_name: name, requested_mime_type: mime, requested_file_size_bytes: bytes.length,
+    });
+    const r = res.data?.[0];
+    if (res.error || !["reserved", "already_reserved"].includes(r?.outcome) || !r.attachment_id || !r.storage_path) return FAILED;
+    const up = await supabase.storage.from("chat-attachments").upload(r.storage_path, new Blob([bytes], { type: mime }), { cacheControl: "0", contentType: mime, upsert: false });
+    if (up.error && !/exists|Duplicate/i.test(up.error.message ?? "")) return FAILED;
+    const fin = await supabase.rpc("finalize_chat_attachment", { requested_attachment_id: r.attachment_id });
+    if (fin.error || !["ready", "already_ready"].includes(fin.data?.[0]?.outcome)) return FAILED;
+    const title = cardTitle(name.replace(/\.[^.]*$/, ""), kind === "image" ? "Bilde" : "Fil");
+    const sent = await sendChatMessage(conversationId, crypto.randomUUID(), `eu-file v1\n${r.attachment_id}\n${kind}\n${title}`);
+    return sent.error ? FAILED : null;
+  } catch {
+    return FAILED;
+  }
+}
+
+// get_chat_attachment, then the bytes from "chat-attachments". Images come back as a data: URL (CSP).
+export async function loadChatAttachment(attachmentId) {
+  const res = await supabase.rpc("get_chat_attachment", { requested_attachment_id: attachmentId });
+  const row = res.data?.[0];
+  if (res.error || !row || row.status !== "ready") return { message: "Filen kunne ikke åpnes." };
+  const file = await supabase.storage.from("chat-attachments").download(row.storage_path);
+  if (file.error) return { message: "Filen kunne ikke åpnes." };
+  const blob = new Blob([file.data], { type: row.mime_type });
+  if (row.kind === "image") return { dataUrl: await dataUrlOf(blob), filename: row.original_file_name };
+  return { url: URL.createObjectURL(blob), filename: row.original_file_name || "dokument.pdf" };
+}
+
+// ChatRealtimeRemote.changes(conversationID): RLS decides what arrives; the UI reloads, never trusts payloads.
+export function subscribeChat(conversationId, onChange) {
+  const filter = `conversation_id=eq.${conversationId}`;
+  const channel = supabase.channel(`chat:${conversationId}:${crypto.randomUUID()}`);
+  for (const table of ["chat_messages", "chat_member_read_cursors"]) {
+    channel.on("postgres_changes", { event: "INSERT", schema: "public", table, filter }, () => onChange(table));
+    channel.on("postgres_changes", { event: "UPDATE", schema: "public", table, filter }, () => onChange(table));
+  }
+  channel.subscribe();
+  return () => supabase.removeChannel(channel);
+}

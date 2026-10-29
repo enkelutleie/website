@@ -210,3 +210,47 @@ svg { flex: none; }
 .pt-filter {
   max-width: 16rem;
 }
+
+/* Meldinger (ChatView): own messages blue, others white, in every theme (AppTheme.chat*). */
+.pt-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.pt-chip.is-info { background: var(--brand-soft); color: var(--brand); }
+.pt-chat { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 0; padding: 0; overflow: hidden; min-height: 560px; }
+.pt-chat-list { display: flex; flex-direction: column; gap: 4px; padding: 16px; border-right: 1px solid var(--brand-border); background: var(--soft-surface); }
+.pt-chat-list .pt-label { margin: 8px 4px 4px; }
+.pt-chat-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.pt-chat-row:hover, .pt-chat-row[aria-current="true"] { background: var(--brand-soft); }
+.pt-chat-row-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.pt-chat-row-text span { color: var(--secondary-ink); font-size: var(--fs-footnote); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-chat-thread { display: flex; flex-direction: column; min-width: 0; background: var(--canvas); }
+.pt-chat-thread > .pt-empty-inline { margin: 12px 16px; }
+.pt-chat-head { display: flex; flex-direction: column; padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--brand-border); }
+.pt-chat-head h2 { margin: 0; font-size: var(--fs-headline); }
+.pt-chat-head span { color: var(--secondary-ink); font-size: var(--fs-footnote); }
+.pt-chat-messages { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 16px 20px; overflow-y: auto; max-height: 60vh; }
+.pt-chat-empty { margin: auto; text-align: center; color: var(--secondary-ink); }
+.pt-chat-system { align-self: center; margin: 4px 0; color: var(--secondary-ink); font-size: var(--fs-footnote); text-align: center; }
+.pt-chat-msg { display: flex; flex-direction: column; max-width: 72%; }
+.pt-chat-msg.is-mine { align-self: flex-end; align-items: flex-end; }
+.pt-chat-msg.is-theirs { align-self: flex-start; align-items: flex-start; }
+.pt-bubble { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; border-radius: 18px; overflow-wrap: anywhere; }
+.pt-bubble p { margin: 0; white-space: pre-wrap; }
+.is-mine .pt-bubble { background: var(--chat-outgoing-bubble); color: var(--chat-outgoing-ink); }
+.is-theirs .pt-bubble { background: var(--chat-incoming-bubble); color: var(--chat-incoming-ink); }
+.pt-bubble-sender { font-size: var(--fs-caption); font-weight: 600; }
+.pt-bubble-meta { font-size: var(--fs-caption); opacity: .75; }
+.pt-bubble-quote { padding: 4px 8px; border-left: 3px solid currentColor; opacity: .8; font-size: var(--fs-footnote); }
+.pt-bubble-image { display: block; max-width: 280px; max-height: 280px; border-radius: 12px; }
+.pt-chat-msg-actions { display: flex; gap: 4px; margin-top: 2px; }
+.pt-chat-composer { display: flex; flex-direction: column; gap: 8px; padding: 12px 20px 16px; background: var(--surface); border-top: 1px solid var(--brand-border); }
+.pt-chat-input { resize: vertical; min-height: 64px; }
+.pt-chat-composer-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pt-chat-attach { cursor: pointer; }
+.pt-chat-chosen, .pt-chat-reply { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-footnote); color: var(--secondary-ink); }
+.pt-chat-status { margin: 0; min-height: 1em; font-size: var(--fs-footnote); color: var(--secondary-ink); }
+.pt-chat-status.is-error { color: var(--danger); font-weight: 600; }
+@media (max-width: 760px) {
+  .pt-chat { grid-template-columns: 1fr; }
+  .pt-chat-list { border-right: 0; border-bottom: 1px solid var(--brand-border); }
+  .pt-chat-msg { max-width: 88%; }
+}
+.pt-chat-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; }
