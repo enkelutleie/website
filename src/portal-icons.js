@@ -36,6 +36,7 @@ export const ICONS = {
   rules: s('<path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/>'),
   sos: s('<path d="M12 3 2 20h20Z"/><path d="M12 10v4M12 17h.01"/>'),
   car: s('<path d="M5 16V11l2-5h10l2 5v5M3 16h18v3H3zM7 19v2M17 19v2"/><path d="M7 13h.01M17 13h.01"/>'),
+  sofa: s('<path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"/><path d="M3 13a2 2 0 0 1 4 0v1h10v-1a2 2 0 0 1 4 0v4H3zM5 17v2M19 17v2"/>'),
   plus: s('<path d="M12 5v14M5 12h14"/>'),
   chevron: s('<path d="m9 6 6 6-6 6"/>'),
 };

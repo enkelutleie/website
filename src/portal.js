@@ -1,6 +1,7 @@
 import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
+import * as inv from "./portal-inventory.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
@@ -244,7 +245,8 @@ const kpis = async (pid) => {
   const grid = h("section", "pt-kpis");
   const res = await transactions(pid);
   const rows = res.error ? null : res.data ?? [];
-  const sum = (type) => (rows ?? []).filter((r) => r.transaction_type === type).reduce((a, r) => a + Number(r.amount_minor), 0);
+  // FinancialSummary.totals: financing costs are not part of the result.
+  const sum = (type) => (rows ?? []).filter((r) => r.transaction_type === type && r.category !== "financing_costs").reduce((a, r) => a + Number(r.amount_minor), 0);
   const has = rows && rows.length > 0;
   const note = res.error ? "Kunne ikke hentes" : has ? `Hittil i ${new Date().getFullYear()}` : "Ingen poster ennå";
   const income = sum("income");
@@ -3073,7 +3075,10 @@ const economyTiles = () => {
   const tile = h("a", "pt-tile pt-tile-link");
   tile.href = "#okonomi/kjorebok";
   tile.append(icon("car", "pt-icon-circle is-tax"), h("strong", null, "Kjørebok"), h("p", null, "Logg turer. Beløpet blir en utgift i regnskapet."));
-  tiles.append(tile);
+  const furniture = h("a", "pt-tile pt-tile-link");
+  furniture.href = "#okonomi/mobler";
+  furniture.append(icon("sofa", "pt-icon-circle is-tax"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
+  tiles.append(tile, furniture);
   return tiles;
 };
 
@@ -3188,6 +3193,292 @@ const mileagePage = async (pid) => {
   return [back, head, grid, list];
 };
 
+// Møbler og inventar (iOS AssetView). Items are loaded for every managed property so the
+// private saldo covers all taxable rentals together, exactly as the app computes it.
+const ASSETS_DETAILS = [
+  ["p", "Når du leier ut en bolig med skattepliktige leieinntekter, kan du få fradrag for møbler og inventar som brukes i utleien."],
+  ["h3", "Kjøp under 30 000 kr"],
+  ["p", "Du kan vanligvis trekke fra hele beløpet samme år som du kjøper møbelet eller inventaret. Dette gjelder også ting som forventes å vare under 3 år."],
+  ["h3", "Kjøp på 30 000 kr eller mer"],
+  ["p", "Hvis det du kjøper forventes å vare i minst 3 år, kan du normalt trekke fra inntil 20 % av gjenværende verdi hvert år."],
+  ["p", "Eksempel: Kjøper du en sofa til 50 000 kr, kan du trekke fra 10 000 kr det første året."],
+  ["h3", "Avskrivning i år"],
+  ["p", "Velg hvor mye du ønsker å avskrive i år (maks 20 %)."],
+  ["h3", "Greit å vite"],
+  ["ul", [
+    "Fradrag gjelder bare når utleien gir rett til kostnadsfradrag.",
+    "Kjøkken og bad regnes som en del av boligen, ikke som møbler.",
+    "Du kan ikke registrere samme kjøp både som en vanlig utgift og som avskrivning.",
+    "Ved enkelte kortvarige, fullt møblerte utleieforhold gjelder egne regler.",
+    "Er gjenværende verdi under 30 000 kr, kan du trekke fra hele beløpet.",
+  ]],
+  ["muted", "Beregningene i appen er veiledende. Kontroller alltid fradragene mot gjeldende skatteregler."],
+];
+const assetState = { year: null, infoOpen: false, open: new Set() };
+const kr = (minor) => money(minor).replace(/,00 kr$/, " kr");
+const percent = (bps) => `${Math.round(bps / 100)} %`;
+
+const loadInventory = async () => {
+  const managed = state.properties.filter((p) => isManager(p.id));
+  const perProperty = await Promise.all(managed.map(async (p) => {
+    const [assets, mode] = await Promise.all([inv.listAssets(p.id), inv.accountingMode(p.id)]);
+    const modeValue = mode.error ? null : (Array.isArray(mode.data) ? mode.data[0]?.accounting_mode ?? mode.data[0] : mode.data?.accounting_mode ?? mode.data);
+    return { p, assets, scope: inv.scopeFor(modeValue, p) };
+  }));
+  if (perProperty.some((r) => r.assets.error)) return { error: true };
+  const items = perProperty.flatMap(({ p, assets, scope }) => assets.data.map((a) => inv.itemInput(a, addressOf(p).line, scope)));
+  items.sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate) || a.name.localeCompare(b.name, "nb"));
+  const el = await inv.listElections();
+  const elections = {};
+  for (const e of el.error ? [] : el.data ?? []) (elections[e.scope_key] ??= {})[e.tax_year] = e;
+  const scopes = Object.fromEntries(perProperty.map(({ p, scope }) => [p.id, scope]));
+  return { items, elections, scopes, assets: Object.fromEntries(perProperty.flatMap(({ assets }) => assets.data.map((a) => [a.id, a]))) };
+};
+
+const assetForm = async (pid, data, asset = null) => {
+  const requestId = crypto.randomUUID();
+  const item = asset ? inv.itemInput(asset) : null;
+  const home = asset ? null : await inv.homeUse(pid);
+  const fixedTaxable = !asset && home === "other_home";
+  const scope = data.scopes[pid] ?? inv.PRIVATE_SCOPE;
+  const yesNo = [["", "Velg"], ["yes", "Ja"], ["no", "Nei"]];
+  const decisionText = h("p", "pt-field-help");
+  const rateNote = h("p", "pt-field-help", "Valget gjelder hele saldoen for kjøpsåret.");
+  const rates = [];
+  for (let r = 20; r >= 0; r--) rates.push([String(r * 100), `${r} %`]);
+  const fields = [
+    { name: "name", label: "Type møbel", value: item?.name ?? "", placeholder: "F.eks. sofa, seng eller spisebord", required: true, requiredMessage: "Skriv inn et navn." },
+    { name: "amount", label: "Kjøpspris", type: "money", value: item ? act.kronerOf(item.purchaseAmountMinor) : "", placeholder: "0,00", help: "Pris inkl. mva", required: true, requiredMessage: "Skriv inn kjøpspris." },
+    { name: "date", label: "Kjøpsdato", type: "date", value: item?.purchaseDate ?? todayISO(), required: true },
+    { name: "kind", label: "Kategori", type: "select", options: [["loose_inventory", "Løst inventar"], ["fixed_fitting", "Fast innredning"]], value: item?.kind ?? "loose_inventory", required: true },
+    { name: "treatment", label: "Standard", type: "select", options: [["maintenance", "Samme standard (vedlikehold)"], ["improvement", "Høyere standard (påkostning)"]], value: item?.fixedTreatment ?? "maintenance", help: "Kjøkken, bad og annen fast innredning er en del av boligen og avskrives ikke.", required: true },
+    { name: "lifetime", label: "Forventes møbelet å vare i minst 3 år?", type: "select", options: yesNo, value: item ? (item.lifeUnderThreeYears ? "no" : "yes") : "", required: true, requiredMessage: "Svar på om møbelet forventes å vare i minst 3 år." },
+    { name: "taxable", label: "Utleien er skattepliktig", type: "select", options: [["yes", "Ja"], ["no", "Nei"]], value: item ? (item.countsForTaxableRental ? "yes" : "no") : "yes", required: true },
+    { name: "rate", label: "Velg hvor mye du ønsker å avskrive i år.", type: "select", options: rates, value: "2000", required: true },
+    { name: "notes", label: "Merknad", type: "textarea", rows: 2, value: item?.notes ?? "", maxLength: 500 },
+  ];
+  const valuesOf = (get) => {
+    const kind = get("kind");
+    const amountMinor = act.minorOf(get("amount"));
+    const year = inv.yearOf(get("date"));
+    const lifetime = get("lifetime");
+    const overThreshold = kind === "loose_inventory" && amountMinor != null && year != null && amountMinor >= inv.thresholdMinor(year);
+    return {
+      name: get("name"), amountMinor, purchaseDate: get("date"), kind, year, overThreshold,
+      fixedTreatment: kind === "fixed_fitting" ? get("treatment") : null,
+      // Below the threshold the lifetime question is not asked; the item is a direct deduction.
+      lifeUnderThreeYears: overThreshold ? lifetime === "no" : false,
+      countsForTaxableRental: fixedTaxable ? true : get("taxable") !== "no",
+      notes: get("notes"),
+    };
+  };
+  act.openForm({
+    title: asset ? "Rediger møbel eller inventar" : "Legg til møbel eller inventar",
+    fields,
+    after: [decisionText, rateNote],
+    submitLabel: "Lagre",
+    onChange: (inputs, show) => {
+      const v = valuesOf((n) => inputs[n]?.value ?? "");
+      if (fixedTaxable) inputs.taxable.disabled = true;
+      show("treatment", v.kind === "fixed_fitting");
+      show("lifetime", v.overThreshold);
+      const answered = !v.overThreshold || inputs.lifetime.value !== "";
+      const d = v.amountMinor != null && answered ? inv.decision({ ...v, purchaseAmountMinor: v.amountMinor }) : null;
+      const rateShown = v.overThreshold && d === "groupD";
+      show("rate", rateShown);
+      rateNote.hidden = !rateShown;
+      decisionText.textContent = !d ? "" : (d === "directCost" || d === "directLife") && v.year ? `${inv.DECISION_TEXT[d]} Trekkes fra i sin helhet i ${v.year}.` : inv.DECISION_TEXT[d];
+      if (rateShown) {
+        const chosen = data.elections[scope.key]?.[v.year];
+        if (chosen && !inputs.rate.dataset.touched) inputs.rate.value = String(inv.clampRate(chosen.rate_bps));
+        inputs.rate.onchange = () => { inputs.rate.dataset.touched = "1"; };
+      }
+    },
+    onSubmit: async (raw, inputs) => {
+      const v = valuesOf((n) => raw[n] ?? "");
+      if (!v.name) return "Skriv inn et navn.";
+      if (!v.amountMinor || v.amountMinor <= 0) return "Skriv inn kjøpspris.";
+      if (v.overThreshold && !raw.lifetime) return "Svar på om møbelet forventes å vare i minst 3 år.";
+      const res = asset ? await inv.updateAsset(asset.id, v) : await inv.createAsset(pid, v, requestId);
+      if (res.error) return asset ? "Kunne ikke oppdatere møbelet eller inventaret. Prøv igjen." : "Kunne ikke lagre eiendelen.";
+      if (!inputs.rate.closest(".pt-field").hidden) {
+        const prior = data.elections[scope.key]?.[v.year];
+        const el = await inv.saveElection(v.year, Number(raw.rate), prior?.take_remainder ?? false, scope.key);
+        if (el.error) {
+          refresh();
+          return "Møbelet er lagret, men avskrivningsvalget kunne ikke lagres. Trykk Lagre for å prøve igjen.";
+        }
+      }
+      assetState.year = v.year;
+      refresh(asset ? "Møbelet eller inventaret er oppdatert." : "Eiendel lagret.");
+      return null;
+    },
+  });
+};
+
+const disposeForm = (asset) => {
+  act.openForm({
+    title: "Salg eller utrangering",
+    intro: "Salgsprisen reduserer det som står igjen. Skriv 0 hvis gjenstanden kastes uten salg.",
+    fields: [
+      { name: "date", label: "Dato", type: "date", value: todayISO(), required: true },
+      { name: "proceeds", label: "Salgssum, 0 hvis den kastes", type: "money", value: "", placeholder: "0", required: true },
+    ],
+    submitLabel: "Registrer salget",
+    onSubmit: async (v) => {
+      const proceeds = act.minorOf(v.proceeds);
+      if (proceeds == null) return "Skriv inn salgssum, eller 0 hvis den kastes.";
+      if (v.date < asset.purchase_date) return "Datoen kan ikke være før kjøpsdatoen.";
+      const res = await inv.disposeAsset(asset.id, v.date, proceeds);
+      if (res.error) return "Kunne ikke registrere salget.";
+      refresh("Salg eller utrangering er registrert.");
+      return null;
+    },
+  });
+};
+
+const metric = (title, caption, amount, ic, tone) => {
+  const k = h("section", "pt-card pt-kpi");
+  const top = h("div", "pt-kpi-top");
+  top.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("span", null, title));
+  k.append(top, h("p", "pt-kpi-value", kr(amount)));
+  if (caption) k.append(h("p", "pt-kpi-note", caption));
+  return k;
+};
+
+const saldoCard = (outlook, data) => {
+  const s = outlook.statement;
+  const c = card("Årets fradrag", "chart");
+  if (outlook.scope.key !== "private") c.append(h("p", "pt-ho-status", outlook.scope.title));
+  if (inv.scopeNeedsMunicipality(outlook.scope)) c.append(inline("Kommunen er ikke bekreftet for denne boligen. Saldoen holdes for seg, så den ikke blandes med en annen kommune. Åpne boligen og lagre adressen på nytt."));
+  const isIncome = s.incomeRecognitionMinor > 0;
+  const threshold = inv.thresholdMinor(s.taxYear);
+  const chosen = outlook.election;
+  const caption = isIncome
+    ? (s.incomeRecognitionMinor === -s.basisMinor ? "Hele den negative saldoen" : "20 % inntektsføring")
+    : s.canTakeRemainder && chosen?.take_remainder && s.depreciationMinor > 0
+      ? `Hele restverdien (under ${kr(threshold).replace(" kr", "")} kr)`
+      : s.basisMinor > 0 ? `${Math.round(s.rateBps / 100)} % av ${kr(s.basisMinor)}` : "";
+  const grid = h("section", "pt-kpis");
+  grid.append(
+    metric("Direkte fradrag i år", "", s.directDeductionMinor, "check", "is-success"),
+    metric(isIncome ? "Årets inntektsføring" : "Årets avskrivning", caption, isIncome ? s.incomeRecognitionMinor : s.depreciationMinor, "tax", "is-warning"),
+    metric("Totalt fradrag i år", "", s.directDeductionMinor + s.depreciationMinor - s.incomeRecognitionMinor, "chart", ""),
+  );
+  c.append(grid, h("p", "pt-muted", `Under ${kr(threshold)}: direkte fradrag. Fra ${kr(threshold)}: 20 % avskrivning.`));
+  if (s.maintenanceDeductionMinor > 0) {
+    const dl = h("dl", "pt-facts");
+    const d = h("div");
+    d.append(h("dt", null, "Vedlikehold, fast innredning"), h("dd", null, kr(s.maintenanceDeductionMinor)));
+    dl.append(d);
+    c.append(dl);
+  }
+  if (s.missingProceeds) c.append(inline("En solgt gjenstand mangler salgssum. Saldoen er ikke redusert for den."));
+  if (s.canTakeRemainder && !chosen?.take_remainder) {
+    c.append(actionsRow(button("Trekk fra resten nå", "pt-btn-soft pt-btn-small", async () => {
+      const res = await inv.saveElection(s.taxYear, chosen?.rate_bps ?? s.rateBps, true, outlook.scope.key);
+      if (res.error) act.toast("Valget vises her, men kunne ikke lagres.");
+      else refresh();
+    })));
+  } else if (s.negativeBalanceIsIncome) c.append(h("p", "pt-muted", "Negativ saldo tas til inntekt. Under 30 000 kr tas hele beløpet."));
+  return c;
+};
+
+const assetRow = (item, row, alloc, data, showProperty) => {
+  const li = h("li", "pt-row pt-row-stack");
+  const top = h("div", "pt-row-line");
+  const main = h("div", "pt-row-main");
+  main.append(h("strong", null, item.name), h("span", null, [`Kjøpt ${dateText(item.purchaseDate)}`, showProperty ? item.propertyName : null, item.disposalDate ? "Solgt eller utrangert" : null].filter(Boolean).join(" · ")));
+  const d = inv.decision(item);
+  const [badge, tone] = inv.BADGE[d];
+  const amount = row.isPurchase ? item.purchaseAmountMinor : row.closingMinor ?? row.openingMinor ?? item.purchaseAmountMinor;
+  const side = h("div", "pt-row-side");
+  side.append(h("span", "pt-amount", kr(amount)), h("span", `pt-chip ${tone}`.trim(), badge));
+  top.append(icon("sofa", "pt-icon-circle is-tax"), main, side);
+  li.append(top);
+  const manager = isManager(item.propertyId);
+  const detail = h("div", "pt-asset-detail");
+  const open = assetState.open.has(item.id);
+  detail.hidden = !open;
+  const toggle = button(open ? "Lukk oversikt over avskrivning" : "Oversikt over avskrivning", "pt-btn-soft pt-btn-small", () => {
+    const now = !assetState.open.has(item.id);
+    if (now) assetState.open.add(item.id); else assetState.open.delete(item.id);
+    detail.hidden = !now;
+    toggle.textContent = now ? "Lukk oversikt over avskrivning" : "Oversikt over avskrivning";
+  });
+  const dl = h("dl", "pt-facts");
+  const fact = (k, v) => {
+    const x = h("div");
+    x.append(h("dt", null, k), h("dd", null, v));
+    dl.append(x);
+  };
+  if (row.isPurchase || row.openingMinor == null) fact("Total kjøpesum", kr(item.purchaseAmountMinor));
+  else fact("Restverdi 1.1.", kr(row.openingMinor));
+  if (row.depreciationMinor != null) fact(row.takesRemainder ? "Avskrivning i år (hele restverdien)" : d === "groupD" ? `Avskrivning i år (${Math.round(row.rateBps / 100)} %)` : "Direkte fradrag i år", kr(row.depreciationMinor));
+  if (row.closingMinor != null) fact("Gjenstående til neste år", kr(row.closingMinor));
+  detail.append(dl, h("p", "pt-muted", inv.DECISION_TEXT[d]));
+  const asset = data.assets[item.id];
+  detail.append(actionsRow(
+    manager ? button("Rediger", "pt-btn-soft pt-btn-small", () => assetForm(item.propertyId, data, asset)) : null,
+    manager && !item.disposalDate ? button("Selg eller utranger", "pt-btn-soft pt-btn-small", () => disposeForm(asset)) : null,
+  ));
+  li.append(actionsRow(toggle), detail);
+  return li;
+};
+
+const assetsPage = async (pid) => {
+  const thisYear = new Date().getFullYear();
+  const year = assetState.year ?? thisYear;
+  const back = h("a", "pt-back", "‹ Økonomi");
+  back.href = "#okonomi";
+  const data = await cached("inventory", loadInventory);
+  const head = card("Møbler og inventar", "sofa");
+  head.append(h("p", "pt-muted", "Du kan få skattefradrag for møbler og inventar som brukes i utleien."));
+  const info = h("div", "pt-mileage-info");
+  info.hidden = !assetState.infoOpen;
+  for (const [tag, text] of ASSETS_DETAILS) {
+    if (tag === "ul") {
+      const ul = h("ul", "pt-bullets");
+      for (const t of text) ul.append(h("li", null, t));
+      info.append(ul);
+    } else info.append(h(tag === "muted" ? "p" : tag, tag === "muted" ? "pt-muted" : null, text));
+  }
+  const toggle = button(assetState.infoOpen ? "Vis mindre" : "Les mer", "pt-btn-soft pt-btn-small", () => {
+    assetState.infoOpen = !assetState.infoOpen;
+    info.hidden = !assetState.infoOpen;
+    toggle.textContent = assetState.infoOpen ? "Vis mindre" : "Les mer";
+  });
+  if (data.error) {
+    head.append(actionsRow(toggle), info, inline("Kunne ikke laste eiendeler."));
+    return [back, head];
+  }
+  const firstYear = Math.min(thisYear, year, ...data.items.map((i) => inv.yearOf(i.purchaseDate)).filter(Boolean));
+  const yearLabel = h("label", "pt-field pt-filter");
+  const select = h("select", "pt-select");
+  for (let y = thisYear; y >= firstYear; y--) {
+    const o = h("option", null, String(y));
+    o.value = String(y);
+    o.selected = y === year;
+    select.append(o);
+  }
+  select.addEventListener("change", () => { assetState.year = Number(select.value); render(); });
+  yearLabel.append(h("span", "pt-field-label", "År"), select);
+  head.append(actionsRow(toggle, isManager(pid) ? button("Legg til møbel eller inventar", "pt-btn-primary pt-btn-small", () => assetForm(pid, data)) : null), info, yearLabel);
+  const view = inv.yearView(data.items, year, data.elections);
+  const cards = view.outlooks.map((o) => saldoCard(o, data));
+  const list = card("Registrerte møbler", "sofa");
+  const shown = data.items.filter((i) => view.rows[i.id]);
+  const showProperty = new Set(data.items.map((i) => i.propertyId)).size > 1;
+  if (!shown.length) list.append(inline("Ingen møbler eller inventar registrert."));
+  else {
+    const ul = h("ul", "pt-list");
+    for (const i of shown) ul.append(assetRow(i, view.rows[i.id], view.allocations[i.id], data, showProperty));
+    list.append(ul, h("p", "pt-muted", `${shown.length} ${shown.length === 1 ? "møbel" : "møbler"} registrert.`));
+  }
+  list.append(h("p", "pt-muted", "Estimater er til din egen planlegging. Det er ikke skatteråd og ikke skattemelding."));
+  return [back, head, ...cards, list];
+};
+
 const PAGES = {
   async oversikt() {
     const out = [band()];
@@ -3211,6 +3502,7 @@ const PAGES = {
     const p = property();
     if (!p) return [noProperty()];
     if (sub === "kjorebok") return mileagePage(p.id);
+    if (sub === "mobler") return assetsPage(p.id);
     return [await kpis(p.id), economyTiles(), ...(await transactionList(p.id))];
   },
   async "om-boligen"() {
@@ -3603,7 +3895,7 @@ const load = async (session, isRefresh = false) => {
   state.user = user;
   const [profileRes, propertiesRes, propertyRolesRes, tenancyRolesRes, tenanciesRes, tasksRes] = await Promise.all([
     supabase.from("profiles").select("first_name, display_name").eq("id", user.id).maybeSingle(),
-    supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override")
+    supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override, municipality_number, municipality_name")
       .eq("lifecycle_status", "active").order("created_at", { ascending: false }),
     supabase.from("property_members").select("property_id, role").eq("user_id", user.id).is("valid_until", null),
     supabase.from("tenancy_members").select("tenancy_id, role").eq("user_id", user.id).is("valid_until", null),
