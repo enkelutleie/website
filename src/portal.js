@@ -4677,12 +4677,11 @@ const premiumGate = (unknown) => {
 const load = async (session, isRefresh = false) => {
   const user = session.user;
   state.user = user;
-  const [profileRes, propertiesRes, propertyRolesRes, tenancyRolesRes, tenanciesRes, tasksRes] = await Promise.all([
+  const [profileRes, propertiesRes, propertyRolesRes, tenanciesRes, tasksRes] = await Promise.all([
     supabase.from("profiles").select("first_name, display_name").eq("id", user.id).maybeSingle(),
     supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override, municipality_number, municipality_name")
       .eq("lifecycle_status", "active").order("created_at", { ascending: false }),
     supabase.from("property_members").select("property_id, role").eq("user_id", user.id).is("valid_until", null),
-    supabase.from("tenancy_members").select("tenancy_id, role").eq("user_id", user.id).is("valid_until", null),
     supabase.from("tenancies").select("id, property_id, status, start_date, end_date")
       .in("status", VISIBLE_TENANCY_STATUSES).is("archived_at", null).order("start_date", { ascending: false }),
     supabase.from("maintenance_requests").select("property_id").in("status", OPEN_TASK_STATUSES),
@@ -4694,24 +4693,19 @@ const load = async (session, isRefresh = false) => {
   const manages = (pid) => ["owner", "co_landlord"].includes(state.roles.get(pid));
   state.properties = (propertiesRes.data ?? []).filter((p) => manages(p.id));
   state.tenancies = (tenanciesRes.data ?? []).filter((t) => manages(t.property_id));
-  const tenantOf = new Set((tenancyRolesRes.data ?? []).filter((r) => r.role === "tenant").map((r) => r.tenancy_id));
   if (!tasksRes.error) {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
   }
-  // Premium gate: as in the app, landlords need Premium; tenants use the app for free.
+  // Premium gate: every portal user needs Premium, with no exceptions.
   if (!isRefresh) {
-    const managesAny = [...state.roles.values()].some((r) => r === "owner" || r === "co_landlord");
-    const tenantOnly = !managesAny && tenantOf.size > 0;
-    if (!tenantOnly) {
-      const premium = await act.hasPremium();
-      if (!premium.ok) {
-        root.querySelector("[data-user-name]").textContent = state.name || "Min side";
-        root.querySelector("[data-avatar]").textContent = (state.name || "?").charAt(0).toUpperCase();
-        root.setAttribute("aria-busy", "false");
-        premiumGate(premium.unknown);
-        return;
-      }
+    const premium = await act.hasPremium();
+    if (!premium.ok) {
+      root.querySelector("[data-user-name]").textContent = state.name || "Min side";
+      root.querySelector("[data-avatar]").textContent = (state.name || "?").charAt(0).toUpperCase();
+      root.setAttribute("aria-busy", "false");
+      premiumGate(premium.unknown);
+      return;
     }
   }
   let saved = null;
