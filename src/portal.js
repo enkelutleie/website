@@ -36,6 +36,8 @@ const HANDBOOK_TILES = [
 ];
 
 // Sidebar. landlordOnly items are hidden for tenants (no Økonomi for leietaker).
+// sub items are indented under «Om boligen» (the selected property). route defaults to id;
+// a route with a sub-path (vedlikehold/historikk) wins over its parent route when active.
 const NAV = [
   { group: null, items: [
     { id: "oversikt", label: "Oversikt", icon: "house" },
@@ -44,15 +46,16 @@ const NAV = [
   ] },
   { group: "Bolig", items: [
     { id: "om-boligen", label: "Om boligen", icon: "info" },
-    { id: "boligperm", label: "Boligperm", icon: "book" },
+    { id: "boligperm", label: "Boligperm", icon: "book", sub: true },
+    { id: "dokumenter", label: "Dokumenter og maler", tenantLabel: "Delte dokumenter", icon: "folder", sub: true },
+    { id: "vedlikehold", route: "vedlikehold/historikk", label: "Vedlikeholdshistorikk", icon: "history", sub: true, landlordOnly: true },
+    { id: "bilder", label: "Boligbilder", icon: "photo", sub: true, landlordOnly: true },
     { id: "kalender", label: "Kalender", icon: "calendar" },
     { id: "vedlikehold", label: "Vedlikehold", icon: "wrench" },
-    { id: "bilder", label: "Bilder", icon: "photo" },
   ] },
   { group: "Leieforhold", items: [
     { id: "inn-utflytting", label: "Inn- og utflytting", icon: "handover" },
     { id: "leiekontrakt", label: "Leiekontrakt", icon: "contract" },
-    { id: "dokumenter", label: "Dokumenter", tenantLabel: "Delte dokumenter", icon: "folder" },
     { id: "meldinger", label: "Meldinger", icon: "chat" },
     { id: "historikk", label: "Leiehistorikk", icon: "history", landlordOnly: true },
   ] },
@@ -4133,11 +4136,6 @@ const incomingCoLandlordCard = async () => {
 };
 
 /* ---------- Boligbilder (PropertyDetailTopCard / PropertyGalleryViewer) ---------- */
-const linkButton = (label, href) => {
-  const l = h("a", "pt-btn pt-btn-soft pt-btn-small", label);
-  l.href = href;
-  return l;
-};
 const GALLERY_LIMIT_TEXT = "Du kan ha opptil 12 bilder per bolig. Slett et bilde for å legge til et nytt.";
 
 const galleryViewer = (images, start, urls, onRemove) => {
@@ -4286,13 +4284,8 @@ const PAGES = {
       d.append(h("dt", null, k), h("dd", null, v));
       dl.append(d);
     });
-    const links = h("div", "pt-links");
-    [["Boligperm", "#boligperm"], ["Dokumenter og maler", "#dokumenter"], ["Vedlikeholdshistorikk", isManager() ? "#vedlikehold/historikk" : "#vedlikehold"]].forEach(([t, href]) => {
-      const l = h("a", "pt-btn pt-btn-soft pt-btn-small", t);
-      l.href = href;
-      links.append(l);
-    });
-    c.append(dl, links);
+    // Boligperm, Dokumenter og maler, Vedlikeholdshistorikk and Boligbilder live in the sidebar.
+    c.append(dl);
     const out = [band()];
     const photo = await act.coverPhotoUrl(p.id).catch(() => null);
     if (photo) {
@@ -4306,7 +4299,6 @@ const PAGES = {
       c.append(actionsRow(
         button("Rediger informasjon", "pt-btn-soft pt-btn-small", () => propertyForm(p)),
         button("Last opp bilde", "pt-btn-secondary pt-btn-small", () => photoForm(p)),
-        linkButton("Boligbilder", "#bilder"),
       ));
     }
     if (p.finn_code) {
@@ -4713,6 +4705,10 @@ const startBell = () => {
 /* ---------- shell ---------- */
 const visibleNav = () => NAV.map((g) => ({ ...g, items: g.items.filter((i) => !(i.landlordOnly && !isLandlord())) }));
 const allItems = () => visibleNav().flatMap((g) => g.items);
+const routeOf = (i) => i.route ?? i.id;
+// The active item for a hash: an exact sub-route (#vedlikehold/historikk) first, else the page itself.
+const activeItem = (items, id, sub) =>
+  (sub ? items.find((i) => routeOf(i) === `${id}/${sub}`) : null) ?? items.find((i) => routeOf(i) === id) ?? null;
 
 const renderNav = (current) => {
   const nav = root.querySelector("[data-nav]");
@@ -4721,11 +4717,11 @@ const renderNav = (current) => {
   for (const g of visibleNav()) {
     if (g.group) nav.append(h("p", "pt-nav-group", g.group));
     for (const i of g.items) {
-      const a = h("a");
-      a.href = `#${i.id}`;
+      const a = h("a", i.sub ? "pt-nav-sub" : null);
+      a.href = `#${routeOf(i)}`;
       a.innerHTML = ICONS[i.icon];
       a.append(h("span", null, tenant && i.tenantLabel ? i.tenantLabel : i.label));
-      if (i.id === current) a.setAttribute("aria-current", "page");
+      if (routeOf(i) === current) a.setAttribute("aria-current", "page");
       nav.append(a);
     }
   }
@@ -4742,9 +4738,9 @@ const render = async () => {
   // Sub-routes: #vedlikehold/<sak-id>, #vedlikehold/historikk and #kalender/<id>[/<sak-id>].
   let [id, sub, extra] = location.hash.slice(1).split("/");
   if (id === "overtakelse") id = "inn-utflytting";
-  if (!items.some((i) => i.id === id)) { id = "oversikt"; sub = undefined; extra = undefined; }
-  renderNav(id);
-  const item = items.find((i) => i.id === id);
+  let item = activeItem(items, id, sub);
+  if (!item) { id = "oversikt"; sub = undefined; extra = undefined; item = activeItem(items, id); }
+  renderNav(routeOf(item));
   root.querySelector("[data-page-title]").textContent = !isLandlord() && item.tenantLabel ? item.tenantLabel : item.label;
   const role = property() ? roleOf(state.propertyId) : null;
   root.querySelector("[data-user-role]").textContent = role ?? (state.roles.size ? "Utleier" : "");

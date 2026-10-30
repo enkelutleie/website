@@ -26,6 +26,11 @@ svg { flex: none; }
 .pt-nav a:hover { background: var(--soft-surface); text-decoration: none; }
 .pt-nav a[aria-current="page"] { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
 .pt-nav svg { width: 20px; height: 20px; color: var(--brand); }
+/* Sub-items under «Om boligen»: indented with a guide line, same active highlight as top items. */
+.pt-nav a.pt-nav-sub { margin-left: 20px; padding: 7px 10px 7px 12px; gap: var(--space-s); font-size: var(--fs-footnote); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; box-shadow: inset 2px 0 0 var(--brand-soft); }
+.pt-nav a.pt-nav-sub[aria-current="page"] { box-shadow: inset 2px 0 0 var(--brand); }
+.pt-nav a.pt-nav-sub svg { width: 16px; height: 16px; }
+.pt-nav a span { min-width: 0; overflow-wrap: anywhere; }
 
 /* Top bar */
 .pt-main { min-width: 0; display: flex; flex-direction: column; }
