@@ -2177,7 +2177,7 @@ const PRIVACY_VALID = [
 /** → { case_id } | { error: "blocked" | "unavailable" | "invalid" } */
 export async function requestPrivacyExport() {
   const { data, error } = await supabase.functions.invoke(PRIVACY_FN, { body: { action: "request" } });
-  // FunctionsFetchError: the browser blocked the call (the function sends no CORS origin today).
+  // FunctionsFetchError: the request never reached the function (network, or CORS for an origin outside the allowlist).
   if (error) return { error: error.name === "FunctionsFetchError" ? "blocked" : "unavailable" };
   const payload = typeof data === "string" ? (() => { try { return JSON.parse(data); } catch { return null; } })() : data;
   return typeof payload?.case_id === "string" ? { case_id: payload.case_id } : { error: "invalid" };
@@ -2216,7 +2216,10 @@ export async function downloadPrivacyExport(caseId) {
   const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   const disposition = (res.headers.get("content-disposition") ?? "").toLowerCase();
   const zip = new Uint8Array(await res.arrayBuffer());
-  if (type !== "application/zip" || !disposition.includes('filename="enkel-utleie-persondata.zip"') || !zip.length) return { error: "failed" };
+  // Cross-origin, Content-Disposition is only readable if the function exposes it
+  // (Access-Control-Expose-Headers); check it when visible, and always require ZIP bytes ("PK\x03\x04").
+  const isZip = zip.length > 4 && zip[0] === 0x50 && zip[1] === 0x4b && zip[2] === 0x03 && zip[3] === 0x04;
+  if (type !== "application/zip" || (disposition && !disposition.includes('filename="enkel-utleie-persondata.zip"')) || !isZip) return { error: "failed" };
   return { zip };
 }
 
