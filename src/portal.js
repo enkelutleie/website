@@ -4448,7 +4448,7 @@ function privacyExportCard() {
     }
     const a = h("a");
     a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-    a.download = privacy.FILE_NAME;
+    a.download = privacy.exportFileName(dl.disposition);
     document.body.append(a);
     a.click();
     a.remove();
