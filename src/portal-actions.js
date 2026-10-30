@@ -815,30 +815,6 @@ export async function signAsLandlord(a, ink) {
   return signResult(res, ["ready"]);
 }
 
-// TenantLeaseContractController.submitSignature: contract-pdf intent "sign" with tenant_ink.
-export async function signAsTenant(lease, ink) {
-  const res = await supabase.functions.invoke("contract-pdf", {
-    body: { agreement_id: lease.agreement_id, version_id: lease.version_id, intent: "sign", tenant_ink: ink },
-  });
-  return signResult(res, ["signature_recorded", "signed", "already_signed"]);
-}
-
-export const rejectAgreement = (lease, reason) =>
-  supabase.rpc("reject_rental_agreement", {
-    requested_agreement_id: lease.agreement_id,
-    requested_version_id: lease.version_id,
-    requested_reason: reason,
-  });
-
-// Lease pointer + signature rows: by tenancy for tenants, by agreement for managers.
-export async function myTenancyLease(tenancyId) {
-  const [lease, parties] = await Promise.all([
-    supabase.rpc("get_my_tenancy_lease", { requested_tenancy_id: tenancyId }),
-    supabase.rpc("list_my_tenancy_lease_parties", { requested_tenancy_id: tenancyId }),
-  ]);
-  if (lease.error) return { error: lease.error };
-  return { data: first(lease.data) ?? null, parties: parties.data ?? [] };
-}
 export async function agreementLease(agreementId) {
   const [lease, parties] = await Promise.all([
     supabase.rpc("get_rental_agreement_lease_by_id", { requested_agreement_id: agreementId }),
@@ -1145,7 +1121,6 @@ export const deleteChatMessage = (conversationId, messageId) =>
 export const chatTenantMembers = (tenancyIds) =>
   supabase.from("tenancy_members").select("tenancy_id, user_id").in("tenancy_id", tenancyIds).eq("role", "tenant").eq("invitation_status", "accepted");
 export const linkedContacts = (userIds) => supabase.rpc("list_linked_profile_contacts", { requested_user_ids: userIds });
-export const myTenancies = () => supabase.rpc("list_my_tenancies");
 // Rows without counterpart_avatars (v1 server) get one list_chat_counterpart_avatars call each.
 export const chatCounterpartAvatars = (conversationId) =>
   supabase.rpc("list_chat_counterpart_avatars", { requested_conversation_id: conversationId });

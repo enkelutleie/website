@@ -35,21 +35,21 @@ const HANDBOOK_TILES = [
   ["maintenance_tips", "Vedlikeholdstips", "wrench", ""],
 ];
 
-// Sidebar. landlordOnly items are hidden for tenants (no Økonomi for leietaker).
+// Sidebar. The web portal is always the landlord (utleier) view; the tenant role is only in the app.
 // sub items are indented under «Om boligen» (the selected property). route defaults to id;
 // a route with a sub-path (vedlikehold/historikk) wins over its parent route when active.
 const NAV = [
   { group: null, items: [
     { id: "oversikt", label: "Oversikt", icon: "house" },
-    { id: "boliger", label: "Boliger", tenantLabel: "Min bolig", icon: "building" },
-    { id: "okonomi", label: "Økonomi", icon: "chart", landlordOnly: true },
+    { id: "boliger", label: "Boliger", icon: "building" },
+    { id: "okonomi", label: "Økonomi", icon: "chart" },
   ] },
   { group: "Bolig", items: [
     { id: "om-boligen", label: "Om boligen", icon: "info" },
     { id: "boligperm", label: "Boligperm", icon: "book", sub: true },
-    { id: "dokumenter", label: "Dokumenter og maler", tenantLabel: "Delte dokumenter", icon: "folder", sub: true },
-    { id: "vedlikehold", route: "vedlikehold/historikk", label: "Vedlikeholdshistorikk", icon: "history", sub: true, landlordOnly: true },
-    { id: "bilder", label: "Boligbilder", icon: "photo", sub: true, landlordOnly: true },
+    { id: "dokumenter", label: "Dokumenter og maler", icon: "folder", sub: true },
+    { id: "vedlikehold", route: "vedlikehold/historikk", label: "Vedlikeholdshistorikk", icon: "history", sub: true },
+    { id: "bilder", label: "Boligbilder", icon: "photo", sub: true },
     { id: "kalender", label: "Kalender", icon: "calendar" },
     { id: "vedlikehold", label: "Vedlikehold", icon: "wrench" },
   ] },
@@ -57,13 +57,13 @@ const NAV = [
     { id: "inn-utflytting", label: "Inn- og utflytting", icon: "handover" },
     { id: "leiekontrakt", label: "Leiekontrakt", icon: "contract" },
     { id: "meldinger", label: "Meldinger", icon: "chat" },
-    { id: "historikk", label: "Leiehistorikk", icon: "history", landlordOnly: true },
+    { id: "historikk", label: "Leiehistorikk", icon: "history" },
   ] },
   { group: "Konto", items: [{ id: "innstillinger", label: "Innstillinger", icon: "gear" }] },
 ];
 
 const state = {
-  user: null, name: null, properties: [], tenancies: [], roles: new Map(), tenantOf: new Set(),
+  user: null, name: null, properties: [], tenancies: [], roles: new Map(),
   propertyId: null, openTasks: new Map(), cache: new Map(), receiptFilter: "all",
 };
 
@@ -96,13 +96,7 @@ const roleOf = (id) => {
   const r = state.roles.get(id);
   if (r === "owner") return "Utleier";
   if (r === "co_landlord") return "Medutleier";
-  if (state.tenancies.some((t) => t.property_id === id && state.tenantOf.has(t.id))) return "Leietaker";
   return null;
-};
-const isLandlord = () => {
-  const r = property() ? roleOf(state.propertyId) : null;
-  if (r) return r !== "Leietaker";
-  return state.roles.size > 0;
 };
 const cached = (key, fn) => {
   if (!state.cache.has(key)) state.cache.set(key, fn().catch(() => ({ error: true })));
@@ -272,17 +266,15 @@ const kpis = async (pid) => {
 // SharedPropertyCalendarAccess (iOS #1521). The list RPC sends can_respond and
 // maintenance_request_readable. Without them (table read, or before the migration) the
 // caller's own active tenancies decide, which is the same as before the shared calendar.
-const myActiveTenancy = (tid) => !!tid && state.tenantOf.has(tid) && state.tenancies.some((t) => t.id === tid && t.status === "active");
 const calendarCanRespond = (item, manager) => {
   if (manager || item.status !== "active") return false;
   if (typeof item.can_respond === "boolean") return item.can_respond;
-  if (!item.tenancy_id) return false;
-  return !item.maintenance_request_id || myActiveTenancy(item.tenancy_id);
+  return false;
 };
 const calendarShowsCase = (item, manager) => {
   if (!item.maintenance_request_id) return false;
   if (typeof item.maintenance_request_readable === "boolean") return item.maintenance_request_readable;
-  return manager || myActiveTenancy(item.tenancy_id);
+  return manager;
 };
 
 const calendarTime = (value) => new Date(value).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
@@ -508,13 +500,9 @@ const tenancyCard = async (pid) => {
 };
 
 const propertiesTable = () => {
-  const c = card(isLandlord() ? "Boliger" : "Min bolig", "building");
-  const canCreate = isLandlord() || !state.tenantOf.size;
-  if (canCreate) c.append(actionsRow(button("Ny bolig", "pt-btn-primary pt-btn-small", () => propertyForm())));
-  if (!state.properties.length) {
-    c.append(inline("Ingen boliger ennå."));
-    return c;
-  }
+  if (!state.properties.length) return noPropertiesYet();
+  const c = card("Boliger", "building");
+  c.append(actionsRow(button("Ny bolig", "pt-btn-primary pt-btn-small", () => propertyForm())));
   const wrap = h("div", "pt-table-wrap");
   const table = h("table", "pt-table");
   const thead = h("thead");
@@ -1033,53 +1021,6 @@ const signaturesList = (parties) => {
   return wrap;
 };
 
-// TenantLeaseContractController phases.
-const leasePhase = (lease) => {
-  if (!lease?.agreement_id) return "notSent";
-  if (lease.agreement_status === "signed" || lease.both_parties_signed_confirmed) return lease.document_id ? "fullySigned" : "signatureSaved";
-  if (lease.awaiting_caller_signature) return "awaitingCaller";
-  if (lease.agreement_status === "ready_for_review" || lease.agreement_status === "draft") return "waitingForLandlord";
-  if (lease.recorded_signature_count > 0) return "waitingForOthers";
-  return "waitingForLandlord";
-};
-const LEASE_PHASE = {
-  notSent: ["Ingen leiekontrakt ennå", null],
-  waitingForLandlord: ["Venter på utleier", " is-warning"],
-  awaitingCaller: ["Venter på din signatur", " is-warning"],
-  waitingForOthers: ["Du har signert. Venter på øvrige.", " is-warning"],
-  signatureSaved: ["Signaturen er lagret. Den signerte PDF-en er ikke klar ennå.", ""],
-  fullySigned: ["Kontrakten er signert.", " is-success"],
-};
-
-const tenantSignForm = (lease, title = "Godkjenn og signer") =>
-  act.signatureForm({
-    title,
-    intro: "Les kontrakten. Fyll inn sted og dato, skriv navnet ditt og tegn signaturen. En signatur tegnet her kan binde partene. Det er ikke BankID.",
-    name: state.name,
-    submitLabel: "Signer",
-    onSubmit: async (ink) => {
-      const res = await act.signAsTenant(lease, ink);
-      if (res.message) return res.message;
-      await refresh(res.outcome === "signed" ? "Kontrakten er signert." : "Signaturen er lagret.");
-      return null;
-    },
-  });
-
-const rejectForm = (lease) =>
-  act.openForm({
-    title: "Avvis kontrakten",
-    intro: "Utleier ser begrunnelsen og kan lage et nytt utkast.",
-    submitLabel: "Avvis",
-    submitClass: "pt-btn-destructive",
-    fields: [{ name: "reason", label: "Begrunnelse", type: "textarea", required: true, maxLength: 500, rows: 3 }],
-    onSubmit: async (v) => {
-      const err = rpcError(await act.rejectAgreement(lease, v.reason.trim()));
-      if (err) return err;
-      await refresh("Kontrakten er avvist.");
-      return null;
-    },
-  });
-
 const changeRow = (ch, extra = []) => {
   const li = h("li", "pt-row");
   const main = h("div", "pt-row-main");
@@ -1106,70 +1047,6 @@ const respondButtons = (ch) => (ch.can_respond ? [
   }),
 ] : []);
 const OPEN_CHANGE = ["draft", "pending", "accepted"];
-
-// Tenant view: one card per own tenancy on this property (TenantLeaseContractView).
-const tenantContractCards = async (p) => {
-  const mine = state.tenancies.filter((t) => t.property_id === p.id && state.tenantOf.has(t.id));
-  if (!mine.length) return [emptyPage("contract", "Leiekontrakt", `Leiekontrakten for ${p.display_name || "boligen"} vises her når den er tilgjengelig.`)];
-  const cards = [];
-  for (const t of mine) {
-    const c = card("Leiekontrakt", "contract");
-    const res = await act.myTenancyLease(t.id);
-    if (res.error) {
-      c.append(inline("Leiekontrakten kunne ikke lastes. Prøv igjen."));
-      cards.push(c);
-      continue;
-    }
-    const lease = res.data;
-    const phase = leasePhase(lease);
-    const [label, tone] = LEASE_PHASE[phase];
-    const head = h("div", "pt-row");
-    const main = h("div", "pt-row-main");
-    main.append(h("strong", null, label), h("span", null, t.start_date ? `Leieforhold fra ${dateText(t.start_date)}` : "Leieforhold"));
-    head.append(icon("contract"), main);
-    if (tone != null) head.append(h("span", `pt-chip${tone}`, phase === "fullySigned" ? "Signert" : phase === "awaitingCaller" ? "Venter på signering" : "Venter"));
-    c.append(head);
-    if (phase === "notSent") {
-      c.append(inline(`Leiekontrakten for ${p.display_name || "boligen"} vises her når den er tilgjengelig.`));
-      cards.push(c);
-      continue;
-    }
-    if (res.parties.length) c.append(signaturesList(res.parties));
-    const buttons = [];
-    if (lease.document_id) {
-      buttons.push(pdfButton(phase === "fullySigned" ? "Last ned signert PDF" : "Åpne PDF", "pt-btn-secondary pt-btn-small", () => act.documentPdf(lease.document_id)));
-    }
-    if (phase === "awaitingCaller") {
-      buttons.push(button("Godkjenn og signer", "pt-btn-primary pt-btn-small", () => tenantSignForm(lease)));
-      buttons.push(button("Avvis", "pt-btn-quiet-destructive pt-btn-small", () => rejectForm(lease)));
-    }
-    if (buttons.length) c.append(actionsRow(...buttons));
-    // Proposed changes to a signed contract: approve/decline, then sign the replacement.
-    if (phase === "fullySigned" || phase === "signatureSaved") {
-      const ch = await act.listChanges(lease.agreement_id);
-      const open = (ch.data ?? []).filter((x) => OPEN_CHANGE.includes(x.status));
-      if (open.length) {
-        const ul = h("ul", "pt-list");
-        for (const x of open) {
-          const extra = respondButtons(x);
-          if (x.replacement_agreement_id && x.status !== "draft") {
-            const rep = await act.agreementLease(x.replacement_agreement_id);
-            if (rep.data?.awaiting_caller_signature) {
-              if (rep.data.document_id) extra.push(pdfButton("Åpne ny kontrakt", "pt-btn-secondary pt-btn-small", () => act.documentPdf(rep.data.document_id)));
-              extra.push(button("Signer ny kontrakt", "pt-btn-primary pt-btn-small", () => tenantSignForm(rep.data, "Signer ny kontrakt")));
-            }
-          }
-          ul.append(changeRow(x, extra));
-        }
-        const wrap = h("div");
-        wrap.append(h("p", "pt-label", "Forslag til endringer"), ul);
-        c.append(wrap);
-      }
-    }
-    cards.push(c);
-  }
-  return cards;
-};
 
 const landlordSignForm = (a) =>
   act.signatureForm({
@@ -1420,7 +1297,15 @@ const handbookForm = (pid, key, label, body) =>
     },
   });
 
-const noProperty = () => emptyPage("building", "Ingen bolig valgt", "Når du har en bolig i appen, kan du se den her.");
+// A landlord with no properties yet: the same «Ny bolig» action as on Boliger.
+const noPropertiesYet = () => {
+  const c = emptyPage("building", "Ingen boliger ennå", "Legg til den første boligen din for å komme i gang. Du kan også legge til boliger i appen.");
+  c.append(button("Ny bolig", "pt-btn-primary", () => propertyForm()));
+  return c;
+};
+const noProperty = () => (state.properties.length
+  ? emptyPage("building", "Ingen bolig valgt", "Velg en bolig i menyen øverst.")
+  : noPropertiesYet());
 
 /* ---------- Meldinger (ChatView / ChatController) ---------- */
 const chatTime = (iso) => {
@@ -1438,7 +1323,7 @@ const joinNames = (people) => {
   return names.length ? names.join(", ") : null;
 };
 // Who is on the other side of each row: tenants from tenancy_members + list_linked_profile_contacts
-// for landlords, the owner from list_my_tenancies for tenants (SupabaseChatListPeopleRemote).
+// (SupabaseChatListPeopleRemote). The portal is landlord-only, so tenant chats are never listed.
 async function chatPeople(convs) {
   const labels = new Map();
   const tenantPresent = new Map();
@@ -1455,14 +1340,6 @@ async function chatPeople(convs) {
       if (name) labels.set(c.conversation_id, name);
     }
   }
-  if (convs.some((c) => c.role_snapshot === "tenant" && !c.is_property_chat)) {
-    const owners = (await act.myTenancies()).data ?? [];
-    for (const c of convs.filter((x) => x.role_snapshot === "tenant" && !x.is_property_chat)) {
-      const o = owners.find((t) => t.tenancy_id === c.tenancy_id);
-      const name = o && (o.owner_display_name?.trim() || o.owner_email?.trim());
-      if (name) labels.set(c.conversation_id, name);
-    }
-  }
   return { labels, tenantPresent };
 }
 
@@ -1470,11 +1347,10 @@ async function chatPage() {
   await act.provisionChats();
   const res = await act.listChatConversations();
   if (res.error) return [emptyPage("chat", "Ingen samtaler", "Kunne ikke hente samtalene dine. Prøv igjen.")];
-  const all = res.data ?? [];
+  // Landlord-only portal: chats where you are the tenant stay in the app.
+  const all = (res.data ?? []).filter((c) => c.role_snapshot !== "tenant");
   const p = property();
-  // A selected property shows its chats in the mode you have there (landlord or tenant), like the app's filter.
-  const tenantMode = p ? !isManager(p.id) : false;
-  const convs = p ? all.filter((c) => c.property_id === p.id && (c.role_snapshot === "tenant") === tenantMode) : all;
+  const convs = p ? all.filter((c) => c.property_id === p.id) : all;
   if (!all.length) return [emptyPage("chat", "Ingen samtaler", "Du har ikke et aktivt leieforhold med noen du kan chatte med ennå.")];
   if (!convs.length) return [emptyPage("chat", "Ingen samtale", "Det finnes ingen samtale for denne boligen ennå. Inviter en leietaker for å starte en samtale, eller oppdater listen hvis leieforholdet allerede er aktivt.")];
   await Promise.all(convs.filter((c) => !Array.isArray(c.counterpart_avatars)).map(async (c) => {
@@ -1482,9 +1358,9 @@ async function chatPage() {
     c.counterpart_avatars = r.data ?? [];
   }));
   const { labels, tenantPresent } = await chatPeople(convs);
-  const titleOf = (c) => (c.is_property_chat ? "Alle i boligen" : labels.get(c.conversation_id) ?? (c.role_snapshot === "tenant" ? "Utleier" : "Leietaker"));
+  const titleOf = (c) => (c.is_property_chat ? "Alle i boligen" : labels.get(c.conversation_id) ?? "Leietaker");
   const placeOf = (c) => [c.property_display_name, c.unit_display_label].filter(Boolean).join(" · ");
-  const needsInvite = (c) => c.role_snapshot !== "tenant" && !c.is_property_chat && c.conversation_status === "active" && tenantPresent.get(c.conversation_id) === false;
+  const needsInvite = (c) => !c.is_property_chat && c.conversation_status === "active" && tenantPresent.get(c.conversation_id) === false;
 
   const shell = h("section", "pt-card pt-chat");
   const list = h("nav", "pt-chat-list");
@@ -1722,7 +1598,6 @@ const mtStatusChip = (r) => h("span", `pt-chip ${r.status === "resolved" ? "pt-c
 const mtTime = (v) => new Date(v).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
 const mtDateTime = (v) => `${dateText(v)} kl. ${mtTime(v)}`;
 const mtActiveTenancies = (pid) => state.tenancies.filter((t) => t.property_id === pid && t.status === "active");
-const mtTenantTenancy = (pid) => mtActiveTenancies(pid).find((t) => state.tenantOf.has(t.id));
 const mtSortEvents = (events) => events.sort((a, b) => (a.created_at === b.created_at ? (a.id < b.id ? -1 : 1) : new Date(a.created_at) - new Date(b.created_at)));
 const mtFinished = (rows) => rows.filter(act.isFinishedMaintenance)
   .sort((a, b) => new Date(b.resolved_at || b.updated_at) - new Date(a.resolved_at || a.updated_at));
@@ -1780,7 +1655,7 @@ const maintenanceForm = async (pid) => {
     submitLabel: "Send inn sak",
     onSubmit: async (v) => {
       if (v.images.length > act.MAINTENANCE_IMAGE_LIMIT) return `En sak kan ha maksimalt ${act.MAINTENANCE_IMAGE_LIMIT} bilder.`;
-      const tenancyId = manager ? (v.visibility === "private" ? null : v.visibility) : mtTenantTenancy(pid)?.id;
+      const tenancyId = manager ? (v.visibility === "private" ? null : v.visibility) : null;
       if (!manager && !tenancyId) return "Du trenger et aktivt leieforhold for å melde inn en sak.";
       const res = await act.createMaintenance(pid, { tenancyId, title: v.title, description: v.description, category: v.category, priority: v.priority }, v.images);
       if (res.message) return res.message;
@@ -1813,7 +1688,7 @@ const maintenanceList = async (pid) => {
   const res = await act.listMaintenance(pid);
   const c = card("Vedlikehold", "wrench", manager ? ["Vedlikeholdshistorikk", "#vedlikehold/historikk"] : null);
   c.append(h("p", "pt-muted", manager ? "Følg opp innmeldte saker og registrer vedlikehold på boligen." : "Meld inn problemer og følg status på saker for leieforholdet ditt."));
-  if (manager || mtTenantTenancy(pid)) c.append(actionsRow(button("+ Ny sak", "pt-btn-primary pt-btn-small", () => maintenanceForm(pid))));
+  if (manager) c.append(actionsRow(button("+ Ny sak", "pt-btn-primary pt-btn-small", () => maintenanceForm(pid))));
   if (res.error) return [c, emptyPage("info", "Vedlikehold er ikke tilgjengelig", "Kontroller forbindelsen og prøv igjen.")];
   const rows = res.data ?? [];
   const active = rows.filter((r) => !act.isFinishedMaintenance(r));
@@ -1823,7 +1698,7 @@ const maintenanceList = async (pid) => {
     c.append(list);
   } else {
     const empty = h("div", "pt-mt-empty");
-    empty.append(h("strong", null, "Ingen vedlikeholdssaker"), h("p", "pt-muted", manager || mtTenantTenancy(pid)
+    empty.append(h("strong", null, "Ingen vedlikeholdssaker"), h("p", "pt-muted", manager
       ? "Opprett en sak når noe i boligen må følges opp."
       : "Du trenger et aktivt leieforhold for å melde inn en sak."));
     c.append(empty);
@@ -2366,7 +2241,7 @@ const HO_MARK = {
 const HO_SCOPE = { whole_tenancy: "Hele leieforholdet", one_room: "Ett rom", one_tenant: "Én leietaker" };
 const hoBack = () => mtBack("#inn-utflytting", "Inn- og utflytting");
 let hoTenancyId = null;
-const hoTenancies = (pid) => state.tenancies.filter((t) => t.property_id === pid && t.status === "active" && (isManager(pid) || state.tenantOf.has(t.id)));
+const hoTenancies = (pid) => state.tenancies.filter((t) => t.property_id === pid && t.status === "active" && isManager(pid));
 const hoTenancy = (pid) => {
   const list = hoTenancies(pid);
   return list.find((t) => t.id === hoTenancyId) ?? list[0] ?? null;
@@ -4254,11 +4129,9 @@ const PAGES = {
       out.push(propertiesTable());
       return out;
     }
-    if (isLandlord()) {
-      const ob = await onboarding();
-      if (ob) out.push(ob);
-      out.push(await kpis(p.id));
-    }
+    const ob = await onboarding();
+    if (ob) out.push(ob);
+    out.push(await kpis(p.id));
     const grid = h("div", "pt-grid-2");
     grid.append(await calendarCard(p.id), await tenancyCard(p.id));
     out.push(grid, propertiesTable());
@@ -4318,9 +4191,7 @@ const PAGES = {
     const res = await handbook(p.id);
     const bodies = new Map((res.data ?? []).filter((s) => s.body?.trim()).map((s) => [s.section_key, s.body.trim()]));
     const intro = h("section", "pt-card");
-    intro.append(h("p", "pt-muted", isLandlord()
-      ? "Boligpermen samler praktisk informasjon om boligen for leietakeren. Trykk Rediger på et kort for å fylle det ut."
-      : "All informasjon om boligen, samlet på ett sted."));
+    intro.append(h("p", "pt-muted", "Boligpermen samler praktisk informasjon om boligen for leietakeren. Trykk Rediger på et kort for å fylle det ut."));
     if (res.error) intro.append(inline("Boligpermen kunne ikke hentes akkurat nå."));
     const tiles = h("section", "pt-tiles");
     for (const [key, label, ic, tone] of HANDBOOK_TILES) {
@@ -4363,7 +4234,6 @@ const PAGES = {
   async leiekontrakt() {
     const p = property();
     if (!p) return [noProperty()];
-    if (!isManager(p.id)) return tenantContractCards(p);
     return [await landlordContractCard(p)];
   },
   dokumenter: documentsPage,
@@ -4377,7 +4247,7 @@ const PAGES = {
   async innstillinger() {
     const c = card("Konto", "person");
     const dl = h("dl", "pt-facts");
-    [["Navn", state.name || "–"], ["Rolle", isLandlord() ? "Utleier" : "Leietaker"]].forEach(([k, v]) => {
+    [["Navn", state.name || "–"], ["Rolle", "Utleier"]].forEach(([k, v]) => {
       const d = h("div");
       d.append(h("dt", null, k), h("dd", null, v));
       dl.append(d);
@@ -4390,7 +4260,7 @@ const PAGES = {
     privacy.href = "/personvern";
     links.append(out, privacy);
     c.append(dl, h("p", "pt-muted", "Profil, utseende og abonnement endres i appen."), links);
-    return isLandlord() ? [c, privacyExportCard(), await archivedCard()] : [c, privacyExportCard()];
+    return [c, privacyExportCard(), await archivedCard()];
   },
 };
 
@@ -4538,7 +4408,8 @@ const notificationTime = (value) => {
 };
 
 const bell = { scope: null, rows: [], more: false, loading: false, loadingMore: false, failed: false, open: false, token: 0, wakeTimer: null, stop: null };
-const bellScope = () => (isLandlord() ? "manager" : "tenant");
+// Landlord-only portal: the bell always reads the manager scope.
+const bellScope = () => "manager";
 const bellEls = () => ({ wrap: root.querySelector("[data-bell-wrap]"), btn: root.querySelector("[data-bell]") });
 
 const loadBell = async ({ quiet = false } = {}) => {
@@ -4703,7 +4574,7 @@ const startBell = () => {
 };
 
 /* ---------- shell ---------- */
-const visibleNav = () => NAV.map((g) => ({ ...g, items: g.items.filter((i) => !(i.landlordOnly && !isLandlord())) }));
+const visibleNav = () => NAV;
 const allItems = () => visibleNav().flatMap((g) => g.items);
 const routeOf = (i) => i.route ?? i.id;
 // The active item for a hash: an exact sub-route (#vedlikehold/historikk) first, else the page itself.
@@ -4713,14 +4584,13 @@ const activeItem = (items, id, sub) =>
 const renderNav = (current) => {
   const nav = root.querySelector("[data-nav]");
   nav.replaceChildren();
-  const tenant = !isLandlord();
   for (const g of visibleNav()) {
     if (g.group) nav.append(h("p", "pt-nav-group", g.group));
     for (const i of g.items) {
       const a = h("a", i.sub ? "pt-nav-sub" : null);
       a.href = `#${routeOf(i)}`;
       a.innerHTML = ICONS[i.icon];
-      a.append(h("span", null, tenant && i.tenantLabel ? i.tenantLabel : i.label));
+      a.append(h("span", null, i.label));
       if (routeOf(i) === current) a.setAttribute("aria-current", "page");
       nav.append(a);
     }
@@ -4741,9 +4611,9 @@ const render = async () => {
   let item = activeItem(items, id, sub);
   if (!item) { id = "oversikt"; sub = undefined; extra = undefined; item = activeItem(items, id); }
   renderNav(routeOf(item));
-  root.querySelector("[data-page-title]").textContent = !isLandlord() && item.tenantLabel ? item.tenantLabel : item.label;
+  root.querySelector("[data-page-title]").textContent = item.label;
   const role = property() ? roleOf(state.propertyId) : null;
-  root.querySelector("[data-user-role]").textContent = role ?? (state.roles.size ? "Utleier" : "");
+  root.querySelector("[data-user-role]").textContent = role ?? "Utleier";
   syncBellScope();
   const token = ++renderToken;
   let nodes;
@@ -4818,10 +4688,13 @@ const load = async (session, isRefresh = false) => {
     supabase.from("maintenance_requests").select("property_id").in("status", OPEN_TASK_STATUSES),
   ]);
   state.name = firstNameOf(profileRes.data, user);
-  state.properties = propertiesRes.data ?? [];
-  state.tenancies = tenanciesRes.data ?? [];
   state.roles = new Map((propertyRolesRes.data ?? []).map((r) => [r.property_id, r.role]));
-  state.tenantOf = new Set((tenancyRolesRes.data ?? []).filter((r) => r.role === "tenant").map((r) => r.tenancy_id));
+  // The web portal is always the landlord view. RLS also returns properties and tenancies where
+  // you are only the tenant; those stay in the app and are never shown here.
+  const manages = (pid) => ["owner", "co_landlord"].includes(state.roles.get(pid));
+  state.properties = (propertiesRes.data ?? []).filter((p) => manages(p.id));
+  state.tenancies = (tenanciesRes.data ?? []).filter((t) => manages(t.property_id));
+  const tenantOf = new Set((tenancyRolesRes.data ?? []).filter((r) => r.role === "tenant").map((r) => r.tenancy_id));
   if (!tasksRes.error) {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
@@ -4829,7 +4702,7 @@ const load = async (session, isRefresh = false) => {
   // Premium gate: as in the app, landlords need Premium; tenants use the app for free.
   if (!isRefresh) {
     const managesAny = [...state.roles.values()].some((r) => r === "owner" || r === "co_landlord");
-    const tenantOnly = !managesAny && state.tenantOf.size > 0;
+    const tenantOnly = !managesAny && tenantOf.size > 0;
     if (!tenantOnly) {
       const premium = await act.hasPremium();
       if (!premium.ok) {
