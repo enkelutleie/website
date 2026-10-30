@@ -1629,6 +1629,11 @@ export function withChecklistDone(existing, list, index, done) {
   const next = `${HANDOVER_PREFIX}${JSON.stringify(obj)}${HANDOVER_SUFFIX}${rest}`;
   return visible ? `${visible}\n${next}` : next;
 }
+export const getInspectionItem = (itemId) =>
+  supabase.from("inspection_items").select("*").eq("id", itemId).maybeSingle();
+// update_inspection_item on a checklist that is already sent/locked (55000).
+export const isChecklistLocked = (res) =>
+  /finalized_inspection_immutable/.test(String(res?.error?.message)) || res?.error?.code === "55000";
 export const updateInspectionItem = (item, condition, note) =>
   supabase.rpc("update_inspection_item", {
     requested_item_id: item.id, requested_condition: condition,
@@ -1656,7 +1661,17 @@ const finalizeRow = (row, deleteIncomplete) =>
   supabase.rpc("finalize_inspection", {
     requested_inspection_id: row.id, expected_updated_at: row.updated_at, p_delete_incomplete: deleteIncomplete,
   }).then(one);
-export async function finalizeInspection(inspection, { sendMoveIn = false, deleteIncomplete = false } = {}) {
+// One run per inspection: a second tap or a parallel caller gets the same result,
+// so the move-in is sent and locked at most once.
+const finalizing = new Map();
+export function finalizeInspection(inspection, options = {}) {
+  const running = finalizing.get(inspection.id);
+  if (running) return running;
+  const run = finalizeOnce(inspection, options).finally(() => finalizing.delete(inspection.id));
+  finalizing.set(inspection.id, run);
+  return run;
+}
+async function finalizeOnce(inspection, { sendMoveIn = false, deleteIncomplete = false } = {}) {
   let current = await freshInspection(inspection.id);
   if (!current) return { error: { message: "missing" } };
   if (current.status === "finalized") {
@@ -1673,11 +1688,10 @@ export async function finalizeInspection(inspection, { sendMoveIn = false, delet
     result = await finalizeRow(current, deleteIncomplete);
     if (result.error) throw result.error;
   } catch (error) {
-    if (!sendMoveIn) return { error };
     // MoveInSendStatus.recoverFinalize: a lost reply can hide a send or lock that worked.
-    // Finalized: no error. Sent but still a draft: lock it once, never send again.
+    // Finalized (also a late "already finalized" reply): no error. Sent but still a draft: lock it once, never send again.
     let stored = await freshInspection(inspection.id);
-    if (stored && stored.type === "move_in" && stored.status === "draft" && stored.sent_for_review_at) {
+    if (sendMoveIn && stored && stored.type === "move_in" && stored.status === "draft" && stored.sent_for_review_at) {
       await finalizeRow(stored, deleteIncomplete).catch(() => null);
       stored = (await freshInspection(inspection.id)) ?? stored;
     }
@@ -1705,6 +1719,7 @@ export const INSPECTION_ERROR_TEXT = {
   inspection_items_incomplete: "Sjekklisten er ufullstendig. Åpne den på nytt og fyll ut punktene før du ferdigstiller.",
   inspection_checklist_note_missing: "Sjekklisten er ufullstendig. Åpne den på nytt og fyll ut punktene før du ferdigstiller.",
   inspection_version_conflict: "Gjennomgangen ble endret et annet sted. Den nyeste versjonen er lastet inn; kontroller den og prøv igjen.",
+  finalized_inspection_immutable: "Sjekklisten er allerede sendt, så siste endring ble ikke lagret.",
   inspection_item_version_conflict: "Gjennomgangen ble endret et annet sted. Den nyeste versjonen er lastet inn; kontroller den og prøv igjen.",
 };
 export const inspectionError = (res) => {
