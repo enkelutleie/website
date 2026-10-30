@@ -2424,11 +2424,82 @@ const hoConditionChip = (item) => {
   const tone = { ok: " is-success", note: " is-warning", damage: " is-danger" }[item.condition] ?? "";
   return h("span", `pt-chip${tone}`, item.condition ? HO_CONDITION.get(item.condition) ?? item.condition : "Ikke fylt ut");
 };
-const hoSaveFailed = async (res) => {
+// Checklist saves in flight and unsaved edits on the open page. «Ferdigstill» waits for
+// all of them before it sends (iOS #1522), so a save never races the lock.
+const hoSaves = new Set();
+const hoDrafts = new Set();
+let hoFinalizing = false; // a save that ends during «Ferdigstill» keeps its control disabled
+const hoTrack = (promise) => {
+  hoSaves.add(promise);
+  promise.finally(() => hoSaves.delete(promise)).catch(() => {});
+  return promise;
+};
+const hoSaveItem = (item, condition, note) => hoTrack(act.updateInspectionItem(item, condition, note));
+// Returns true when the save is in fact stored: a late "already sent" reply for a
+// value that the locked checklist already holds is not an error.
+const hoSaveFailed = async (res, item, condition, note) => {
+  if (item && act.isChecklistLocked(res)) {
+    const stored = await act.getInspectionItem(item.id);
+    const row = stored.data;
+    if (row && row.condition === condition && (row.note ?? null) === (note && note.trim() ? note : null)) {
+      Object.assign(item, { condition: row.condition, note: row.note, updated_at: row.updated_at });
+      return true;
+    }
+    act.toast(act.inspectionError(res));
+    await hoReloadPage();
+    return false;
+  }
   act.toast(act.inspectionError(res) ?? "Kunne ikke lagre punktet. Prøv igjen.");
   if (/version_conflict/.test(String(res.error?.message))) await hoReloadPage();
+  return false;
+};
+// Waits for running checklist saves, stores unsaved edits, and waits again until no save
+// is running. False if a save failed (its message is already shown).
+const hoSettleSaves = async () => {
+  const drain = async () => {
+    while (hoSaves.size) await Promise.allSettled([...hoSaves]);
+  };
+  await drain();
+  for (const flush of [...hoDrafts]) {
+    if (!(await flush())) return false;
+  }
+  await drain();
+  return true;
+};
+// «Ferdigstill …»: busy and disabled from the confirmed tap, waits for pending saves,
+// runs once, and keeps the page locked until the result is shown.
+const hoFinalizeButton = (label, confirm, finalize, message) => {
+  let busy = false;
+  const b = button(label, "pt-btn-primary", async () => {
+    if (busy) return;
+    busy = true;
+    b.disabled = true;
+    const ok = await act.confirmAction({ ...confirm, destructive: false });
+    if (!ok) {
+      busy = false;
+      b.disabled = false;
+      return;
+    }
+    hoFinalizing = true;
+    b.textContent = "Ferdigstiller …";
+    b.setAttribute("aria-busy", "true");
+    const page = b.closest("main") ?? document;
+    const locked = [...page.querySelectorAll(".pt-ho-items :is(select, textarea, button), .pt-ho-checks input")].filter((el) => !el.disabled);
+    locked.forEach((el) => { el.disabled = true; });
+    const settled = await hoSettleSaves();
+    const res = settled ? await finalize() : null;
+    hoFinalizing = false;
+    if (res && (await hoRun(res, act.inspectionError, message))) return;
+    locked.forEach((el) => { el.disabled = false; });
+    b.textContent = label;
+    b.removeAttribute("aria-busy");
+    b.disabled = false;
+    busy = false;
+  });
+  return b;
 };
 const hoChecklist = (items, editable) => {
+  hoDrafts.clear();
   const c = card("Tilstand i boligen", "checklist");
   const list = h("ul", "pt-ho-items");
   for (const item of items) {
@@ -2461,17 +2532,30 @@ const hoChecklist = (items, editable) => {
     note.placeholder = "Valgfri merknad";
     note.setAttribute("aria-label", "Valgfri merknad");
     note.value = visible;
-    const save = button("Lagre", "pt-btn-secondary pt-btn-small", async () => {
-      if (!sel.value) return act.toast("Velg tilstand.");
+    const shownNote = () => (item.area_code === "other" ? act.visibleNote(item.note) : (item.note ?? "").trim());
+    const dirty = () => Boolean(sel.value) && (sel.value !== (item.condition ?? "") || note.value.trim() !== shownNote());
+    // quiet: the unsaved edit is stored as part of «Ferdigstill», without its own toast.
+    const store = async (quiet) => {
+      if (!sel.value) {
+        act.toast("Velg tilstand.");
+        return false;
+      }
       const text = item.area_code === "other" ? act.withVisibleNote(item.note, note.value) : note.value.trim();
-      if ((text ?? "").length > act.INSPECTION_NOTE_LIMIT) return act.toast("Merknaden er for lang.");
+      if ((text ?? "").length > act.INSPECTION_NOTE_LIMIT) {
+        act.toast("Merknaden er for lang.");
+        return false;
+      }
+      const condition = sel.value;
       save.disabled = true;
-      const res = await act.updateInspectionItem(item, sel.value, text);
-      save.disabled = false;
-      if (res.error || !res.data) return hoSaveFailed(res);
+      const res = await hoSaveItem(item, condition, text);
+      if (!quiet) save.disabled = hoFinalizing;
+      if (res.error || !res.data) return hoSaveFailed(res, item, condition, text);
       Object.assign(item, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
-      act.toast("Lagret.");
-    });
+      if (!quiet) act.toast("Lagret.");
+      return true;
+    };
+    const save = button("Lagre", "pt-btn-secondary pt-btn-small", () => store(false));
+    hoDrafts.add(() => (save.isConnected && dirty() ? store(true) : true));
     head.append(sel);
     li.append(head, note, actionsRow(save));
     list.append(li);
@@ -2508,11 +2592,12 @@ const hoShared = (items, phase, editable) => {
           return act.toast("Kunne ikke lagre punktet. Prøv igjen.");
         }
         box.disabled = true;
-        const res = await act.updateInspectionItem(other, other.condition ?? "ok", next);
-        box.disabled = false;
+        const condition = other.condition ?? "ok";
+        const res = await hoSaveItem(other, condition, next);
+        box.disabled = hoFinalizing;
         if (res.error || !res.data) {
-          box.checked = !box.checked;
-          return hoSaveFailed(res);
+          if (!(await hoSaveFailed(res, other, condition, next))) box.checked = !box.checked;
+          return;
         }
         Object.assign(other, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
       });
@@ -2630,10 +2715,9 @@ const hoMoveInPage = async (p, t, d) => {
     head.append(h("p", "pt-muted", "Fyll ut tilstanden i hvert rom. Når du ferdigstiller, låses sjekklisten og sendes til leietaker for godkjenning."));
     if (i.tenant_may_fill && i.tenant_fill_done_at) head.append(h("p", "pt-ho-status", "Leietaker har sendt sjekklisten til deg."));
     head.append(hoTenantFillToggle(i), actionsRow(
-      button("Ferdigstill og send til leietaker", "pt-btn-primary", async () => {
-        const ok = await act.confirmAction({ title: "Ferdigstill og send til leietaker", text: "Sjekklisten låses og sendes til leietaker. Manglende svar er ikke en godkjenning. Du kan ferdigstille uten svar.", confirmLabel: "Ferdigstill", destructive: false });
-        if (ok) hoRun(await act.finalizeInspection(i, { sendMoveIn: true }), act.inspectionError, "Innflyttingen er ferdigstilt og sendt til leietaker.");
-      }),
+      hoFinalizeButton("Ferdigstill og send til leietaker",
+        { title: "Ferdigstill og send til leietaker", text: "Sjekklisten låses og sendes til leietaker. Manglende svar er ikke en godkjenning. Du kan ferdigstille uten svar.", confirmLabel: "Ferdigstill" },
+        () => act.finalizeInspection(i, { sendMoveIn: true }), "Innflyttingen er ferdigstilt og sendt til leietaker."),
       i.sent_for_review_at ? null : button("Avbryt innflytting", "pt-btn-quiet-destructive", async () => {
         const ok = await act.confirmAction({ title: "Avbryt innflytting", text: "Sjekklisten og bildene for innflyttingen slettes. Dette kan ikke angres.", confirmLabel: "Avbryt innflytting" });
         if (ok) hoRun(await act.cancelMoveIn(t.id), act.inspectionError, "Innflyttingen er avbrutt.");
@@ -2717,10 +2801,9 @@ const hoMoveOutPage = async (p, t, d) => {
     }));
   }
   if (manager && i && !finalized) {
-    buttons.push(button("Ferdigstill utflytting", "pt-btn-primary", async () => {
-      const ok = await act.confirmAction({ title: "Ferdigstill utflytting", text: "Utflyttingslisten låses. Deretter åpnes depositumsoppgjøret.", confirmLabel: "Ferdigstill", destructive: false });
-      if (ok) hoRun(await act.finalizeInspection(i), act.inspectionError, "Utflyttingslisten er ferdigstilt");
-    }));
+    buttons.push(hoFinalizeButton("Ferdigstill utflytting",
+      { title: "Ferdigstill utflytting", text: "Utflyttingslisten låses. Deretter åpnes depositumsoppgjøret.", confirmLabel: "Ferdigstill" },
+      () => act.finalizeInspection(i), "Utflyttingslisten er ferdigstilt"));
   }
   if (manager && open && (proc.state === "approved" || proc.state === "deposit")) {
     const s = d.deposit?.status;
