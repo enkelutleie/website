@@ -4304,7 +4304,7 @@ const PRIVACY_TEXT = {
   timedOut: "Det tok for lang tid å klargjøre dataene dine. Prøv igjen.",
   error: "Kunne ikke klargjøre data",
   downloaded: "Dataene dine er lastet ned.",
-  blocked: "Nettleseren fikk ikke kontakt med eksporttjenesten. Dataene dine kan foreløpig lastes ned i appen under Mine personvernforespørsler.",
+  blocked: "Fikk ikke kontakt med eksporttjenesten. Sjekk nettforbindelsen og prøv igjen.",
 };
 const PRIVACY_POLL_MS = 10_000;
 const PRIVACY_STALL_MS = 180_000;
