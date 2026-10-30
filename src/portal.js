@@ -825,16 +825,10 @@ const transactionList = async (pid) => {
   // EconomyAttachmentFilter: unavailable (with the app's message) when the links fail to load.
   if (links.error) c.append(inline("Kunne ikke hente hvilke poster som har kvittering. Kvitteringsfilteret er utilgjengelig. Prøv igjen."));
   else if ((res.data ?? []).length) {
-    const label = h("label", "pt-field pt-filter");
-    const select = h("select", "pt-select");
-    for (const [v, l] of act.RECEIPT_FILTERS) {
-      const o = h("option", null, l);
-      o.value = v;
-      o.selected = state.receiptFilter === v;
-      select.append(o);
-    }
+    const label = h("div", "pt-field pt-filter");
+    const { el, input: select } = act.customSelect({ label: "Kvitteringsfilter", options: act.RECEIPT_FILTERS, value: state.receiptFilter, floating: true });
     select.addEventListener("change", () => { state.receiptFilter = select.value; render(); });
-    label.append(h("span", "pt-field-label", "Kvitteringsfilter"), select);
+    label.append(h("span", "pt-field-label", "Kvitteringsfilter"), el);
     c.append(label);
   }
   const filter = links.error ? "all" : state.receiptFilter;
@@ -907,7 +901,7 @@ const transactionForm = (pid, type, row) => {
     title: row ? "Endre post" : income ? "Ny inntekt" : "Ny utgift",
     submitLabel: row ? "Lagre endringer" : "Lagre",
     fields: [
-      { name: "category", label: "Kategori", type: "select", options, value: categoryValue, required: true, requiredMessage: "Velg kategori", help: income ? " " : undefined },
+      { name: "category", label: "Kategori", type: "choice", options, value: categoryValue, required: true, requiredMessage: "Velg kategori", help: income ? " " : undefined },
       { name: "amount", label: "Beløp", type: "money", value: row ? act.kronerOf(row.amount_minor) : "", required: true, placeholder: "0,00" },
       { name: "date", label: "Dato", type: "date", value: row?.transaction_date ?? todayISO(), required: true },
       income
@@ -916,8 +910,8 @@ const transactionForm = (pid, type, row) => {
       { name: "counterparty", label: income ? "Betalt av" : "Butikk eller leverandør", type: "text", value: row?.counterparty ?? "", maxLength: 200 },
       ...(row ? [] : [
         { name: "receipt", label: "Kvittering", type: "file", accept: RECEIPT_ACCEPT, help: "PDF, JPEG eller PNG. Bilder lagres som PDF." },
-        { name: "repeats", label: "Er dette en gjentakende betaling?", type: "select", options: [["no", "Nei"], ["yes", "Ja"]], value: "no", required: true },
-        { name: "recurrence", label: "Hvor ofte", type: "select", options: act.RECURRENCE, value: "monthly", required: true, hidden: true, help: " " },
+        { name: "repeats", label: "Er dette en gjentakende betaling?", type: "choice", options: [["no", "Nei"], ["yes", "Ja"]], value: "no", required: true },
+        { name: "recurrence", label: "Hvor ofte", type: "choice", options: act.RECURRENCE, value: "monthly", required: true, hidden: true, help: " " },
       ]),
     ],
     onChange: (inputs, show) => {
@@ -991,7 +985,7 @@ const receiptDialog = async (pid, r, docIds) => {
     footer: (close) => { closeDialog = close; return h("span"); },
     fields: [
       { name: "file", label: "Last opp kvittering", type: "file", accept: RECEIPT_ACCEPT, help: "PDF, JPEG eller PNG. Bilder lagres som PDF." },
-      ...(linkable.length ? [{ name: "doc", label: "Koble dokument", type: "select", options: [["", "Ingen"], ...linkable.map((d) => [d.id, d.title || d.original_file_name || "Dokument"])], value: "" }] : []),
+      ...(linkable.length ? [{ name: "doc", label: "Koble dokument", type: "choice", options: [["", "Ingen"], ...linkable.map((d) => [d.id, d.title || d.original_file_name || "Dokument"])], value: "" }] : []),
     ],
     onSubmit: async (v) => {
       if (!v.file && !v.doc) return "Velg en fil eller et dokument.";
@@ -1030,10 +1024,10 @@ const propertyForm = (p) => {
       { name: "postal", label: "Postnummer", type: "text", value: p?.postal_code ?? "", required: true, maxLength: 4 },
       { name: "city", label: "Poststed", type: "text", value: p?.city ?? "", required: true, maxLength: 100 },
       ...(p ? [] : [
-        { name: "housingKind", label: "Type bolig", type: "select", options: act.HOUSING_KINDS, value: "standard", required: true, help: "Ved bofellesskap leies rommene ut hver for seg. Hvert rom har eget leieforhold og egen leiekontrakt." },
+        { name: "housingKind", label: "Type bolig", type: "choice", options: act.HOUSING_KINDS, value: "standard", required: true, help: "Ved bofellesskap leies rommene ut hver for seg. Hvert rom har eget leieforhold og egen leiekontrakt." },
         { name: "roomCount", label: "Antall rom som skal leies ut", type: "text", placeholder: "1–10", maxLength: 2, hidden: true, help: "Vi oppretter Rom 1, Rom 2 … slik at du kan invitere én leietaker per rom. Maks 10." },
       ]),
-      { name: "use", label: "Hva leies ut", type: "select", options: act.RENTAL_USE, value: act.RENTAL_USE.some(([v]) => v === use) ? use : "other_home", required: true },
+      { name: "use", label: "Hva leies ut", type: "choice", options: act.RENTAL_USE, value: act.RENTAL_USE.some(([v]) => v === use) ? use : "other_home", required: true },
       { name: "finn", label: "Finn-kode", type: "text", value: p?.finn_code ?? "", maxLength: 12 },
       ...(p ? [{ name: "account", label: "Kontonummer for husleie", type: "text", value: p.payment_account_override ?? "", maxLength: 20, help: "Tomt betyr kontonummeret fra profilen din." }] : []),
     ],
@@ -1108,7 +1102,7 @@ const archiveDialog = async (p) => {
     submitLabel: "Arkiver bolig",
     submitClass: "pt-btn-destructive",
     submitDisabled: blockers.length > 0,
-    fields: [{ name: "reason", label: "Årsak", type: "select", options: act.CLOSE_REASONS, value: "management_ended", required: true }],
+    fields: [{ name: "reason", label: "Årsak", type: "choice", options: act.CLOSE_REASONS, value: "management_ended", required: true }],
     onSubmit: async (v) => {
       const out = await act.closeProperty(p.id, v.reason, operationId);
       if (!out.ok) return out.message;
@@ -1206,7 +1200,7 @@ const inviteForm = async (pid, tenancy) => {
     submitLabel: "Send invitasjon",
     fields: [
       ...(rooms ? [{
-        name: "unit", label: "Utleieenhet", type: "select", required: true, value: free[0]?.id,
+        name: "unit", label: "Utleieenhet", type: "choice", required: true, value: free[0]?.id,
         help: "Velg hvilket rom invitasjonen gjelder",
         options: rooms.filter((r) => !r.blocked).map((r) => [r.id, r.label]),
       }] : []),
@@ -1411,7 +1405,7 @@ const lifecycleForm = (t, end) => {
     submitLabel: end ? "Avslutt leieforhold" : "Kanseller leieforhold",
     submitClass: "pt-btn-destructive",
     fields: [
-      { name: "reason", label: "Årsak", type: "select", required: true, options: end ? act.TERMINATION_REASONS : act.CANCELLATION_REASONS },
+      { name: "reason", label: "Årsak", type: "choice", required: true, options: end ? act.TERMINATION_REASONS : act.CANCELLATION_REASONS },
       ...(end ? [{ name: "end", label: "Sluttdato", type: "date", value: todayISO(), required: true }] : []),
     ],
     onSubmit: async (v) => {
@@ -1452,8 +1446,8 @@ const contractForm = (pid, detail) => {
     intro: detail ? "Endringene lagres i utkastet. Andre vilkår du har lagt inn i appen beholdes." : "Utkastet lagres med samme felter som i appen. Du kan fylle ut resten senere.",
     submitLabel: "Lagre utkast",
     fields: [
-      ...(detail ? [] : [{ name: "tenancy", label: "Leieforhold", type: "select", required: true, options: tenancies.map((t) => [t.id, `${TENANCY_LABEL[t.status] ?? t.status}${t.start_date ? ` · fra ${dateText(t.start_date)}` : ""}`]) }]),
-      { name: "termType", label: "Avtaletype", type: "select", options: [["indefinite", "Løpende"], ["fixed", "Fast periode"]], value: f?.termType ?? "indefinite", required: true },
+      ...(detail ? [] : [{ name: "tenancy", label: "Leieforhold", type: "choice", required: true, options: tenancies.map((t) => [t.id, `${TENANCY_LABEL[t.status] ?? t.status}${t.start_date ? ` · fra ${dateText(t.start_date)}` : ""}`]) }]),
+      { name: "termType", label: "Avtaletype", type: "choice", options: [["indefinite", "Løpende"], ["fixed", "Fast periode"]], value: f?.termType ?? "indefinite", required: true },
       { name: "start", label: "Startdato", type: "date", value: f ? f.start : (tenancies[0]?.start_date ?? "") },
       { name: "end", label: "Sluttdato", type: "date", value: f?.end ?? "", hidden: f?.termType !== "fixed" },
       { name: "rent", label: "Månedsleie", type: "money", value: f?.rent ?? "" },
@@ -2112,7 +2106,7 @@ const maintenanceForm = async (pid) => {
   const fields = [
     { name: "title", label: "Tittel", type: "text", required: true, maxLength: 160, placeholder: "Kort beskrivelse av problemet" },
     { name: "description", label: "Beskrivelse", type: "textarea", required: true, maxLength: 5000, rows: 5, help: "Beskriv problemet før du sender inn saken." },
-    { name: "category", label: "Kategori", type: "select", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
+    { name: "category", label: "Kategori", type: "choice", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
   ];
   if (manager) {
     const tenancies = mtActiveTenancies(pid);
@@ -2120,7 +2114,7 @@ const maintenanceForm = async (pid) => {
     const names = new Map();
     for (const m of people.data ?? []) if (m.role === "tenant" && m.name) names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name]);
     fields.push({
-      name: "visibility", label: "Synlighet", type: "select", required: true, value: "private",
+      name: "visibility", label: "Synlighet", type: "choice", required: true, value: "private",
       options: [["private", "Kun for utleiere"], ...tenancies.map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id) ?? ["leietaker"]).join(", ")}`])],
       help: tenancies.length ? "Velg hvilket leieforhold saken gjelder, eller velg at saken kun skal være synlig for utleiere." : "Ingen aktiv leietaker er knyttet til denne boligen.",
     });
@@ -2389,7 +2383,7 @@ const maintenanceDetail = async (pid, rid) => {
       c.append(actionsRow(
         button("Rediger", "pt-btn-soft pt-btn-small", () => maintenanceEditForm(r, reloadRequest)),
         button("Endre prioritet", "pt-btn-soft pt-btn-small", () => act.openForm({
-          title: "Prioritet", fields: [{ name: "priority", label: "Prioritet", type: "select", options: act.MAINTENANCE_PRIORITIES, value: r.priority, required: true }],
+          title: "Prioritet", fields: [{ name: "priority", label: "Prioritet", type: "choice", options: act.MAINTENANCE_PRIORITIES, value: r.priority, required: true }],
           onSubmit: async (v) => {
             if (v.priority === r.priority) return null;
             const res = await act.setMaintenancePriority(r.id, v.priority);
@@ -2399,7 +2393,7 @@ const maintenanceDetail = async (pid, rid) => {
           },
         })),
         next.length ? button("Endre status", "pt-btn-soft pt-btn-small", () => act.openForm({
-          title: "Endre status", fields: [{ name: "status", label: "Status", type: "select", options: next.map((s) => [s, act.MAINTENANCE_STATUS[s]]), required: true }],
+          title: "Endre status", fields: [{ name: "status", label: "Status", type: "choice", options: next.map((s) => [s, act.MAINTENANCE_STATUS[s]]), required: true }],
           onSubmit: async (v) => {
             const res = await act.setMaintenanceStatus(r, v.status);
             if (res.error) return act.explain(res.error);
@@ -2414,7 +2408,7 @@ const maintenanceDetail = async (pid, rid) => {
           act.openForm({
             title: "Del med leietaker?",
             intro: "Når saken deles, får leietakeren tilgang til saken, kommentarer og historikk samt eventuelle bilder som er knyttet til saken. Dokumenter følger sine egne tilgangsregler. Eksisterende private kalenderfrister deles ikke automatisk.",
-            fields: [{ name: "tenancy", label: "Velg leieforhold", type: "select", required: true, options: tenancies.map((t) => [t.id, (names.get(t.id) ?? ["Leietaker"]).join(", ")]) }],
+            fields: [{ name: "tenancy", label: "Velg leieforhold", type: "choice", required: true, options: tenancies.map((t) => [t.id, (names.get(t.id) ?? ["Leietaker"]).join(", ")]) }],
             submitLabel: "Del med leietaker",
             onSubmit: async (v) => {
               const res = await act.shareMaintenance(r.id, v.tenancy);
@@ -2875,19 +2869,11 @@ const hoChecklist = (items, editable) => {
       list.append(li);
       continue;
     }
-    const sel = h("select", "pt-select pt-ho-condition");
-    sel.setAttribute("aria-label", "Tilstand");
-    if (!item.condition) {
-      const o = h("option", null, "Velg tilstand");
-      o.value = "";
-      sel.append(o);
-    }
-    for (const [v, l] of act.INSPECTION_CONDITIONS) {
-      const o = h("option", null, l);
-      o.value = v;
-      sel.append(o);
-    }
-    sel.value = item.condition ?? "";
+    const { el: selBox, input: sel } = act.customSelect({
+      label: "Tilstand", floating: true, cls: "pt-ho-condition",
+      options: [...(item.condition ? [] : [["", "Velg tilstand"]]), ...act.INSPECTION_CONDITIONS],
+      value: item.condition ?? "",
+    });
     const note = h("textarea", "pt-input pt-textarea");
     note.rows = 2;
     note.placeholder = "Valgfri merknad";
@@ -2917,7 +2903,7 @@ const hoChecklist = (items, editable) => {
     };
     const save = button("Lagre", "pt-btn-secondary pt-btn-small", () => store(false));
     hoDrafts.add(() => (save.isConnected && dirty() ? store(true) : true));
-    head.append(sel);
+    head.append(selBox);
     li.append(head, note, actionsRow(save));
     list.append(li);
   }
@@ -3115,10 +3101,10 @@ const hoNoticeForm = async (p, t, manager) => {
   if (tenants.length > 1) scopes.push(["one_tenant", "Én leietaker"]);
   const fields = [
     { name: "date", label: "Utflyttingsdato", type: "date", required: true, min: todayISO() },
-    { name: "scope", label: "Omfang", type: "select", options: scopes, required: true },
+    { name: "scope", label: "Omfang", type: "choice", options: scopes, required: true },
   ];
   if (tenants.length > 1 && manager) {
-    fields.push({ name: "subject", label: "Leietaker", type: "select", options: tenants.map((m) => [m.user_id, m.name ?? "Leietaker"]), required: true });
+    fields.push({ name: "subject", label: "Leietaker", type: "choice", options: tenants.map((m) => [m.user_id, m.name ?? "Leietaker"]), required: true });
   }
   return act.openForm({
     title: "Registrer oppsigelse", intro: "Starter utflytting. Første steg er oppsigelsen.",
@@ -3354,20 +3340,18 @@ const hoOverview = async (p, t, d) => {
   const tenancies = hoTenancies(p.id);
   if (tenancies.length > 1) {
     const people = await tenancyPeople(p.id);
-    const sel = h("select", "pt-select pt-ho-tenancy");
-    sel.setAttribute("aria-label", "Leieforhold");
-    tenancies.forEach((x, n) => {
-      const names = (people.data ?? []).filter((m) => m.tenancy_id === x.id && m.role === "tenant").map((m) => m.name).filter(Boolean);
-      const o = h("option", null, names.length ? names.join(", ") : `Leieforhold ${n + 1}`);
-      o.value = x.id;
-      sel.append(o);
+    const { el: selBox, input: sel } = act.customSelect({
+      label: "Leieforhold", floating: true, cls: "pt-ho-tenancy", value: t.id,
+      options: tenancies.map((x, n) => {
+        const names = (people.data ?? []).filter((m) => m.tenancy_id === x.id && m.role === "tenant").map((m) => m.name).filter(Boolean);
+        return [x.id, names.length ? names.join(", ") : `Leieforhold ${n + 1}`];
+      }),
     });
-    sel.value = t.id;
     sel.addEventListener("change", () => {
       hoTenancyId = sel.value;
       render();
     });
-    out.push(sel);
+    out.push(selBox);
   }
   const info = card("Dokumenter boligens tilstand", "info");
   info.append(h("p", "pt-muted", "Sjekklister ved inn- og utflytting gir en trygg oversikt og kan brukes som dokumentasjon ved depositumsoppgjør."));
@@ -3756,16 +3740,12 @@ const annualPage = async (pid) => {
     h("p", "pt-muted", "Årsoppgaven er en dokumentasjonspakke med leieinntekter, utgifter, kjørebok og kvitteringer."),
   );
   const controls = h("div", "pt-report-controls");
-  const yearLabel = h("label", "pt-field pt-filter");
-  const select = h("select", "pt-select");
-  for (let y = thisYear; y >= Math.min(year, thisYear - 5); y--) {
-    const o = h("option", null, String(y));
-    o.value = String(y);
-    o.selected = y === year;
-    select.append(o);
-  }
+  const yearLabel = h("div", "pt-field pt-filter");
+  const years = [];
+  for (let y = thisYear; y >= Math.min(year, thisYear - 5); y--) years.push([String(y), String(y)]);
+  const { el: yearPicker, input: select } = act.customSelect({ label: "År", options: years, value: String(year), floating: true });
   select.addEventListener("change", () => { annualState.year = Number(select.value); render(); });
-  yearLabel.append(h("span", "pt-field-label", "År"), select);
+  yearLabel.append(h("span", "pt-field-label", "År"), yearPicker);
   controls.append(yearLabel);
   head.append(controls);
   const data = await cached(`annual:${pid}:${year}`, () => loadAnnual(pid, year));
@@ -3908,16 +3888,12 @@ const mileagePage = async (pid) => {
     info.hidden = !mileageState.infoOpen;
     toggle.textContent = mileageState.infoOpen ? "Skjul" : "Les mer";
   });
-  const yearLabel = h("label", "pt-field pt-filter");
-  const select = h("select", "pt-select");
-  for (let y = thisYear; y >= Math.min(year, thisYear - 2); y--) {
-    const o = h("option", null, String(y));
-    o.value = String(y);
-    o.selected = y === year;
-    select.append(o);
-  }
+  const yearLabel = h("div", "pt-field pt-filter");
+  const years = [];
+  for (let y = thisYear; y >= Math.min(year, thisYear - 2); y--) years.push([String(y), String(y)]);
+  const { el: yearPicker, input: select } = act.customSelect({ label: "År", options: years, value: String(year), floating: true });
   select.addEventListener("change", () => { mileageState.year = Number(select.value); render(); });
-  yearLabel.append(h("span", "pt-field-label", "År"), select);
+  yearLabel.append(h("span", "pt-field-label", "År"), yearPicker);
   head.append(actionsRow(toggle, isManager(pid) ? button("Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid)) : null), info, yearLabel);
   if (res.error) {
     head.append(inline("Kunne ikke laste kjøreboka."));
@@ -4013,11 +3989,11 @@ const assetForm = async (pid, data, asset = null) => {
     { name: "name", label: "Type møbel", value: item?.name ?? "", placeholder: "F.eks. sofa, seng eller spisebord", required: true, requiredMessage: "Skriv inn et navn." },
     { name: "amount", label: "Kjøpspris", type: "money", value: item ? act.kronerOf(item.purchaseAmountMinor) : "", placeholder: "0,00", help: "Pris inkl. mva", required: true, requiredMessage: "Skriv inn kjøpspris." },
     { name: "date", label: "Kjøpsdato", type: "date", value: item?.purchaseDate ?? todayISO(), required: true },
-    { name: "kind", label: "Kategori", type: "select", options: [["loose_inventory", "Løst inventar"], ["fixed_fitting", "Fast innredning"]], value: item?.kind ?? "loose_inventory", required: true },
-    { name: "treatment", label: "Standard", type: "select", options: [["maintenance", "Samme standard (vedlikehold)"], ["improvement", "Høyere standard (påkostning)"]], value: item?.fixedTreatment ?? "maintenance", help: "Kjøkken, bad og annen fast innredning er en del av boligen og avskrives ikke.", required: true },
-    { name: "lifetime", label: "Forventes møbelet å vare i minst 3 år?", type: "select", options: yesNo, value: item ? (item.lifeUnderThreeYears ? "no" : "yes") : "", required: true, requiredMessage: "Svar på om møbelet forventes å vare i minst 3 år." },
-    { name: "taxable", label: "Utleien er skattepliktig", type: "select", options: [["yes", "Ja"], ["no", "Nei"]], value: item ? (item.countsForTaxableRental ? "yes" : "no") : "yes", required: true },
-    { name: "rate", label: "Velg hvor mye du ønsker å avskrive i år.", type: "select", options: rates, value: "2000", required: true },
+    { name: "kind", label: "Kategori", type: "choice", options: [["loose_inventory", "Løst inventar"], ["fixed_fitting", "Fast innredning"]], value: item?.kind ?? "loose_inventory", required: true },
+    { name: "treatment", label: "Standard", type: "choice", options: [["maintenance", "Samme standard (vedlikehold)"], ["improvement", "Høyere standard (påkostning)"]], value: item?.fixedTreatment ?? "maintenance", help: "Kjøkken, bad og annen fast innredning er en del av boligen og avskrives ikke.", required: true },
+    { name: "lifetime", label: "Forventes møbelet å vare i minst 3 år?", type: "choice", options: yesNo, value: item ? (item.lifeUnderThreeYears ? "no" : "yes") : "", required: true, requiredMessage: "Svar på om møbelet forventes å vare i minst 3 år." },
+    { name: "taxable", label: "Utleien er skattepliktig", type: "choice", options: [["yes", "Ja"], ["no", "Nei"]], value: item ? (item.countsForTaxableRental ? "yes" : "no") : "yes", required: true },
+    { name: "rate", label: "Velg hvor mye du ønsker å avskrive i år.", type: "choice", options: rates, value: "2000", required: true },
     { name: "notes", label: "Merknad", type: "textarea", rows: 2, value: item?.notes ?? "", maxLength: 500 },
   ];
   const valuesOf = (get) => {
@@ -4216,16 +4192,12 @@ const assetsPage = async (pid) => {
     return [back, head];
   }
   const firstYear = Math.min(thisYear, year, ...data.items.map((i) => inv.yearOf(i.purchaseDate)).filter(Boolean));
-  const yearLabel = h("label", "pt-field pt-filter");
-  const select = h("select", "pt-select");
-  for (let y = thisYear; y >= firstYear; y--) {
-    const o = h("option", null, String(y));
-    o.value = String(y);
-    o.selected = y === year;
-    select.append(o);
-  }
+  const yearLabel = h("div", "pt-field pt-filter");
+  const years = [];
+  for (let y = thisYear; y >= firstYear; y--) years.push([String(y), String(y)]);
+  const { el: yearPicker, input: select } = act.customSelect({ label: "År", options: years, value: String(year), floating: true });
   select.addEventListener("change", () => { assetState.year = Number(select.value); render(); });
-  yearLabel.append(h("span", "pt-field-label", "År"), select);
+  yearLabel.append(h("span", "pt-field-label", "År"), yearPicker);
   head.append(actionsRow(toggle, isManager(pid) ? button("Legg til møbel eller inventar", "pt-btn-primary pt-btn-small", () => assetForm(pid, data)) : null), info, yearLabel);
   const view = inv.yearView(data.items, year, data.elections);
   const cards = view.outlooks.map((o) => saldoCard(o, data));

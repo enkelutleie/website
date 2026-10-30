@@ -28,9 +28,10 @@ export const minorOf = (text) => {
 export const kronerOf = (minor) => (minor == null ? "" : (Number(minor) / 100).toFixed(2).replace(".", ","));
 
 /**
- * fields: [{ name, label, type: text|number|money|date|datetime|select|textarea|file|email|checkbox,
+ * fields: [{ name, label, type: text|number|money|date|datetime|select|choice|textarea|file|email|checkbox,
  *            options: [[value,label]], value, required, help, placeholder, accept, maxLength, min, max, disabled }]
  * A checkbox field gives "true" when checked and "" otherwise; its value is the initial checked state.
+ * "choice" is the portal's custom listbox (use it instead of the native "select").
  * sections: nodes shown above the fields; after: nodes below the fields. footer(close): node below the buttons.
  * submitClass replaces the primary style (e.g. "pt-btn-destructive"); submitDisabled locks it.
  * onSubmit(values, form) -> string error | null | undefined
@@ -58,8 +59,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       let picker = null;
       if (choice) {
         input = h("input");
-        input.type = "hidden";
-        picker = choiceListbox(f, input);
+        picker = customSelect({ label: f.label, options: f.options, value: f.value, input }).el;
       } else if (check) {
         input = h("input", "pt-check");
         input.type = "checkbox";
@@ -95,8 +95,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         if (f.help) text.append(h("span", "pt-field-help", f.help));
         wrap.append(input, text);
       } else {
-        wrap.append(input);
-        if (picker) wrap.append(picker);
+        wrap.append(picker ?? input);
         if (f.help) wrap.append(h("span", "pt-field-help", f.help));
       }
       if (f.hidden) wrap.hidden = true;
@@ -146,7 +145,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         if (f.required && !hidden && !values[f.name]) {
           status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
           status.hidden = false;
-          input.focus();
+          (f.type === "choice" ? input.closest(".pt-field").querySelector(".pt-choice-button") : input).focus();
           return;
         }
       }
@@ -174,40 +173,61 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
   });
 }
 
-// type "choice": the portal's own listbox (no native <select>). The value lives in a hidden input,
-// so openForm reads it like any other field and onChange fires on pick.
-function choiceListbox(f, input) {
-  const options = f.options ?? [];
-  const labelOf = (v) => options.find(([value]) => value === v)?.[1] ?? "";
-  input.value = f.value ?? options[0]?.[0] ?? "";
-  const wrap = h("div", "pt-choice");
+// The portal's own listbox (no native <select>). The value lives in a hidden input, so callers
+// read and write `input.value`, set `input.disabled`, and listen for "input"/"change" as with a
+// <select>; the button and list follow along. In a form (type "choice") the list opens in-flow so
+// the modal never clips it; on a page (`floating`) it opens as an overlay.
+const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
+const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg>';
+const VALUE_PROP = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+const DISABLED_PROP = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "disabled");
+export function customSelect({ label, options = [], value, floating = false, cls = "", input = h("input") }) {
+  input.type = "hidden";
+  const labelOf = (v) => options.find(([o]) => o === v)?.[1];
+  const wrap = h("div", `pt-choice${floating ? " is-floating" : ""}${cls ? ` ${cls}` : ""}`);
   const btn = h("button", "pt-choice-button");
   btn.type = "button";
   btn.setAttribute("aria-haspopup", "listbox");
   btn.setAttribute("aria-expanded", "false");
-  const current = h("span", "pt-choice-value", labelOf(input.value));
+  const current = h("span", "pt-choice-value");
   const chevron = h("span", "pt-choice-chevron");
-  chevron.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
+  chevron.innerHTML = CHEVRON_SVG;
   btn.append(current, chevron);
-  btn.setAttribute("aria-label", `${f.label}: ${labelOf(input.value)}`);
   const list = h("ul", "pt-choice-list");
   list.setAttribute("role", "listbox");
-  list.setAttribute("aria-label", f.label);
+  list.setAttribute("aria-label", label);
   list.tabIndex = -1;
   list.hidden = true;
   const uid = `pt-choice-${Math.random().toString(36).slice(2, 8)}`;
-  const items = options.map(([value, label], i) => {
+  const items = options.map(([, text], i) => {
     const li = h("li", "pt-choice-option");
     li.id = `${uid}-${i}`;
     li.setAttribute("role", "option");
     const tick = h("span", "pt-choice-check");
-    tick.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg>';
-    li.append(h("span", null, label), tick);
+    tick.innerHTML = CHECK_SVG;
+    li.append(h("span", "pt-choice-text", text), tick);
     list.append(li);
     return li;
   });
-  const sync = () => items.forEach((li, i) => li.setAttribute("aria-selected", options[i][0] === input.value ? "true" : "false"));
-  sync();
+  const paint = () => {
+    const v = VALUE_PROP.get.call(input);
+    const text = labelOf(v) ?? "";
+    current.textContent = text;
+    btn.setAttribute("aria-label", text ? `${label}: ${text}` : label);
+    items.forEach((li, i) => li.setAttribute("aria-selected", options[i][0] === v ? "true" : "false"));
+  };
+  // Like a <select>: a value that is not an option falls back to the first option.
+  const assign = (v) => {
+    const next = options.some(([o]) => o === String(v ?? "")) ? String(v ?? "") : (options[0]?.[0] ?? "");
+    VALUE_PROP.set.call(input, next);
+    paint();
+  };
+  Object.defineProperty(input, "value", { configurable: true, get: () => VALUE_PROP.get.call(input), set: assign });
+  Object.defineProperty(input, "disabled", {
+    configurable: true,
+    get: () => DISABLED_PROP.get.call(input),
+    set: (on) => { DISABLED_PROP.set.call(input, on); btn.disabled = !!on; if (on) close(); },
+  });
   let active = -1;
   const setActive = (i) => {
     if (!items.length) return;
@@ -217,13 +237,15 @@ function choiceListbox(f, input) {
     items[active].scrollIntoView({ block: "nearest" });
   };
   const outside = (e) => { if (!wrap.contains(e.target)) close(); };
-  const close = (focus) => {
+  function close(focus) {
+    if (list.hidden) return;
     list.hidden = true;
     btn.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", outside);
     if (focus) btn.focus();
-  };
+  }
   const open = () => {
+    if (btn.disabled) return;
     list.hidden = false;
     btn.setAttribute("aria-expanded", "true");
     setActive(Math.max(0, options.findIndex(([v]) => v === input.value)));
@@ -231,12 +253,12 @@ function choiceListbox(f, input) {
     document.addEventListener("pointerdown", outside);
   };
   const choose = (i) => {
-    input.value = options[i][0];
-    current.textContent = options[i][1];
-    btn.setAttribute("aria-label", `${f.label}: ${options[i][1]}`);
-    sync();
+    const changed = options[i][0] !== input.value;
+    assign(options[i][0]);
     close(true);
+    if (!changed) return;
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
   };
   btn.addEventListener("click", () => (list.hidden ? open() : close(true)));
   btn.addEventListener("keydown", (e) => {
@@ -249,7 +271,7 @@ function choiceListbox(f, input) {
       case "Home": e.preventDefault(); setActive(0); break;
       case "End": e.preventDefault(); setActive(items.length - 1); break;
       case "Enter": case " ": e.preventDefault(); if (active >= 0) choose(active); break;
-      // Escape closes the list, not the whole dialog.
+      // Escape closes the list, not a surrounding dialog.
       case "Escape": e.preventDefault(); e.stopPropagation(); close(true); break;
       case "Tab": close(); break;
       default: break;
@@ -259,9 +281,9 @@ function choiceListbox(f, input) {
     o.addEventListener("click", () => choose(i));
     o.addEventListener("mousemove", () => { if (active !== i) setActive(i); });
   });
-  if (f.disabled) btn.disabled = true;
-  wrap.append(btn, list);
-  return wrap;
+  assign(value ?? options[0]?.[0] ?? "");
+  wrap.append(input, btn, list);
+  return { el: wrap, input, button: btn };
 }
 
 export function confirmAction({ title, text, confirmLabel, destructive = true }) {

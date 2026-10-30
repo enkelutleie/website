@@ -354,6 +354,11 @@ svg { flex: none; }
 .pt-choice-check { flex: none; display: grid; place-items: center; width: 20px; height: 20px; color: var(--brand); visibility: hidden; }
 .pt-choice-check svg { width: 16px; height: 16px; }
 .pt-choice-option[aria-selected="true"] .pt-choice-check { visibility: visible; }
+/* On a page (filters, year, tilstand, leieforhold) the list floats over the content instead of pushing it down. */
+.pt-choice.is-floating { position: relative; }
+.pt-choice.is-floating .pt-choice-list { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 100%; width: max-content; max-width: min(360px, calc(100vw - 32px)); }
+.pt-ho-condition.pt-choice { min-width: 12rem; }
+.pt-ho-tenancy.pt-choice { max-width: 24rem; }
 /* Innstillinger: Varsler (one push switch per group). */
 .pt-switch-list { list-style: none; margin: var(--space-s) 0 0; padding: 0; display: flex; flex-direction: column; }
 .pt-switch-row { display: flex; align-items: center; gap: var(--space-m); padding: 12px 0; }
