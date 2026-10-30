@@ -331,7 +331,7 @@ const calendarDetail = async (itemId, requestId) => {
   if (item.description && !caseHidden) c.append(h("p", "pt-cal-description", item.description));
 
   // Only a shared item waits for a tenant, and only when the property has one to answer.
-  // A landlord-only item (manager_private, tenancy null) never needs approval.
+  // A landlord-only item (manager_private) never needs approval.
   const shared = item.visibility === "tenant_shared" && item.status === "active" && manager && await calendarHasTenant(pid);
   if (manager && item.visibility === "manager_private" && item.status === "active") {
     c.append(h("p", "pt-muted", "Bare utleiere ser denne hendelsen, så ingen leietaker trenger å godkjenne den. Velg «Rediger» for å dele den med leietakeren."));
@@ -479,8 +479,8 @@ const calendarIsOverdue = (i, now) => i.item_type === "deadline" && i.status ===
 const calendarUpcoming = (items, now, today) => items
   .filter((i) => i.status === "active" && !calendarIsOverdue(i, now) && calendarItemDate(i) >= today && i.tenant_response !== "declined")
   .sort((a, b) => calendarItemDate(a) - calendarItemDate(b));
-// awaitsTenantResponse (iOS): shared, active and not answered. The web only marks it when the
-// property has a tenant who can answer; with no tenant nobody is asked yet.
+// awaitsTenantResponse (iOS): shared, active and not answered. The badge only shows when the
+// property has a tenancy with an active tenant who can answer; otherwise the item shows normally.
 const calendarAwaitsTenant = (i, hasTenant) =>
   hasTenant && i.visibility === "tenant_shared" && i.status === "active" && !i.tenant_response;
 // calendarDisplayDate (iOS): «13. okt. 2026 kl. 23:36», date only for all-day items.
@@ -505,7 +505,7 @@ const calendarRow = (i, { now, hasTenant, manager }) => {
   const a = h("a", "pt-cal-item");
   a.href = `#kalender/${i.id}`;
   const overdue = calendarIsOverdue(i, now);
-  const awaiting = manager && !overdue && calendarAwaitsTenant(i, hasTenant);
+  const awaiting = manager && calendarAwaitsTenant(i, hasTenant);
   if (awaiting) a.classList.add("is-awaiting");
   const chipIcon = i.maintenance_request_id || i.category === "maintenance" ? "wrench" : "calendar";
   a.append(icon(chipIcon, `pt-cal-item-icon${overdue ? " is-overdue" : ""}`));
@@ -1522,12 +1522,13 @@ const calendarForm = async (pid, item) => {
   const tenancyOptions = tenancies.filter((t) => names.has(t.id)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id).length ? names.get(t.id) : ["leietaker"]).join(", ")}`]);
   const hasTenant = tenancyOptions.length > 0;
+  const hasTenancy = mtActiveTenancies(pid).length > 0;
   let cases = [];
   let initialAudience = "private";
   if (!item) {
     fields.push(
       { name: "maintenance", label: "Merk som vedlikeholdssak", type: "checkbox", value: false, help: "Viser skiftenøkkel og oppretter en vedlikeholdssak for hendelsen." },
-      { name: "maintenanceCategory", label: "Type vedlikehold", type: "select", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
+      { name: "maintenanceCategory", label: "Type vedlikehold", type: "choice", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
     );
   } else {
     // CalendarItemScopeEditor (iOS #1530): link or unlink a maintenance case after creation.
@@ -1536,27 +1537,20 @@ const calendarForm = async (pid, item) => {
     if (linked && !cases.some((r) => r.id === item.maintenance_request_id)) cases.unshift({ id: item.maintenance_request_id, title: "Nåværende sak", tenancy_id: item.tenancy_id });
     fields.push(
       { name: "linkCase", label: "Koble til vedlikeholdssak", type: "checkbox", value: linked, help: cases.length ? "Hendelsen vises som planlagt dato i saken." : "Ingen vedlikeholdssaker å koble til." , disabled: !cases.length && !linked },
-      { name: "caseId", label: "Vedlikeholdssak", type: "select", value: item.maintenance_request_id ?? "",
+      { name: "caseId", label: "Vedlikeholdssak", type: "choice", value: item.maintenance_request_id ?? "",
         options: [["", "Velg sak"], ...cases.map((r) => [r.id, r.title || "Vedlikeholdssak"])] },
     );
   }
   fields.push(
-    { name: "category", label: "Kategori", type: "select", options: act.CALENDAR_CATEGORIES, value: item?.category ?? "other", required: true },
+    { name: "category", label: "Kategori", type: "choice", options: act.CALENDAR_CATEGORIES, value: item?.category ?? "other", required: true },
     { name: "date", label: deadline ? "Frist" : "Dato", type: "date", value: when.date, required: true },
-    { name: "allDay", label: "Hele dagen", type: "select", options: [["false", "Nei"], ["true", "Ja"]], value: item?.all_day ? "true" : "false", required: true },
+    { name: "allDay", label: "Hele dagen", type: "choice", options: [["false", "Nei"], ["true", "Ja"]], value: item?.all_day ? "true" : "false", required: true },
     { name: "time", label: "Klokkeslett", type: "time", value: when.time },
     { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 5000, rows: 3 },
   );
   if (!item) {
-    // Approval is not the default: an unchecked box creates a landlord-only item
-    // (manager_private), which never waits for a tenant. Checked shares it with the tenants on
-    // the property (tenant_shared), who can accept or decline.
     fields.push(
-      { name: "askTenant", label: "Be om godkjenning fra leietaker", type: "checkbox", value: false, disabled: !hasTenant,
-        help: hasTenant
-          ? "Leietakeren ser hendelsen og kan godta eller avslå den. Uten dette ser bare utleiere hendelsen."
-          : "Ingen leietaker på boligen ennå, så hendelsen lagres bare for utleiere. Du kan dele den med leietakeren senere under «Rediger»." },
-      { name: "maintenanceVisibility", label: "Synlighet", type: "select", required: true,
+      { name: "maintenanceVisibility", label: "Synlighet", type: "choice", required: true,
         value: tenancyOptions[0]?.[0] ?? "private",
         options: [...tenancyOptions, ["private", "Kun for utleiere"]],
         help: hasTenant ? "Velg hvilket leieforhold saken gjelder, eller at den kun skal være synlig for utleiere." : "Ingen aktiv leietaker er knyttet til denne boligen." },
@@ -1573,7 +1567,7 @@ const calendarForm = async (pid, item) => {
       initialAudience = item.tenancy_id;
     }
     fields.push({
-      name: "audience", label: "Synlighet", type: "select", required: true, value: initialAudience, options,
+      name: "audience", label: "Synlighet", type: "choice", required: true, value: initialAudience, options,
       help: hasTenant
         ? "Delt med leietaker: leietakeren ser hendelsen og kan godta eller avslå. Endrer du synligheten, må leietakeren svare på nytt."
         : "Ingen leietaker på boligen ennå. Når en leietaker har flyttet inn, kan du dele hendelsen her.",
@@ -1594,7 +1588,6 @@ const calendarForm = async (pid, item) => {
       const marked = inputs.maintenance.checked || !!pendingCase;
       show("maintenanceCategory", marked);
       show("category", !marked);
-      show("askTenant", !marked);
       show("maintenanceVisibility", marked);
     },
     onSubmit: async (v) => {
@@ -1630,7 +1623,9 @@ const calendarForm = async (pid, item) => {
       const marked = v.maintenance === "true" || !!pendingCase;
       const values = { ...v, kind: "event", category: marked ? "maintenance" : v.category };
       if (!marked) {
-        const res = await act.createCalendarItem(pid, values, { shared: hasTenant && v.askTenant === "true" });
+        // As before: with an active tenancy the item is shared with it (the server picks the
+        // tenancy) and waits for the tenant's answer; without one it is landlord-only.
+        const res = await act.createCalendarItem(pid, values, { shared: hasTenancy });
         if (res.error) return act.explain(res.error);
         await refresh("Lagt i kalenderen.");
         return null;
