@@ -2266,13 +2266,14 @@ export async function downloadPrivacyExport(caseId) {
     return { error: outcome === "not_available" ? "not_available" : "failed" };
   }
   const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  const disposition = (res.headers.get("content-disposition") ?? "").toLowerCase();
+  // The function exposes Content-Disposition (Access-Control-Expose-Headers); the file name
+  // is read from it by the caller, with the generated name as fallback when it is missing.
+  const disposition = res.headers.get("content-disposition");
   const zip = new Uint8Array(await res.arrayBuffer());
-  // Cross-origin, Content-Disposition is only readable if the function exposes it
-  // (Access-Control-Expose-Headers); check it when visible, and always require ZIP bytes ("PK\x03\x04").
+  // Always require application/zip and ZIP bytes ("PK\x03\x04").
   const isZip = zip.length > 4 && zip[0] === 0x50 && zip[1] === 0x4b && zip[2] === 0x03 && zip[3] === 0x04;
-  if (type !== "application/zip" || (disposition && !disposition.includes('filename="enkel-utleie-persondata.zip"')) || !isZip) return { error: "failed" };
-  return { zip };
+  if (type !== "application/zip" || !isZip) return { error: "failed" };
+  return { zip, disposition };
 }
 
 export async function confirmPrivacyExportSaved(caseId) {

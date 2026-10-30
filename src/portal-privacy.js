@@ -7,6 +7,30 @@ import { unsupportedCharacters } from "./portal-letter.js";
 export const FILE_NAME = "Enkel Utleie – mine data.pdf";
 export const PDF_TITLE = "Enkel Utleie – mine data";
 
+/** File name from a Content-Disposition header: filename* (UTF-8, RFC 5987) first, then filename=. Null if missing. */
+export function contentDispositionFileName(header) {
+  if (!header) return null;
+  let name = null;
+  const star = /(?:^|;)\s*filename\*\s*=\s*([^;]*)/i.exec(header);
+  const ext = star && /^\s*"?utf-8'[^']*'([^"]*)"?\s*$/i.exec(star[1]);
+  if (ext) {
+    try { name = decodeURIComponent(ext[1]); } catch { name = null; }
+  }
+  if (!name) {
+    const plain = /(?:^|;)\s*filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]*))/i.exec(header);
+    if (plain) name = plain[1] != null ? plain[1].replace(/\\(.)/g, "$1") : plain[2];
+  }
+  // Never a path or control characters.
+  name = String(name ?? "").split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 200);
+  return name && name !== "." && name !== ".." ? name : null;
+}
+/** The saved PDF takes the server's file name (its extension becomes .pdf); FILE_NAME when there is none. */
+export function exportFileName(disposition) {
+  const name = contentDispositionFileName(disposition);
+  const stem = name ? name.replace(/\.[^.]*$/, "").trim() : "";
+  return stem ? `${stem}.pdf` : FILE_NAME;
+}
+
 const invalid = () => new Error("invalid_response");
 const u16 = (d, o) => d[o] | (d[o + 1] << 8);
 const u32 = (d, o) => (d[o] | (d[o + 1] << 8) | (d[o + 2] << 16) | (d[o + 3] << 24)) >>> 0;
