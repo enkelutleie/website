@@ -1777,7 +1777,44 @@ export const respondDeposit = (settlementId, accept) =>
   supabase.rpc("respond_deposit_settlement", { requested_settlement_id: settlementId, requested_accept: accept });
 export const disputeDeposit = (settlementId, reason) =>
   supabase.rpc("dispute_deposit_settlement", { requested_settlement_id: settlementId, requested_reason: reason });
+// Status only, for the re-read after a failed accept or dispute.
+export const depositSettlementStatus = (settlementId) =>
+  supabase.from("deposit_settlements").select("id, status").eq("id", settlementId).maybeSingle();
+// One accept or dispute per settlement at a time: a second tap gets the same result.
+// On any error (also 409 deposit_settlement_locked, or a lost reply) the settlement is read
+// again (iOS #1525, Android #270). Already done or locked: no error. Still waiting for the
+// tenant: the original error, so «Prøv igjen» sends again.
+// → { status, mine } | { error }
+const depositResponding = new Map();
+const DEPOSIT_DONE = { accept: ["accepted", "full_refund"], dispute: ["disputed"] };
+export function respondDepositSettlement(settlementId, kind, reason) {
+  const key = `${settlementId}:${kind}`;
+  const running = depositResponding.get(key);
+  if (running) return running;
+  const run = respondDepositOnce(settlementId, kind, reason).finally(() => depositResponding.delete(key));
+  depositResponding.set(key, run);
+  return run;
+}
+async function respondDepositOnce(settlementId, kind, reason) {
+  let res;
+  try {
+    res = kind === "dispute" ? await disputeDeposit(settlementId, reason) : await respondDeposit(settlementId, true);
+  } catch (error) {
+    res = { error };
+  }
+  if (!res?.error) return { status: DEPOSIT_DONE[kind][0], mine: true };
+  let stored = null;
+  try {
+    const again = await depositSettlementStatus(settlementId);
+    stored = again.error ? null : again.data ?? null;
+  } catch { /* keep the original error */ }
+  if (stored?.status && stored.status !== "claims_pending") {
+    return { status: stored.status, mine: DEPOSIT_DONE[kind].includes(stored.status) };
+  }
+  return { error: res.error };
+}
 export const DEPOSIT_ERROR_TEXT = {
+  deposit_settlement_locked: "Depositumsoppgjøret er låst og kan ikke endres.",
   exceed: "Kravene kan ikke være større enn depositumet.",
   deposit_claim_limit: "Du kan legge inn opptil 20 krav.",
   deposit_dispute_reason_required: "Skriv en begrunnelse for å bestride.",
