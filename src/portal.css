@@ -30,6 +30,13 @@ svg { flex: none; }
 .pt-prop-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .pt-prop-text strong { font-size: var(--fs-subheadline); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pt-prop-text span { font-size: var(--fs-caption); color: var(--secondary-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-prop-link { cursor: pointer; text-decoration: none; transition: background-color var(--ease), border-color var(--ease), box-shadow var(--ease); }
+.pt-prop-link:hover { background: var(--brand-soft); border-color: var(--brand-border); text-decoration: none; }
+.pt-prop-link:active { opacity: var(--press-opacity); }
+.pt-prop-link:focus-visible { outline: 3px solid var(--brand-border); outline-offset: 2px; }
+.pt-prop-go { flex: none; display: grid; place-items: center; width: 20px; height: 20px; color: var(--secondary-ink); transition: transform var(--ease), color var(--ease); }
+.pt-prop-go svg { width: 16px; height: 16px; }
+.pt-prop-link:hover .pt-prop-go { color: var(--brand); transform: translateX(2px); }
 .pt-prop-button { cursor: pointer; transition: background-color var(--ease), border-color var(--ease), box-shadow var(--ease); }
 .pt-prop-button:hover { background: var(--brand-soft); border-color: var(--brand-border); }
 .pt-prop-button:active { opacity: var(--press-opacity); }
