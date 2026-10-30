@@ -2917,26 +2917,50 @@ const hoDepositPage = async (p, t, d) => {
     }));
   }
   if (!manager && status === "claims_pending") {
-    buttons.push(
-      button("Godta oppgjør", "pt-btn-primary", async () => {
-        const ok = await act.confirmAction({ title: "Godta oppgjør", text: `Du godtar krav på ${money(total)}. ${money(Math.max(0, deposit - total))} tilbakebetales.`, confirmLabel: "Godta oppgjør", destructive: false });
-        if (ok) hoRun(await act.respondDeposit(snap.id, true), act.depositError, "Depositumsoppgjøret er fullført");
-      }),
-      button("Bestrid oppgjør", "pt-btn-quiet-destructive", () => act.openForm({
+    // Busy and disabled from the tap until the result is shown; one request per tap.
+    let busy = false;
+    const setBusy = (on, sending = false) => {
+      busy = on;
+      accept.disabled = on;
+      dispute.disabled = on;
+      accept.textContent = sending ? "Sender …" : "Godta oppgjør";
+      if (sending) accept.setAttribute("aria-busy", "true");
+      else accept.removeAttribute("aria-busy");
+    };
+    const accept = button("Godta oppgjør", "pt-btn-primary", async () => {
+      if (busy) return;
+      setBusy(true);
+      const ok = await act.confirmAction({ title: "Godta oppgjør", text: `Du godtar krav på ${money(total)}. ${money(Math.max(0, deposit - total))} tilbakebetales.`, confirmLabel: "Godta oppgjør", destructive: false });
+      if (!ok) return setBusy(false);
+      setBusy(true, true);
+      const r = await act.respondDepositSettlement(snap.id, "accept");
+      if (r.error) {
+        act.toast(act.depositError(r) ?? "Kunne ikke godta oppgjøret. Prøv igjen.");
+        return setBusy(false);
+      }
+      hoReloadPage(r.mine ? "Depositumsoppgjøret er fullført" : "Depositumsoppgjøret er allerede behandlet.");
+    });
+    const dispute = button("Bestrid oppgjør", "pt-btn-quiet-destructive", async () => {
+      if (busy) return;
+      setBusy(true);
+      let done = null;
+      await act.openForm({
         title: "Bestrid oppgjør",
         fields: [{ name: "reason", label: "Begrunnelse", type: "textarea", rows: 4, maxLength: 1000, required: true, placeholder: "Skriv hvorfor du bestrider oppgjøret" }],
         submitLabel: "Bestrid oppgjør",
         onSubmit: async (v) => {
           const reason = v.reason.trim();
           if (!reason) return "Skriv en begrunnelse for å bestride.";
-          const r = await act.disputeDeposit(snap.id, reason);
-          const err = act.depositError(r);
-          if (err) return err;
-          hoReloadPage("Oppgjøret er bestridt.");
+          const r = await act.respondDepositSettlement(snap.id, "dispute", reason);
+          if (r.error) return act.depositError(r) ?? "Kunne ikke bestride oppgjøret. Prøv igjen.";
+          done = r;
           return null;
         },
-      })),
-    );
+      });
+      if (!done) return setBusy(false);
+      hoReloadPage(done.mine ? "Oppgjøret er bestridt." : "Depositumsoppgjøret er allerede behandlet.");
+    });
+    buttons.push(accept, dispute);
   }
   if (buttons.length) head.append(actionsRow(...buttons));
   const list = card("Krav mot depositum", "doc");
