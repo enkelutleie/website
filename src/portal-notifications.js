@@ -56,6 +56,7 @@ const T = {
   "maintenance.reopened": "Vedlikeholdssaken er åpnet igjen",
   "maintenance.resolved": "Vedlikeholdssaken er løst",
   "maintenance.scheduleChanged": "Utleier har foreslått en dato. Venter på godkjenning.",
+  "maintenance.scheduleChanged.shared": "Det er satt en dato for vedlikehold i boligen.",
   "maintenance.scheduleChanged.title": "Ny dato for vedlikehold",
   "maintenance.status": "Status endret til %@",
   "maintenance.comment": "Ny kommentar: %@",
@@ -120,7 +121,8 @@ export function notificationText(n, scope, reasons = []) {
     }
     case "tenancy_cancelled": return T["tenancy.cancelled"];
     case "maintenance_created": return T["maintenance.created"];
-    case "maintenance_schedule_changed": return T["maintenance.scheduleChanged"];
+    // iOS #1521: a reader who cannot open the case gets the calendar item, not the approval text.
+    case "maintenance_schedule_changed": return T[n.destination_type === "calendar_item" ? "maintenance.scheduleChanged.shared" : "maintenance.scheduleChanged"];
     case "maintenance_status_changed":
       if (s === "follow_up") return T["maintenance.followUp"];
       return fill("maintenance.status", MAINTENANCE_STATUS[s] ?? "en ny verdi");

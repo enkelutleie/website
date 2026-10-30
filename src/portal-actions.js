@@ -1398,9 +1398,11 @@ export async function commentPhotoUrl(storagePath) {
   return file.error ? null : dataUrlOf(file.data);
 }
 
+const CALENDAR_COLUMNS = "id, property_id, tenancy_id, maintenance_request_id, title, description, item_type, category, starts_at, due_at, ends_at, all_day, visibility, status, tenant_response, tenant_response_comment, tenant_responded_at";
+
 // Planned visit (MaintenanceView.scheduleSection): one calendar event, no deadline.
 export const maintenanceCalendarItems = (requestId) =>
-  supabase.from("property_calendar_items").select("id, property_id, tenancy_id, maintenance_request_id, title, description, item_type, category, starts_at, due_at, ends_at, all_day, visibility, status, tenant_response, tenant_response_comment, tenant_responded_at")
+  supabase.from("property_calendar_items").select(CALENDAR_COLUMNS)
     .eq("maintenance_request_id", requestId).order("starts_at", { ascending: true });
 export const calendarResponses = (propertyId) =>
   supabase.rpc("list_calendar_item_responses", { requested_property_id: propertyId });
@@ -1425,8 +1427,35 @@ export function rescheduleMaintenanceVisit(item, startsAt) {
 }
 // One calendar item for #kalender/<id> (CalendarView detail). RLS decides who may read it.
 export const calendarItem = (itemId) =>
-  supabase.from("property_calendar_items").select("id, property_id, tenancy_id, maintenance_request_id, title, description, item_type, category, starts_at, due_at, ends_at, all_day, visibility, status, tenant_response, tenant_response_comment, tenant_responded_at")
+  supabase.from("property_calendar_items").select(CALENDAR_COLUMNS)
     .eq("id", itemId).maybeSingle();
+// Shared property calendar (iOS #1521): list_calendar_items_for_property returns every row the
+// caller may read on the property, with the optional can_respond and maintenance_request_readable
+// (and maintenance_request_id null when the case is not readable). If the RPC fails, the table
+// read is used; those rows have neither field and the portal falls back to tenancy membership.
+export async function propertyCalendarItems(propertyId) {
+  const rpc = await supabase.rpc("list_calendar_items_for_property", { requested_property_id: propertyId });
+  if (!rpc.error) return { data: (rpc.data ?? []).slice(0, 200), error: null };
+  return supabase.from("property_calendar_items").select(CALENDAR_COLUMNS)
+    .eq("property_id", propertyId).order("starts_at", { ascending: true }).limit(200);
+}
+// One item with the access fields from the list RPC when it has them. The table row is the
+// source of truth for existence; only can_respond, maintenance_request_readable and a hidden
+// maintenance_request_id are taken from the RPC row.
+export async function calendarItemWithAccess(itemId) {
+  const res = await calendarItem(itemId);
+  if (res.error || !res.data) return res;
+  const listed = await supabase.rpc("list_calendar_items_for_property", { requested_property_id: res.data.property_id });
+  const row = listed.error ? null : (listed.data ?? []).find((r) => r.id === res.data.id);
+  if (!row) return res;
+  const item = { ...res.data };
+  if (typeof row.can_respond === "boolean") item.can_respond = row.can_respond;
+  if (typeof row.maintenance_request_readable === "boolean") {
+    item.maintenance_request_readable = row.maintenance_request_readable;
+    if (!row.maintenance_request_readable) item.maintenance_request_id = null;
+  }
+  return { data: item, error: null };
+}
 export const respondToCalendarItem = (itemId, decision, comment) =>
   supabase.rpc("respond_to_calendar_item", { requested_calendar_item_id: itemId, requested_decision: decision, requested_comment: comment || null });
 
