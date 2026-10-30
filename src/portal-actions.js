@@ -1084,6 +1084,13 @@ export const createCalendarItem = (propertyId, v, { tenancyId = null, maintenanc
   });
 export const updateCalendarItem = (id, v) =>
   supabase.rpc("update_calendar_item", { requested_calendar_item_id: id, ...calendarFields(v) });
+// Audience and maintenance link of an active item (iOS #1530, CalendarItemScopeEditor). A null
+// tenancy makes it landlord-only (manager_private, no tenant answer); a tenancy shares it with
+// that tenancy, which must have an active tenant. A changed audience resets the tenant's answer.
+export const editCalendarItemScope = (id, tenancyId, maintenanceRequestId) =>
+  supabase.rpc("edit_calendar_item_scope", {
+    requested_calendar_item_id: id, requested_tenancy_id: tenancyId ?? null, requested_maintenance_request_id: maintenanceRequestId ?? null,
+  });
 export const cancelCalendarItem = (id) => supabase.rpc("cancel_calendar_item", { requested_calendar_item_id: id });
 export const completeCalendarItem = (id) => supabase.rpc("complete_calendar_item", { requested_calendar_item_id: id });
 

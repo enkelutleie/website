@@ -99,7 +99,8 @@ const roleOf = (id) => {
   return null;
 };
 const cached = (key, fn) => {
-  if (!state.cache.has(key)) state.cache.set(key, fn().catch(() => ({ error: true })));
+  // Supabase query builders are thenables without .catch, so wrap them in a real promise.
+  if (!state.cache.has(key)) state.cache.set(key, Promise.resolve().then(fn).catch(() => ({ error: true })));
   return state.cache.get(key);
 };
 
@@ -329,8 +330,13 @@ const calendarDetail = async (itemId, requestId) => {
   const caseHidden = item.maintenance_request_readable === false || (!!item.maintenance_request_id && !caseLink);
   if (item.description && !caseHidden) c.append(h("p", "pt-cal-description", item.description));
 
-  const shared = !!item.tenancy_id && item.status === "active";
-  if (shared && manager) {
+  // Only a shared item waits for a tenant, and only when the property has one to answer.
+  // A landlord-only item (manager_private, tenancy null) never needs approval.
+  const shared = item.visibility === "tenant_shared" && item.status === "active" && manager && await calendarHasTenant(pid);
+  if (manager && item.visibility === "manager_private" && item.status === "active") {
+    c.append(h("p", "pt-muted", "Bare utleiere ser denne hendelsen, så ingen leietaker trenger å godkjenne den. Velg «Rediger» for å dele den med leietakeren."));
+  }
+  if (shared) {
     const responses = await act.calendarResponses(pid);
     const resp = (responses.data ?? []).find((r) => r.calendar_item_id === item.id);
     const decision = resp?.decision ?? item.tenant_response;
@@ -467,10 +473,70 @@ const calendarYearPicker = (year, years, onPick) => {
   return { wrap, focus: () => btn.focus() };
 };
 
+// CalendarItemPresentation (iOS): «Kommende» = active, not an overdue deadline, scheduled from
+// the start of today, declined answers left out. Completed and cancelled rows never show there.
+const calendarIsOverdue = (i, now) => i.item_type === "deadline" && i.status === "active" && calendarItemDate(i) < now;
+const calendarUpcoming = (items, now, today) => items
+  .filter((i) => i.status === "active" && !calendarIsOverdue(i, now) && calendarItemDate(i) >= today && i.tenant_response !== "declined")
+  .sort((a, b) => calendarItemDate(a) - calendarItemDate(b));
+// awaitsTenantResponse (iOS): shared, active and not answered. The web only marks it when the
+// property has a tenant who can answer; with no tenant nobody is asked yet.
+const calendarAwaitsTenant = (i, hasTenant) =>
+  hasTenant && i.visibility === "tenant_shared" && i.status === "active" && !i.tenant_response;
+// calendarDisplayDate (iOS): «13. okt. 2026 kl. 23:36», date only for all-day items.
+const calendarWhen = (i) => {
+  const d = calendarItemDate(i);
+  if (Number.isNaN(d.getTime())) return "";
+  const day = dateText(d.toISOString());
+  return i.all_day ? day : `${day} kl. ${calendarTime(d)}`;
+};
+const calendarHasTenant = async (pid) => {
+  const active = new Set(mtActiveTenancies(pid).map((t) => t.id));
+  if (!active.size) return false;
+  const people = await tenancyPeople(pid);
+  return (people.data ?? []).some((m) => m.role === "tenant" && active.has(m.tenancy_id));
+};
+const CALENDAR_UPCOMING_PREVIEW = 3;
+const CALENDAR_UPCOMING_PAGE = 6;
+
+// One row like CalendarItemRow (iOS): icon chip, bold title, badge, subtle date, category line.
+const calendarRow = (i, { now, hasTenant, manager }) => {
+  const li = h("li");
+  const a = h("a", "pt-cal-item");
+  a.href = `#kalender/${i.id}`;
+  const overdue = calendarIsOverdue(i, now);
+  const awaiting = manager && !overdue && calendarAwaitsTenant(i, hasTenant);
+  if (awaiting) a.classList.add("is-awaiting");
+  const chipIcon = i.maintenance_request_id || i.category === "maintenance" ? "wrench" : "calendar";
+  a.append(icon(chipIcon, `pt-cal-item-icon${overdue ? " is-overdue" : ""}`));
+  const texts = h("div", "pt-cal-item-texts");
+  texts.append(h("strong", "pt-cal-item-title", i.title || "Hendelse"));
+  if (i.tenant_response === "declined") texts.append(h("span", "pt-cal-badge is-declined", "Avslått"));
+  if (awaiting) texts.append(h("span", "pt-cal-badge", "Venter på godkjenning"));
+  if (overdue) texts.append(h("span", "pt-cal-badge is-overdue", "Forfalt"));
+  texts.append(h("span", "pt-cal-item-date", calendarWhen(i)));
+  const cat = act.CALENDAR_CATEGORIES.find(([k]) => k === i.category)?.[1];
+  const meta = [cat, manager ? CALENDAR_VISIBILITY[i.visibility] : null];
+  if (i.status !== "active") meta.push(CALENDAR_STATUS[i.status]);
+  texts.append(h("span", "pt-cal-item-meta", meta.filter(Boolean).join(" · ")));
+  a.append(texts, icon("chevron", "pt-cal-item-chevron"));
+  li.append(a);
+  return li;
+};
+
 const calendarCard = async (pid, full = false) => {
-  const c = card("Kalender", "calendar", full ? null : ["Se alle", "#kalender"]);
-  const res = await calendarItems(pid);
-  const items = res.error ? [] : (res.data ?? []).filter((i) => i.status !== "cancelled");
+  const c = card("Kalender", "calendar");
+  const manager = isManager(pid);
+  const [res, hasTenant, responses] = await Promise.all([
+    calendarItems(pid),
+    calendarHasTenant(pid),
+    manager ? Promise.resolve(act.calendarResponses(pid)).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+  ]);
+  // applying(responses:) (iOS): a fresher answer from list_calendar_item_responses wins.
+  const answers = new Map((responses?.data ?? []).map((r) => [r.calendar_item_id, r.decision]));
+  const items = res.error ? [] : (res.data ?? [])
+    .filter((i) => i.status !== "cancelled")
+    .map((i) => (answers.get(i.id) && answers.get(i.id) !== i.tenant_response ? { ...i, tenant_response: answers.get(i.id) } : i));
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (!calendarView) calendarView = { y: now.getFullYear(), m: now.getMonth() };
@@ -479,9 +545,14 @@ const calendarCard = async (pid, full = false) => {
   const maxYear = Math.max(now.getFullYear() + CALENDAR_YEAR_SPAN, ...itemYears);
   const years = [];
   for (let y = minYear; y <= maxYear; y++) years.push(y);
+  const ctx = { now, hasTenant, manager };
+  const sameDay = (d, y, m, day) => d.getFullYear() === y && d.getMonth() === m && d.getDate() === day;
+  let selected = null; // { y, m, d } after a day is tapped
+  let showAll = false;
 
   const monthBox = h("div", "pt-cal-month");
-  const listBox = h("div");
+  const dayBox = h("div", "pt-cal-dayitems");
+  const listBox = h("div", "pt-cal-upcoming");
   const navButton = (label, cls, delta) => {
     const b = h("button", `pt-cal-nav ${cls}`);
     b.type = "button";
@@ -499,58 +570,48 @@ const calendarCard = async (pid, full = false) => {
     return b;
   };
 
-  const row = (i) => {
-    const li = h("li", "pt-row");
-    const main = h("div", "pt-row-main");
-    const title = h("strong");
-    const open = h("a", "pt-row-link", i.title || "Hendelse");
-    open.href = `#kalender/${i.id}`;
-    open.title = "Åpner kalenderpunktet";
-    title.append(open);
-    main.append(title, h("span", null, dateText(i.starts_at || i.due_at)));
-    li.append(icon(i.maintenance_request_id ? "wrench" : "calendar"), main);
-    if (full && isManager(pid) && i.status === "active") {
-      li.append(
-        button("Endre", "pt-btn-soft pt-btn-small", () => calendarForm(pid, i)),
-        button("Fullfør", "pt-btn-secondary pt-btn-small", async () => {
-          const err = rpcError(await act.completeCalendarItem(i.id));
-          if (err) act.toast(err); else refresh("Hendelsen er fullført.");
-        }),
-        button("Avlys", "pt-btn-quiet-destructive pt-btn-small", async () => {
-          if (!(await act.confirmAction({ title: "Avlyse hendelsen?", text: `«${i.title || "Hendelse"}» blir avlyst for alle på boligen.`, confirmLabel: "Avlys" }))) return;
-          const err = rpcError(await act.cancelCalendarItem(i.id));
-          if (err) act.toast(err); else refresh("Hendelsen er avlyst.");
-        }),
-      );
-    }
-    return li;
+  const drawDay = () => {
+    if (!selected) { dayBox.replaceChildren(); return; }
+    const { y, m, d } = selected;
+    const dayItems = items.filter((i) => sameDay(calendarItemDate(i), y, m, d))
+      .sort((a, b) => calendarItemDate(a) - calendarItemDate(b));
+    const title = new Date(y, m, d).toLocaleDateString("nb-NO", { weekday: "long", day: "numeric", month: "long" });
+    const head = h("p", "pt-cal-section-title", title);
+    if (!dayItems.length) { dayBox.replaceChildren(head, inline("Ingen hendelser denne dagen.")); return; }
+    const list = h("ul", "pt-cal-items");
+    dayItems.forEach((i) => list.append(calendarRow(i, ctx)));
+    dayBox.replaceChildren(head, list);
   };
 
   const draw = (focusSel) => {
     const { y, m } = calendarView;
     const isNow = y === now.getFullYear() && m === now.getMonth();
-    const inMonth = items.filter((i) => { const d = calendarItemDate(i); return d.getFullYear() === y && d.getMonth() === m; });
-    const eventDays = new Set(inMonth.map((i) => calendarItemDate(i).getDate()));
+    const eventDays = new Set(items
+      .filter((i) => { const d = calendarItemDate(i); return d.getFullYear() === y && d.getMonth() === m; })
+      .map((i) => calendarItemDate(i).getDate()));
 
+    // CalendarView.monthHeader (iOS): ‹  november 2026  ›, the year opens the year list.
     const head = h("div", "pt-cal-head");
-    const label = h("p", "pt-cal-title", new Date(y, m, 1).toLocaleDateString("nb-NO", { month: "long" }));
+    const center = h("div", "pt-cal-center");
+    const label = h("span", "pt-cal-title", new Date(y, m, 1).toLocaleDateString("nb-NO", { month: "long" }));
     label.setAttribute("aria-live", "polite");
     const picker = calendarYearPicker(y, years, (year) => {
       calendarView = { y: year, m };
       draw(".pt-cal-year-button");
     });
-    const nav = h("div", "pt-cal-navs");
+    center.append(label, picker.wrap);
     if (!isNow) {
       const todayBtn = h("button", "pt-cal-today", "I dag");
       todayBtn.type = "button";
       todayBtn.addEventListener("click", () => {
         calendarView = { y: now.getFullYear(), m: now.getMonth() };
+        selected = null;
+        drawDay();
         draw(".pt-cal-next");
       });
-      nav.append(todayBtn);
+      center.append(todayBtn);
     }
-    nav.append(navButton("Forrige måned", "pt-cal-prev", -1), navButton("Neste måned", "pt-cal-next", 1));
-    head.append(label, picker.wrap, nav);
+    head.append(navButton("Forrige måned", "pt-cal-prev", -1), center, navButton("Neste måned", "pt-cal-next", 1));
 
     const grid = h("div", "pt-cal");
     ["Ma", "Ti", "On", "To", "Fr", "Lø", "Sø"].forEach((d) => grid.append(h("span", "pt-cal-dow", d)));
@@ -558,28 +619,65 @@ const calendarCard = async (pid, full = false) => {
     for (let i = 0; i < offset; i++) grid.append(h("span"));
     const days = new Date(y, m + 1, 0).getDate();
     for (let d = 1; d <= days; d++) {
-      grid.append(h("span", `pt-cal-day${isNow && d === now.getDate() ? " is-today" : ""}${eventDays.has(d) ? " has-event" : ""}`, String(d)));
+      const isToday = isNow && d === now.getDate();
+      const isSel = selected && selected.y === y && selected.m === m && selected.d === d;
+      const b = h("button", `pt-cal-day${isToday ? " is-today" : ""}${isSel ? " is-selected" : ""}${eventDays.has(d) ? " has-event" : ""}`);
+      b.type = "button";
+      b.append(h("span", "pt-cal-day-num", String(d)), h("span", "pt-cal-dot"));
+      const long = new Date(y, m, d).toLocaleDateString("nb-NO", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+      b.setAttribute("aria-label", `${long}${isToday ? ", i dag" : ""}${eventDays.has(d) ? ", har hendelser" : ""}`);
+      b.setAttribute("aria-pressed", isSel ? "true" : "false");
+      b.addEventListener("click", () => {
+        selected = isSel ? null : { y, m, d };
+        draw();
+        drawDay();
+        monthBox.querySelectorAll(".pt-cal-day")[d - 1]?.focus();
+      });
+      grid.append(b);
     }
     monthBox.replaceChildren(head, grid);
     if (focusSel) monthBox.querySelector(focusSel)?.focus();
-
-    // Full page: the shown month's items (from today in the current month). Overview: next three.
-    const shown = full
-      ? inMonth.filter((i) => !isNow || calendarItemDate(i) >= today)
-      : items.filter((i) => calendarItemDate(i) >= today).slice(0, 3);
-    const monthName = new Date(y, m, 1).toLocaleDateString("nb-NO", { month: "long", year: "numeric" });
-    if (res.error) listBox.replaceChildren(inline("Kalenderen kunne ikke hentes akkurat nå."));
-    else if (!shown.length) listBox.replaceChildren(inline(full && !isNow ? `Ingen hendelser i ${monthName}.` : "Ingen kommende hendelser."));
-    else {
-      const list = h("ul", "pt-list");
-      shown.sort((a, b) => calendarItemDate(a) - calendarItemDate(b)).forEach((i) => list.append(row(i)));
-      listBox.replaceChildren(list);
-    }
   };
+
+  const drawList = () => {
+    const title = h("p", "pt-cal-section-title", "Kommende hendelser");
+    if (res.error) { listBox.replaceChildren(title, inline("Kalenderen kunne ikke hentes akkurat nå.")); return; }
+    const overdue = full ? items.filter((i) => calendarIsOverdue(i, now)).sort((a, b) => calendarItemDate(a) - calendarItemDate(b)) : [];
+    const upcoming = calendarUpcoming(items, now, today);
+    const out = [];
+    if (overdue.length) {
+      const list = h("ul", "pt-cal-items");
+      overdue.forEach((i) => list.append(calendarRow(i, ctx)));
+      out.push(h("p", "pt-cal-section-title is-overdue", "Forfalt"), list);
+    }
+    out.push(title);
+    const limit = full ? (showAll ? upcoming.length : CALENDAR_UPCOMING_PAGE) : CALENDAR_UPCOMING_PREVIEW;
+    if (!upcoming.length) out.push(inline("Ingen kommende hendelser."));
+    else {
+      const list = h("ul", "pt-cal-items");
+      upcoming.slice(0, limit).forEach((i) => list.append(calendarRow(i, ctx)));
+      out.push(list);
+    }
+    const foot = h("div", "pt-cal-foot");
+    if (!full) {
+      const all = h("a", "pt-cal-seeall", "Se alle");
+      all.href = "#kalender";
+      foot.append(all);
+    } else if (upcoming.length > limit) {
+      const all = h("button", "pt-cal-seeall", `Se alle (${upcoming.length})`);
+      all.type = "button";
+      all.addEventListener("click", () => { showAll = true; drawList(); });
+      foot.append(all);
+    }
+    if (foot.childNodes.length) out.push(foot);
+    listBox.replaceChildren(...out);
+  };
+
   draw();
+  drawList();
   c.append(monthBox);
-  if (isManager(pid)) c.append(actionsRow(button("+ Ny hendelse", "pt-btn-primary pt-btn-small", () => calendarForm(pid))));
-  c.append(listBox);
+  if (manager) c.append(actionsRow(button("+ Ny hendelse", "pt-btn-primary pt-cal-new", () => calendarForm(pid))));
+  c.append(dayBox, listBox);
   return c;
 };
 
@@ -1403,8 +1501,17 @@ const localParts = (value) => {
 // creating); editing keeps the item's own type and the planned duration. «Merk som
 // vedlikeholdssak» (create only, as in the app) creates the case first and links the item
 // (CalendarHendelsePresentation): category «maintenance», priority normal, description falls
-// back to the title. Visibility and the case link are fixed once created (enforce_calendar_item_update).
+// back to the title. After creation, audience and case link change through edit_calendar_item_scope.
 const CALENDAR_VISIBILITY = { manager_private: "Kun for utleiere", tenant_shared: "Delt med leietaker" };
+// edit_calendar_item_scope errors in plain Norwegian (CalendarController.updateScope).
+const calendarScopeError = (error) => {
+  const msg = String(error?.message || "");
+  if (/active accepted tenant/i.test(msg)) return "Leieforholdet har ingen aktiv leietaker ennå. Hendelsen kan deles når leietakeren har godtatt invitasjonen.";
+  if (/match the maintenance tenancy/i.test(msg)) return "Vedlikeholdssaken hører til et annet leieforhold. Velg samme leieforhold som saken, eller «Kun for utleiere».";
+  if (/maintenance request must belong/i.test(msg)) return "Vedlikeholdssaken finnes ikke på denne boligen.";
+  if (/only active calendar items/i.test(msg)) return "Bare aktive hendelser kan endres.";
+  return act.explain(error);
+};
 const calendarForm = async (pid, item) => {
   const when = localParts(item?.item_type === "deadline" ? item.due_at : item?.starts_at || item?.due_at);
   const deadline = item?.item_type === "deadline";
@@ -1412,24 +1519,32 @@ const calendarForm = async (pid, item) => {
   const fields = [
     { name: "title", label: "Tittel", type: "text", value: item?.title ?? "", required: true, maxLength: 160 },
   ];
-  let tenancyOptions = [];
+  // Tenancies with an active tenant (calendar_tenancy_has_active_tenant), lowest id first
+  // (calendarDefaultTenancyID). Only these can be picked as the audience.
+  const tenancies = mtActiveTenancies(pid);
+  const people = await tenancyPeople(pid);
+  const names = new Map();
+  for (const m of people.data ?? []) if (m.role === "tenant") names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name].filter(Boolean));
+  const tenancyOptions = tenancies.filter((t) => names.has(t.id)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id).length ? names.get(t.id) : ["leietaker"]).join(", ")}`]);
+  const hasTenant = tenancyOptions.length > 0;
+  let cases = [];
+  let initialAudience = "private";
   if (!item) {
-    const tenancies = mtActiveTenancies(pid);
-    const people = await tenancyPeople(pid);
-    const names = new Map();
-    for (const m of people.data ?? []) if (m.role === "tenant") names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name].filter(Boolean));
-    // calendarDefaultTenancyID: the active tenancy with the lowest id, among those with a tenant.
-    tenancyOptions = tenancies.filter((t) => names.has(t.id)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-      .map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id).length ? names.get(t.id) : ["leietaker"]).join(", ")}`]);
     fields.push(
       { name: "maintenance", label: "Merk som vedlikeholdssak", type: "checkbox", value: false, help: "Viser skiftenøkkel og oppretter en vedlikeholdssak for hendelsen." },
       { name: "maintenanceCategory", label: "Type vedlikehold", type: "select", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
     );
   } else {
-    fields.push({
-      name: "maintenance", label: "Merk som vedlikeholdssak", type: "checkbox", value: linked, disabled: true,
-      help: linked ? "Hendelsen er knyttet til en vedlikeholdssak. Koblingen kan ikke endres etter at hendelsen er opprettet." : "Kan bare velges når hendelsen opprettes.",
-    });
+    // CalendarItemScopeEditor (iOS #1530): link or unlink a maintenance case after creation.
+    const res = await act.listMaintenance(pid);
+    cases = (res.data ?? []).filter((r) => !act.isFinishedMaintenance(r) || r.id === item.maintenance_request_id);
+    if (linked && !cases.some((r) => r.id === item.maintenance_request_id)) cases.unshift({ id: item.maintenance_request_id, title: "Nåværende sak", tenancy_id: item.tenancy_id });
+    fields.push(
+      { name: "linkCase", label: "Koble til vedlikeholdssak", type: "checkbox", value: linked, help: cases.length ? "Hendelsen vises som planlagt dato i saken." : "Ingen vedlikeholdssaker å koble til." , disabled: !cases.length && !linked },
+      { name: "caseId", label: "Vedlikeholdssak", type: "select", value: item.maintenance_request_id ?? "",
+        options: [["", "Velg sak"], ...cases.map((r) => [r.id, r.title || "Vedlikeholdssak"])] },
+    );
   }
   fields.push(
     { name: "category", label: "Kategori", type: "select", options: act.CALENDAR_CATEGORIES, value: item?.category ?? "other", required: true },
@@ -1439,20 +1554,35 @@ const calendarForm = async (pid, item) => {
     { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 5000, rows: 3 },
   );
   if (!item) {
+    // Approval is not the default: an unchecked box creates a landlord-only item
+    // (manager_private), which never waits for a tenant. Checked shares it with the tenants on
+    // the property (tenant_shared), who can accept or decline.
     fields.push(
-      { name: "visibility", label: "Synlighet", type: "select", value: "shared", required: true,
-        options: [["shared", "Delt med leietakerne på boligen"], ["private", "Kun for utleiere"]],
-        help: "Leietakere på boligen ser hendelsen, også de som flytter inn senere." },
+      { name: "askTenant", label: "Be om godkjenning fra leietaker", type: "checkbox", value: false, disabled: !hasTenant,
+        help: hasTenant
+          ? "Leietakeren ser hendelsen og kan godta eller avslå den. Uten dette ser bare utleiere hendelsen."
+          : "Ingen leietaker på boligen ennå, så hendelsen lagres bare for utleiere. Du kan dele den med leietakeren senere under «Rediger»." },
       { name: "maintenanceVisibility", label: "Synlighet", type: "select", required: true,
         value: tenancyOptions[0]?.[0] ?? "private",
         options: [...tenancyOptions, ["private", "Kun for utleiere"]],
-        help: tenancyOptions.length ? "Velg hvilket leieforhold saken gjelder, eller at den kun skal være synlig for utleiere." : "Ingen aktiv leietaker er knyttet til denne boligen." },
+        help: hasTenant ? "Velg hvilket leieforhold saken gjelder, eller at den kun skal være synlig for utleiere." : "Ingen aktiv leietaker er knyttet til denne boligen." },
     );
   } else {
+    // Audience after creation (edit_calendar_item_scope). A row shared with the whole property
+    // (no tenancy) keeps that until another choice is made; the RPC cannot set it again.
+    const options = [["private", "Kun for utleiere – ingen godkjenning"], ...tenancyOptions];
+    if (item.visibility === "tenant_shared" && !item.tenancy_id) {
+      options.splice(1, 0, ["property", "Delt med leietakerne på boligen"]);
+      initialAudience = "property";
+    } else if (item.visibility === "tenant_shared") {
+      if (!tenancyOptions.some(([id]) => id === item.tenancy_id)) options.push([item.tenancy_id, "Dette leieforholdet"]);
+      initialAudience = item.tenancy_id;
+    }
     fields.push({
-      name: "visibility", label: "Synlighet", type: "select", disabled: true,
-      value: item.visibility, options: Object.entries(CALENDAR_VISIBILITY),
-      help: "Synligheten bestemmes når hendelsen opprettes og kan ikke endres etterpå.",
+      name: "audience", label: "Synlighet", type: "select", required: true, value: initialAudience, options,
+      help: hasTenant
+        ? "Delt med leietaker: leietakeren ser hendelsen og kan godta eller avslå. Endrer du synligheten, må leietakeren svare på nytt."
+        : "Ingen leietaker på boligen ennå. Når en leietaker har flyttet inn, kan du dele hendelsen her.",
     });
   }
   // A case created on an earlier, failed attempt is linked on retry instead of created twice.
@@ -1463,15 +1593,35 @@ const calendarForm = async (pid, item) => {
     fields,
     onChange: (inputs, show) => {
       show("time", inputs.allDay.value !== "true");
-      if (item) return;
+      if (item) {
+        show("caseId", inputs.linkCase.checked);
+        return;
+      }
       const marked = inputs.maintenance.checked || !!pendingCase;
       show("maintenanceCategory", marked);
       show("category", !marked);
-      show("visibility", !marked);
+      show("askTenant", !marked);
       show("maintenanceVisibility", marked);
     },
     onSubmit: async (v) => {
       if (item) {
+        const caseId = v.linkCase === "true" ? v.caseId || null : null;
+        if (v.linkCase === "true" && !caseId) return "Velg hvilken vedlikeholdssak hendelsen skal kobles til.";
+        const audienceChanged = v.audience !== initialAudience;
+        const caseChanged = caseId !== (item.maintenance_request_id ?? null);
+        if (audienceChanged || caseChanged) {
+          // «property» is the stored property-wide share; it maps to the item's own tenancy (null).
+          const tenancyId = v.audience === "private" ? null : v.audience === "property" ? null : v.audience;
+          if (v.audience === "property" && caseChanged && caseId) return "En hendelse som er delt med hele boligen, kan ikke kobles til en sak. Velg leieforholdet saken gjelder, eller «Kun for utleiere».";
+          if (v.audience !== "property" || caseChanged) {
+            if (tenancyId && caseId) {
+              const c = cases.find((r) => r.id === caseId);
+              if (c && c.tenancy_id !== tenancyId) return "Vedlikeholdssaken hører til et annet leieforhold. Velg samme leieforhold som saken, eller «Kun for utleiere».";
+            }
+            const scope = await act.editCalendarItemScope(item.id, tenancyId, caseId);
+            if (scope.error) return calendarScopeError(scope.error);
+          }
+        }
         const kind = item.item_type === "deadline" ? "deadline" : "event";
         let endsAt = null;
         if (kind === "event" && item.ends_at && item.starts_at) {
@@ -1486,7 +1636,7 @@ const calendarForm = async (pid, item) => {
       const marked = v.maintenance === "true" || !!pendingCase;
       const values = { ...v, kind: "event", category: marked ? "maintenance" : v.category };
       if (!marked) {
-        const res = await act.createCalendarItem(pid, values, { shared: v.visibility !== "private" });
+        const res = await act.createCalendarItem(pid, values, { shared: hasTenant && v.askTenant === "true" });
         if (res.error) return act.explain(res.error);
         await refresh("Lagt i kalenderen.");
         return null;
