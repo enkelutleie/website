@@ -28,7 +28,7 @@ export const minorOf = (text) => {
 export const kronerOf = (minor) => (minor == null ? "" : (Number(minor) / 100).toFixed(2).replace(".", ","));
 
 /**
- * fields: [{ name, label, type: text|number|money|date|datetime|select|choice|textarea|file|email|checkbox,
+ * fields: [{ name, label, type: text|number|money|date|datetime|choice|textarea|file|email|checkbox,
  *            options: [[value,label]], value, required, help, placeholder, accept, maxLength, min, max, disabled }]
  * A checkbox field gives "true" when checked and "" otherwise; its value is the initial checked state.
  * "choice" is the portal's custom listbox (use it instead of the native "select").
@@ -50,7 +50,8 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const inputs = {};
     for (const f of fields) {
       const check = f.type === "checkbox";
-      const choice = f.type === "choice";
+      // "select" is kept as an alias so no form can ever render a native <select>.
+      const choice = f.type === "choice" || f.type === "select";
       // A custom listbox is not a labelable element, so its row is a div (clicks on options must not hit a label).
       const wrap = h(choice ? "div" : "label", check ? "pt-field pt-field-check" : "pt-field");
       wrap.dataset.field = f.name;
@@ -59,18 +60,11 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       let picker = null;
       if (choice) {
         input = h("input");
-        picker = customSelect({ label: f.label, options: f.options, value: f.value, input }).el;
+        picker = customSelect({ label: f.label, options: f.options ?? [], value: f.value, input }).el;
       } else if (check) {
         input = h("input", "pt-check");
         input.type = "checkbox";
         input.checked = !!f.value;
-      } else if (f.type === "select") {
-        input = h("select", "pt-select");
-        for (const [v, l] of f.options ?? []) {
-          const o = h("option", null, l);
-          o.value = v;
-          input.append(o);
-        }
       } else if (f.type === "textarea") {
         input = h("textarea", "pt-input pt-textarea");
         input.rows = f.rows ?? 5;
@@ -145,7 +139,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         if (f.required && !hidden && !values[f.name]) {
           status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
           status.hidden = false;
-          (f.type === "choice" ? input.closest(".pt-field").querySelector(".pt-choice-button") : input).focus();
+          (choice ? input.closest(".pt-field").querySelector(".pt-choice-button") : input).focus();
           return;
         }
       }
