@@ -7,7 +7,7 @@ import * as inv from "./portal-inventory.js";
 
 export const FURNITURE_NOTE = "Fradrag føres via saldo/direkte fradrag";
 export const DIRECT_TREATMENT = "Direkte fradrag";
-export const SUPPLEMENTS = "Noe av årsrapportgrunnlaget (kjørebok, eiendeler eller eierandel) kunne ikke lastes. Rapporten under kan være ufullstendig. Prøv å laste året på nytt.";
+export const SUPPLEMENTS = "Noe av årsrapportgrunnlaget kunne ikke lastes. Rapporten under kan være ufullstendig. Prøv å laste året på nytt.";
 
 // AnnualReportController.defaultYear: January–April shows last year.
 export function defaultYear(now = new Date()) {
