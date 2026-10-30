@@ -4629,29 +4629,138 @@ const render = async () => {
 const selectProperty = (id, rerender = true) => {
   state.propertyId = id;
   try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
-  const sel = root.querySelector("[data-property-select]");
-  if (sel) sel.value = id;
+  renderSelect();
   if (rerender) render();
 };
 
+// Sidebar property picker. Custom listbox in the portal's own design (no native <select>):
+// 0 properties: muted «Ingen boliger» row. 1 property: static row, nothing to pick.
+// 2+: a button that opens a listbox (Enter/Space/arrows/Home/End/Escape, click outside closes).
+const propRow = (tag, cls, p) => {
+  const row = h(tag, `pt-prop-row ${cls}`);
+  row.append(icon("building", "pt-prop-icon"));
+  const text = h("span", "pt-prop-text");
+  const a = addressOf(p);
+  text.append(h("strong", null, a.line));
+  if (a.place) text.append(h("span", null, a.place));
+  row.append(text);
+  return row;
+};
+
+let pickerOpen = false;
+let pickerDocBound = false;
+const closePicker = (focusButton = false) => {
+  const wrap = root.querySelector("[data-property-picker]");
+  const btn = wrap?.querySelector(".pt-prop-button");
+  const list = wrap?.querySelector(".pt-prop-list");
+  pickerOpen = false;
+  if (btn) btn.setAttribute("aria-expanded", "false");
+  if (list) { list.hidden = true; list.removeAttribute("aria-activedescendant"); }
+  if (focusButton) btn?.focus();
+};
+
 const renderSelect = () => {
-  const sel = root.querySelector("[data-property-select]");
-  sel.replaceChildren();
-  if (!state.properties.length) {
-    sel.append(h("option", null, "Ingen boliger"));
-    sel.disabled = true;
+  const wrap = root.querySelector("[data-property-picker]");
+  if (!wrap) return;
+  pickerOpen = false;
+  wrap.replaceChildren();
+  const props = state.properties;
+  if (!props.length) {
+    const row = h("div", "pt-prop-row pt-prop-static pt-prop-muted");
+    row.append(h("span", "pt-prop-text", "Ingen boliger"));
+    wrap.append(row);
     return;
   }
-  for (const p of state.properties) {
-    const o = h("option", null, addressOf(p).line);
-    o.value = p.id;
-    sel.append(o);
+  const current = props.find((p) => p.id === state.propertyId) ?? props[0];
+  if (props.length === 1) {
+    const row = propRow("div", "pt-prop-static", current);
+    row.setAttribute("aria-labelledby", "pt-property-label");
+    row.setAttribute("role", "group");
+    wrap.append(row);
+    return;
   }
-  sel.value = state.propertyId;
-  sel.disabled = state.properties.length < 2;
-  if (!sel.dataset.bound) {
-    sel.dataset.bound = "1";
-    sel.addEventListener("change", () => selectProperty(sel.value));
+
+  const btn = propRow("button", "pt-prop-button", current);
+  btn.type = "button";
+  btn.id = "pt-property-button";
+  btn.setAttribute("aria-haspopup", "listbox");
+  btn.setAttribute("aria-expanded", "false");
+  btn.setAttribute("aria-controls", "pt-property-list");
+  btn.setAttribute("aria-labelledby", "pt-property-label pt-property-button");
+  btn.append(icon("chevron", "pt-prop-chevron"));
+
+  const list = h("ul", "pt-prop-list");
+  list.id = "pt-property-list";
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-labelledby", "pt-property-label");
+  list.tabIndex = -1;
+  list.hidden = true;
+  const options = props.map((p, i) => {
+    const li = propRow("li", "pt-prop-option", p);
+    li.id = `pt-property-opt-${i}`;
+    li.setAttribute("role", "option");
+    li.dataset.id = p.id;
+    const selected = p.id === current.id;
+    li.setAttribute("aria-selected", selected ? "true" : "false");
+    li.append(icon("check", "pt-prop-check"));
+    list.append(li);
+    return li;
+  });
+
+  let active = -1;
+  const setActive = (i) => {
+    active = (i + options.length) % options.length;
+    options.forEach((o, j) => o.classList.toggle("is-active", j === active));
+    list.setAttribute("aria-activedescendant", options[active].id);
+    options[active].scrollIntoView({ block: "nearest" });
+  };
+  const open = (at) => {
+    pickerOpen = true;
+    list.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    setActive(at ?? Math.max(0, options.findIndex((o) => o.dataset.id === current.id)));
+    list.focus();
+  };
+  const choose = (i) => {
+    const id = options[i].dataset.id;
+    closePicker();
+    if (id === state.propertyId) { btn.focus(); return; }
+    selectProperty(id);
+    root.querySelector("#pt-property-button")?.focus();
+  };
+
+  btn.addEventListener("click", () => (pickerOpen ? closePicker(true) : open()));
+  btn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      open();
+    }
+  });
+  list.addEventListener("keydown", (e) => {
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); setActive(active + 1); break;
+      case "ArrowUp": e.preventDefault(); setActive(active - 1); break;
+      case "Home": e.preventDefault(); setActive(0); break;
+      case "End": e.preventDefault(); setActive(options.length - 1); break;
+      case "Enter": case " ": e.preventDefault(); if (active >= 0) choose(active); break;
+      case "Escape": e.preventDefault(); closePicker(true); break;
+      case "Tab": closePicker(); break;
+      default: break;
+    }
+  });
+  options.forEach((o, i) => {
+    o.addEventListener("click", () => choose(i));
+    o.addEventListener("mousemove", () => { if (active !== i) setActive(i); });
+  });
+  wrap.append(btn, list);
+
+  if (!pickerDocBound) {
+    pickerDocBound = true;
+    document.addEventListener("pointerdown", (e) => {
+      if (!pickerOpen) return;
+      const w = root.querySelector("[data-property-picker]");
+      if (w && !w.contains(e.target)) closePicker();
+    });
   }
 };
 
