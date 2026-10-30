@@ -151,6 +151,7 @@ const calendarItems = (pid) => cached(`cal:${pid}`, () => act.propertyCalendarIt
 const handbook = (pid) =>
   cached(`hb:${pid}`, async () =>
     supabase.from("property_handbook_sections").select("section_key, body").eq("property_id", pid).eq("is_enabled", true));
+const handbookElectricity = (pid) => cached(`hbel:${pid}`, () => act.handbookElectricity(pid));
 const inspections = (pid) =>
   cached(`insp:${pid}`, async () =>
     supabase.from("inspections").select("id, type, status").eq("property_id", pid));
@@ -1521,6 +1522,78 @@ const handbookForm = (pid, key, label, body) =>
     },
   });
 
+// Strøm (iOS PropertyHandbookElectricity): målepunkt-ID and målernummer, not meter readings.
+const ELECTRICITY_MP_HINT = "18 siffer som starter med 7070575000.";
+const ELECTRICITY_MP_INVALID = "Målepunkt-ID må være 18 siffer og starte med 7070575000.";
+const ELECTRICITY_MN_TOO_LONG = "Målernummeret kan ha høyst 40 tegn.";
+const electricityForm = (pid, current) => {
+  const problems = (inputs) => {
+    const mp = act.normalizeMeteringPoint(inputs.meteringPoint.value);
+    const mn = act.normalizeMeterNumber(inputs.meterNumber.value);
+    return { mp, mn, mpBad: !act.meteringPointValid(mp), mnBad: !act.meterNumberValid(mn) };
+  };
+  return act.openForm({
+    title: "Strøm",
+    intro: "Målepunkt-ID og målernummer gjør det enklere for leietakeren å bytte strømavtale. Begge feltene er valgfrie.",
+    submitLabel: "Lagre",
+    fields: [
+      { name: "meteringPoint", label: "Målepunkt-ID", type: "text", value: current.metering_point_id ?? "", maxLength: 40, placeholder: "707057500…", help: ELECTRICITY_MP_HINT },
+      { name: "meterNumber", label: "Målernummer", type: "text", value: current.meter_number ?? "", maxLength: 60 },
+    ],
+    onChange: (inputs) => {
+      const { mpBad, mnBad } = problems(inputs);
+      const mpField = inputs.meteringPoint.closest(".pt-field");
+      const mnField = inputs.meterNumber.closest(".pt-field");
+      const mpHelp = mpField.querySelector(".pt-field-help");
+      if (mpHelp) {
+        mpHelp.textContent = mpBad ? ELECTRICITY_MP_INVALID : ELECTRICITY_MP_HINT;
+        mpHelp.classList.toggle("is-error", mpBad);
+      }
+      let mnHelp = mnField.querySelector(".pt-field-help");
+      if (mnBad && !mnHelp) {
+        mnHelp = h("span", "pt-field-help is-error", ELECTRICITY_MN_TOO_LONG);
+        mnField.append(mnHelp);
+      } else if (!mnBad && mnHelp) mnHelp.remove();
+      inputs.meteringPoint.setAttribute("aria-invalid", mpBad ? "true" : "false");
+      inputs.meterNumber.setAttribute("aria-invalid", mnBad ? "true" : "false");
+      const submit = inputs.meteringPoint.form?.querySelector("button[type=submit]");
+      if (submit) submit.disabled = mpBad || mnBad;
+    },
+    onSubmit: async (_v, inputs) => {
+      const { mp, mn, mpBad, mnBad } = problems(inputs);
+      if (mpBad) return ELECTRICITY_MP_INVALID;
+      if (mnBad) return ELECTRICITY_MN_TOO_LONG;
+      if (mp === (current.metering_point_id ?? null) && mn === (current.meter_number ?? null)) return null;
+      const res = await act.saveHandbookElectricity(pid, mp, mn);
+      if (res.error) return "Strømopplysningene kunne ikke lagres. Prøv igjen.";
+      await refresh("Boligpermen er oppdatert.");
+      return null;
+    },
+  });
+};
+
+const electricityTile = (pid, res) => {
+  const row = res?.data?.[0] ?? {};
+  const current = { metering_point_id: row.metering_point_id ?? null, meter_number: row.meter_number ?? null };
+  const filled = current.metering_point_id || current.meter_number;
+  const t = h("article", "pt-tile");
+  t.append(icon("bolt", filled ? "pt-icon-circle is-warning" : "pt-icon-circle is-muted"), h("strong", null, "Strøm"));
+  if (res?.error) t.append(h("p", null, "Strømopplysningene kunne ikke hentes akkurat nå."));
+  else if (!filled) t.append(h("p", null, "Ikke fylt ut"));
+  else {
+    const dl = h("dl", "pt-tile-facts");
+    [["Målepunkt-ID", current.metering_point_id], ["Målernummer", current.meter_number]].forEach(([k, v]) => {
+      if (!v) return;
+      const d = h("div");
+      d.append(h("dt", null, k), h("dd", null, v));
+      dl.append(d);
+    });
+    t.append(dl);
+  }
+  if (isManager(pid) && !res?.error) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => electricityForm(pid, current))));
+  return t;
+};
+
 // A landlord with no properties yet: the same «Ny bolig» action as on Boliger.
 const noPropertiesYet = () => {
   const c = emptyPage("building", "Ingen boliger ennå", "Legg til den første boligen din for å komme i gang. Du kan også legge til boliger i appen.");
@@ -1812,6 +1885,38 @@ const MT_EVENT_ICONS = {
 };
 const MT_RELOAD_REQUEST = new Set(["status_changed", "priority_changed", "reopened", "resolved", "closed", "shared_with_tenant"]);
 const mtPriority = (p) => new Map(act.MAINTENANCE_PRIORITIES).get(p) ?? p;
+// Landlord edit of title, description and category (iOS MaintenanceContentEditSheet, #1530).
+// Unchanged fields go as null; nothing changed means no RPC call.
+const MAINTENANCE_EDIT_INVALID = "Fyll ut tittel og beskrivelse før du lagrer.";
+const maintenanceEditForm = (r, reloadRequest) =>
+  act.openForm({
+    title: "Rediger sak",
+    fields: [
+      { name: "title", label: "Tittel", type: "text", value: r.title ?? "", required: true, maxLength: 160, requiredMessage: MAINTENANCE_EDIT_INVALID },
+      { name: "description", label: "Beskrivelse", type: "textarea", value: r.description ?? "", required: true, maxLength: 5000, rows: 6, requiredMessage: MAINTENANCE_EDIT_INVALID },
+      { name: "category", label: "Kategori", type: "choice", options: act.MAINTENANCE_CATEGORIES, value: r.category ?? "other", required: true },
+    ],
+    onChange: (inputs) => {
+      const ok = inputs.title.value.trim().length > 0 && inputs.description.value.trim().length > 0;
+      const submit = inputs.title.form?.querySelector("button[type=submit]");
+      if (submit) submit.disabled = !ok;
+    },
+    onSubmit: async (v) => {
+      if (!v.title || !v.description || v.title.length > 160 || v.description.length > 5000) return MAINTENANCE_EDIT_INVALID;
+      const change = {
+        title: v.title === r.title ? null : v.title,
+        description: v.description === r.description ? null : v.description,
+        category: v.category === r.category ? null : v.category,
+      };
+      if (change.title == null && change.description == null && change.category == null) return null;
+      const res = await act.editMaintenanceContent(r.id, change);
+      if (res.error) {
+        return act.isMissingRpc(res.error) ? "Redigering er ikke tilgjengelig ennå. Oppdater appen og prøv igjen." : act.explain(res.error);
+      }
+      reloadRequest("Vedlikeholdssaken er oppdatert.");
+      return null;
+    },
+  });
 const mtCategory = (c) => new Map(act.MAINTENANCE_CATEGORIES).get(c) ?? "Annet";
 const mtEventTitle = (e) => {
   if (e.event_type === "status_changed") return `Status endret til ${act.MAINTENANCE_STATUS[e.new_value] ?? "ny status"}`;
@@ -2132,6 +2237,7 @@ const maintenanceDetail = async (pid, rid) => {
       const next = (act.MAINTENANCE_NEXT[r.status] ?? []).filter((s) => s !== "resolved");
       const tenancies = mtActiveTenancies(pid);
       c.append(actionsRow(
+        button("Rediger", "pt-btn-soft pt-btn-small", () => maintenanceEditForm(r, reloadRequest)),
         button("Endre prioritet", "pt-btn-soft pt-btn-small", () => act.openForm({
           title: "Prioritet", fields: [{ name: "priority", label: "Prioritet", type: "select", options: act.MAINTENANCE_PRIORITIES, value: r.priority, required: true }],
           onSubmit: async (v) => {
@@ -4415,7 +4521,7 @@ const PAGES = {
   async boligperm() {
     const p = property();
     if (!p) return [noProperty()];
-    const res = await handbook(p.id);
+    const [res, el] = await Promise.all([handbook(p.id), handbookElectricity(p.id)]);
     const bodies = new Map((res.data ?? []).filter((s) => s.body?.trim()).map((s) => [s.section_key, s.body.trim()]));
     const intro = h("section", "pt-card");
     intro.append(h("p", "pt-muted", "Boligpermen samler praktisk informasjon om boligen for leietakeren. Trykk Rediger på et kort for å fylle det ut."));
@@ -4426,6 +4532,7 @@ const PAGES = {
       t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), h("p", null, bodies.get(key) ?? "Ikke fylt ut"));
       if (isManager(p.id)) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(p.id, key, label, bodies.get(key)))));
       tiles.append(t);
+      if (key === "fuse_box") tiles.append(electricityTile(p.id, el));
     }
     return [intro, tiles];
   },
@@ -4487,9 +4594,118 @@ const PAGES = {
     privacy.href = "/personvern";
     links.append(out, privacy);
     c.append(dl, h("p", "pt-muted", "Profil, utseende og abonnement endres i appen."), links);
-    return [c, privacyExportCard(), await archivedCard()];
+    return [c, pushCategoriesCard(), privacyExportCard(), await archivedCard()];
   },
 };
+
+/* ---------- Varsler (PushCategoryPreferencesView, iOS #1528) ---------- */
+// One switch per push group. Default on; the server stores only the groups that are off.
+// A toggle shows at once, writes are queued per group, and a failed write reverts that switch only.
+function pushCategoriesCard() {
+  const c = card("Varsler", "bell");
+  c.append(h("p", "pt-muted", "Velg hvilke pushvarsler du vil motta"));
+  const list = h("ul", "pt-switch-list");
+  const note = h("p", "pt-muted pt-switch-note");
+  note.setAttribute("role", "status");
+  note.hidden = true;
+  const retryRow = h("div", "pt-links");
+  retryRow.hidden = true;
+  c.append(list, note, retryRow, h("p", "pt-muted pt-switch-footer", "Bjellen i appen viser fortsatt alle varsler. Dette styrer bare push til telefonen."));
+
+  const confirmed = new Map(act.PUSH_CATEGORIES.map(([id]) => [id, true]));
+  const shown = new Map(confirmed);
+  const queues = new Map();
+  const switches = new Map();
+  let usable = false;
+
+  const paint = (id) => {
+    const sw = switches.get(id);
+    if (!sw) return;
+    sw.setAttribute("aria-checked", shown.get(id) ? "true" : "false");
+    sw.disabled = !usable;
+  };
+  const say = (text) => {
+    note.textContent = text ?? "";
+    note.hidden = !text;
+  };
+  const save = (id) => {
+    const prev = queues.get(id) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      const want = shown.get(id);
+      if (want === confirmed.get(id)) return;
+      let res;
+      try {
+        res = await act.setPushCategoryEnabled(id, want);
+      } catch (error) {
+        res = { error };
+      }
+      if (res?.error) {
+        // Revert only if nothing newer is pending for this group.
+        if (shown.get(id) === want) shown.set(id, confirmed.get(id));
+        paint(id);
+        say("Kunne ikke lagre. Valget er satt tilbake.");
+        return;
+      }
+      confirmed.set(id, want);
+    });
+    queues.set(id, next);
+  };
+
+  for (const [id, title, subtitle, ic] of act.PUSH_CATEGORIES) {
+    const li = h("li", "pt-switch-row");
+    const text = h("div", "pt-switch-text");
+    const label = h("strong", null, title);
+    label.id = `pt-push-${id}`;
+    text.append(label, h("span", "pt-muted", subtitle));
+    const sw = h("button", "pt-switch");
+    sw.type = "button";
+    sw.setAttribute("role", "switch");
+    sw.setAttribute("aria-labelledby", label.id);
+    sw.append(h("span", "pt-switch-thumb"));
+    sw.addEventListener("click", () => {
+      if (!usable) return;
+      shown.set(id, !shown.get(id));
+      paint(id);
+      say(null);
+      save(id);
+    });
+    switches.set(id, sw);
+    li.append(icon(ic), text, sw);
+    list.append(li);
+    paint(id);
+  }
+
+  const load = async () => {
+    usable = false;
+    retryRow.replaceChildren();
+    retryRow.hidden = true;
+    act.PUSH_CATEGORIES.forEach(([id]) => paint(id));
+    let res;
+    try {
+      res = await act.getPushCategoryPreferences();
+    } catch (error) {
+      res = { error };
+    }
+    if (res?.error) {
+      act.PUSH_CATEGORIES.forEach(([id]) => { confirmed.set(id, true); shown.set(id, true); paint(id); });
+      if (act.isMissingRpc(res.error)) {
+        say("Varslingsvalgene er ikke tilgjengelige ennå. Alle pushvarsler er på.");
+        return;
+      }
+      say("Kunne ikke hente varselinnstillingene.");
+      retryRow.append(button("Prøv igjen", "pt-btn-soft pt-btn-small", () => { say(null); load(); }));
+      retryRow.hidden = false;
+      return;
+    }
+    const off = new Set(Array.isArray(res.data?.disabled_categories) ? res.data.disabled_categories : []);
+    act.PUSH_CATEGORIES.forEach(([id]) => { confirmed.set(id, !off.has(id)); shown.set(id, !off.has(id)); });
+    usable = true;
+    say(null);
+    act.PUSH_CATEGORIES.forEach(([id]) => paint(id));
+  };
+  load();
+  return c;
+}
 
 /* ---------- Last ned mine data (PrivacyCenterView / PrivacyExportDeliveryViewModel) ---------- */
 const PRIVACY_TEXT = {

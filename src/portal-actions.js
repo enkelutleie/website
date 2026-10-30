@@ -49,11 +49,18 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const inputs = {};
     for (const f of fields) {
       const check = f.type === "checkbox";
-      const wrap = h("label", check ? "pt-field pt-field-check" : "pt-field");
+      const choice = f.type === "choice";
+      // A custom listbox is not a labelable element, so its row is a div (clicks on options must not hit a label).
+      const wrap = h(choice ? "div" : "label", check ? "pt-field pt-field-check" : "pt-field");
       wrap.dataset.field = f.name;
       if (!check) wrap.append(h("span", "pt-field-label", f.label + (f.required ? "" : " (valgfritt)")));
       let input;
-      if (check) {
+      let picker = null;
+      if (choice) {
+        input = h("input");
+        input.type = "hidden";
+        picker = choiceListbox(f, input);
+      } else if (check) {
         input = h("input", "pt-check");
         input.type = "checkbox";
         input.checked = !!f.value;
@@ -89,6 +96,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         wrap.append(input, text);
       } else {
         wrap.append(input);
+        if (picker) wrap.append(picker);
         if (f.help) wrap.append(h("span", "pt-field-help", f.help));
       }
       if (f.hidden) wrap.hidden = true;
@@ -162,8 +170,98 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       close(true);
     });
     dialog.showModal();
-    form.querySelector("input, select, textarea")?.focus();
+    form.querySelector("input:not([type=hidden]), select, textarea, .pt-choice-button")?.focus();
   });
+}
+
+// type "choice": the portal's own listbox (no native <select>). The value lives in a hidden input,
+// so openForm reads it like any other field and onChange fires on pick.
+function choiceListbox(f, input) {
+  const options = f.options ?? [];
+  const labelOf = (v) => options.find(([value]) => value === v)?.[1] ?? "";
+  input.value = f.value ?? options[0]?.[0] ?? "";
+  const wrap = h("div", "pt-choice");
+  const btn = h("button", "pt-choice-button");
+  btn.type = "button";
+  btn.setAttribute("aria-haspopup", "listbox");
+  btn.setAttribute("aria-expanded", "false");
+  const current = h("span", "pt-choice-value", labelOf(input.value));
+  const chevron = h("span", "pt-choice-chevron");
+  chevron.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
+  btn.append(current, chevron);
+  btn.setAttribute("aria-label", `${f.label}: ${labelOf(input.value)}`);
+  const list = h("ul", "pt-choice-list");
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-label", f.label);
+  list.tabIndex = -1;
+  list.hidden = true;
+  const uid = `pt-choice-${Math.random().toString(36).slice(2, 8)}`;
+  const items = options.map(([value, label], i) => {
+    const li = h("li", "pt-choice-option");
+    li.id = `${uid}-${i}`;
+    li.setAttribute("role", "option");
+    const tick = h("span", "pt-choice-check");
+    tick.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg>';
+    li.append(h("span", null, label), tick);
+    list.append(li);
+    return li;
+  });
+  const sync = () => items.forEach((li, i) => li.setAttribute("aria-selected", options[i][0] === input.value ? "true" : "false"));
+  sync();
+  let active = -1;
+  const setActive = (i) => {
+    if (!items.length) return;
+    active = Math.min(Math.max(i, 0), items.length - 1);
+    items.forEach((o, j) => o.classList.toggle("is-active", j === active));
+    list.setAttribute("aria-activedescendant", items[active].id);
+    items[active].scrollIntoView({ block: "nearest" });
+  };
+  const outside = (e) => { if (!wrap.contains(e.target)) close(); };
+  const close = (focus) => {
+    list.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("pointerdown", outside);
+    if (focus) btn.focus();
+  };
+  const open = () => {
+    list.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    setActive(Math.max(0, options.findIndex(([v]) => v === input.value)));
+    list.focus();
+    document.addEventListener("pointerdown", outside);
+  };
+  const choose = (i) => {
+    input.value = options[i][0];
+    current.textContent = options[i][1];
+    btn.setAttribute("aria-label", `${f.label}: ${options[i][1]}`);
+    sync();
+    close(true);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  btn.addEventListener("click", () => (list.hidden ? open() : close(true)));
+  btn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); open(); }
+  });
+  list.addEventListener("keydown", (e) => {
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); setActive(active + 1); break;
+      case "ArrowUp": e.preventDefault(); setActive(active - 1); break;
+      case "Home": e.preventDefault(); setActive(0); break;
+      case "End": e.preventDefault(); setActive(items.length - 1); break;
+      case "Enter": case " ": e.preventDefault(); if (active >= 0) choose(active); break;
+      // Escape closes the list, not the whole dialog.
+      case "Escape": e.preventDefault(); e.stopPropagation(); close(true); break;
+      case "Tab": close(); break;
+      default: break;
+    }
+  });
+  items.forEach((o, i) => {
+    o.addEventListener("click", () => choose(i));
+    o.addEventListener("mousemove", () => { if (active !== i) setActive(i); });
+  });
+  if (f.disabled) btn.disabled = true;
+  wrap.append(btn, list);
+  return wrap;
 }
 
 export function confirmAction({ title, text, confirmLabel, destructive = true }) {
@@ -996,6 +1094,31 @@ export const saveHandbookSection = (propertyId, key, body, enabled = true) =>
     { onConflict: "property_id,section_key" },
   );
 
+// Strøm: optional målepunkt-ID and målernummer in property_handbook_settings (iOS #1527).
+// Not meter readings from move-in/move-out. Reads and writes only these two columns, so
+// documents_title is never touched (partial upsert on property_id).
+export const METERING_POINT_PREFIX = "7070575000";
+export const METER_NUMBER_MAX = 40;
+export const handbookElectricity = (propertyId) =>
+  supabase.from("property_handbook_settings").select("metering_point_id, meter_number").eq("property_id", propertyId).limit(1);
+// All whitespace removed, non-breaking space included. Empty → null.
+export const normalizeMeteringPoint = (text) => {
+  const v = String(text ?? "").replace(/[\s\u00a0\u2007\u202f]/g, "");
+  return v || null;
+};
+export const meteringPointValid = (v) => v == null || (/^[0-9]{18}$/.test(v) && v.startsWith(METERING_POINT_PREFIX));
+// Trim the edges, keep inner spaces. Empty → null.
+export const normalizeMeterNumber = (text) => {
+  const v = String(text ?? "").trim();
+  return v || null;
+};
+export const meterNumberValid = (v) => v == null || v.length <= METER_NUMBER_MAX;
+export const saveHandbookElectricity = (propertyId, meteringPointId, meterNumber) =>
+  supabase.from("property_handbook_settings").upsert(
+    { property_id: propertyId, metering_point_id: meteringPointId, meter_number: meterNumber },
+    { onConflict: "property_id" },
+  );
+
 /* ---------- Premium (subscription_entitlements + get_my_complimentary_access) ---------- */
 export async function hasPremium() {
   const [ent, comp] = await Promise.all([
@@ -1296,6 +1419,14 @@ export const setMaintenancePriority = (requestId, priority) =>
   supabase.rpc("set_maintenance_request_priority", { requested_request_id: requestId, requested_priority: priority });
 export const shareMaintenance = (requestId, tenancyId) =>
   supabase.rpc("share_maintenance_request_with_tenancy", { requested_request_id: requestId, requested_tenancy_id: tenancyId });
+// Landlord edit of title, description and category (iOS #1530). A null argument means «do not change».
+export const editMaintenanceContent = (requestId, { title = null, description = null, category = null }) =>
+  supabase.rpc("edit_maintenance_request_content", {
+    requested_request_id: requestId, requested_title: title, requested_description: description, requested_category: category,
+  });
+// PostgREST has not loaded the function yet, or Postgres has no such function.
+export const isMissingRpc = (error) =>
+  ["PGRST202", "42883"].includes(error?.code) || /could not find the function|undefined function/i.test(String(error?.message ?? ""));
 
 // create -> upload images -> submit, as the app's create flow does.
 export async function createMaintenance(propertyId, v, images = []) {
@@ -1497,6 +1628,20 @@ export function subscribeMaintenance(requestId, { onEvent, onResync }) {
 }
 
 /* ---------- Varsler (NotificationsRemote) ---------- */
+/* ---------- Varselinnstillinger (PushCategoryPreferences.swift, iOS #1528) ---------- */
+// Ids are what set_my_push_category_enabled stores. Empty list on the server means every group is on.
+export const PUSH_CATEGORIES = [
+  ["chat", "Chat", "Meldinger, dokumenter og vedlegg", "chat"],
+  ["contract", "Kontrakt og signering", "Nye kontrakter, signering og endringer", "contract"],
+  ["maintenance", "Vedlikehold", "Nye saker, kommentarer og datoer", "wrench"],
+  ["economy", "Økonomi og betaling", "Husleie og depositum", "banknote"],
+  ["handover", "Innflytting og utflytting", "Protokoll, oppsigelse og påminnelser", "handover"],
+  ["calendar", "Kalender", "Hendelser, svar og påminnelser", "calendar"],
+  ["other", "Andre", "Invitasjoner, avsluttet leieforhold og annet", "bell"],
+];
+export const getPushCategoryPreferences = () => supabase.rpc("get_my_push_category_preferences");
+export const setPushCategoryEnabled = (category, enabled) => supabase.rpc("set_my_push_category_enabled", { category, enabled });
+
 export const NOTIFICATION_PAGE_SIZE = 30;
 // Keyset paging like iOS: the cursor is the last row's (relevant_at, notification_id).
 export const listNotifications = (scope, before = null) =>
