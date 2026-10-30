@@ -51,7 +51,7 @@ const digits = (s) => String(s ?? "").replace(/[\s.]/g, "");
  * Prefilled values per tenant come in later through the form's onChange.
  */
 export function templateFields(id, auto) {
-  const tenant = { name: "tenant", label: "Leietaker", type: "select", required: true, options: [["", "Velg leietaker"], ...auto.tenants], help: "Velg leietakeren. Navn, adresse og øvrige opplysninger fylles inn." };
+  const tenant = { name: "tenant", label: "Leietaker", type: "choice", required: true, options: [["", "Velg leietaker"], ...auto.tenants], help: "Velg leietakeren. Navn, adresse og øvrige opplysninger fylles inn." };
   const t = (name, label, extra = {}) => ({ name, label, type: "text", maxLength: NAME_MAX, ...extra });
   const landlord = [
     t("landlordName", "Navn (utleier)", { value: auto.landlordName }),
@@ -83,7 +83,7 @@ export function templateFields(id, auto) {
       { name: "reason", label: "Begrunnelse", type: "textarea", rows: 5, maxLength: TEXT_MAX, placeholder: "Skriv begrunnelse her ...", help: "Her kan du skrive årsaken til oppsigelsen." }, ...signing];
   }
   return [tenant, t("tenantAddress", "Adresse"), ...landlord,
-    { name: "warningReason", label: "Årsak til advarsel", type: "select", required: true, options: [["", "Velg årsak"], ...WARNING_REASONS.map((r) => [r, r])] },
+    { name: "warningReason", label: "Årsak til advarsel", type: "choice", required: true, options: [["", "Velg årsak"], ...WARNING_REASONS.map((r) => [r, r])] },
     { name: "description", label: "Beskrivelse", type: "textarea", rows: 5, required: true, maxLength: TEXT_MAX, placeholder: "Skriv beskrivelsen her..." },
     { name: "correction", label: "Hva må rettes opp?", type: "textarea", rows: 3, maxLength: TEXT_MAX, placeholder: "Skriv hva som må rettes opp her..." },
     { name: "deadline", label: "Frist for retting", type: "date" }, ...signing];
