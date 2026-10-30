@@ -28,8 +28,9 @@ export const minorOf = (text) => {
 export const kronerOf = (minor) => (minor == null ? "" : (Number(minor) / 100).toFixed(2).replace(".", ","));
 
 /**
- * fields: [{ name, label, type: text|number|money|date|datetime|select|textarea|file|email,
- *            options: [[value,label]], value, required, help, placeholder, accept, maxLength, min, max }]
+ * fields: [{ name, label, type: text|number|money|date|datetime|select|textarea|file|email|checkbox,
+ *            options: [[value,label]], value, required, help, placeholder, accept, maxLength, min, max, disabled }]
+ * A checkbox field gives "true" when checked and "" otherwise; its value is the initial checked state.
  * sections: nodes shown above the fields; after: nodes below the fields. footer(close): node below the buttons.
  * submitClass replaces the primary style (e.g. "pt-btn-destructive"); submitDisabled locks it.
  * onSubmit(values, form) -> string error | null | undefined
@@ -47,11 +48,16 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const body = h("div", "pt-form");
     const inputs = {};
     for (const f of fields) {
-      const wrap = h("label", "pt-field");
+      const check = f.type === "checkbox";
+      const wrap = h("label", check ? "pt-field pt-field-check" : "pt-field");
       wrap.dataset.field = f.name;
-      wrap.append(h("span", "pt-field-label", f.label + (f.required ? "" : " (valgfritt)")));
+      if (!check) wrap.append(h("span", "pt-field-label", f.label + (f.required ? "" : " (valgfritt)")));
       let input;
-      if (f.type === "select") {
+      if (check) {
+        input = h("input", "pt-check");
+        input.type = "checkbox";
+        input.checked = !!f.value;
+      } else if (f.type === "select") {
         input = h("select", "pt-select");
         for (const [v, l] of f.options ?? []) {
           const o = h("option", null, l);
@@ -73,10 +79,18 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       input.name = f.name;
       if (f.maxLength) input.maxLength = f.maxLength;
       if (f.placeholder) input.placeholder = f.placeholder;
-      if (f.value != null && f.type !== "file") input.value = f.value;
+      if (f.value != null && f.type !== "file" && !check) input.value = f.value;
+      if (f.disabled) input.disabled = true;
       inputs[f.name] = input;
-      wrap.append(input);
-      if (f.help) wrap.append(h("span", "pt-field-help", f.help));
+      if (check) {
+        const text = h("span", "pt-check-text");
+        text.append(h("span", "pt-check-label", f.label));
+        if (f.help) text.append(h("span", "pt-field-help", f.help));
+        wrap.append(input, text);
+      } else {
+        wrap.append(input);
+        if (f.help) wrap.append(h("span", "pt-field-help", f.help));
+      }
       if (f.hidden) wrap.hidden = true;
       body.append(wrap);
     }
@@ -119,7 +133,8 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       for (const f of fields) {
         const input = inputs[f.name];
         const hidden = input.closest(".pt-field").hidden;
-        values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null) : input.value.trim();
+        values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null)
+          : f.type === "checkbox" ? (input.checked ? "true" : "") : input.value.trim();
         if (f.required && !hidden && !values[f.name]) {
           status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
           status.hidden = false;
@@ -957,14 +972,17 @@ const calendarFields = (v) => {
     requested_category: v.category,
     requested_starts_at: v.kind === "event" ? iso(when) : null,
     requested_due_at: v.kind === "deadline" ? iso(when) : null,
-    requested_ends_at: null,
+    requested_ends_at: v.kind === "event" ? v.endsAt ?? null : null,
     requested_all_day: v.allDay === "true",
   };
 };
-export const createCalendarItem = (propertyId, v) =>
+// CalendarController.createHendelse: a plain item is shared with the property (tenancy null,
+// the server picks the active tenancy) or kept for managers (shared false). A maintenance-linked
+// item carries its case and tenancy and is never shared_with_property (DB constraint).
+export const createCalendarItem = (propertyId, v, { tenancyId = null, maintenanceRequestId = null, shared = true } = {}) =>
   supabase.rpc("create_calendar_item", {
-    requested_property_id: propertyId, requested_tenancy_id: null, requested_maintenance_request_id: null,
-    ...calendarFields(v), requested_shared_with_property: true,
+    requested_property_id: propertyId, requested_tenancy_id: tenancyId, requested_maintenance_request_id: maintenanceRequestId,
+    ...calendarFields(v), requested_shared_with_property: maintenanceRequestId ? false : shared,
   });
 export const updateCalendarItem = (id, v) =>
   supabase.rpc("update_calendar_item", { requested_calendar_item_id: id, ...calendarFields(v) });

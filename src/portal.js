@@ -314,6 +314,7 @@ const calendarDetail = async (itemId, requestId) => {
   ];
   if (item.ends_at && !deadline) rows.push(["Slutt", item.all_day ? dateText(item.ends_at) : `${dateText(item.ends_at)} kl. ${calendarTime(item.ends_at)}`]);
   rows.push(["Status", CALENDAR_STATUS[item.status] ?? "Aktiv"]);
+  if (manager && CALENDAR_VISIBILITY[item.visibility]) rows.push(["Synlighet", CALENDAR_VISIBILITY[item.visibility]]);
   const cat = act.CALENDAR_CATEGORIES.find(([k]) => k === item.category);
   if (cat) rows.push(["Kategori", cat[1]]);
   rows.forEach(([k, v]) => {
@@ -371,10 +372,11 @@ const calendarDetail = async (itemId, requestId) => {
     a.href = `#vedlikehold/${item.maintenance_request_id}`;
     links.push(a);
   }
-  // A planned maintenance date is moved from the case; other items are edited here.
+  // Every active item can be edited (update_calendar_item); a planned maintenance date is
+  // completed or cancelled from its case.
+  if (manager && item.status === "active") links.push(button("Rediger", "pt-btn-soft pt-btn-small", () => calendarForm(pid, item)));
   if (manager && item.status === "active" && !item.maintenance_request_id) {
     links.push(
-      button("Rediger", "pt-btn-soft pt-btn-small", () => calendarForm(pid, item)),
       button("Marker som fullført", "pt-btn-secondary pt-btn-small", async () => {
         const err = rpcError(await act.completeCalendarItem(item.id));
         if (err) act.toast(err); else refresh("Hendelsen er fullført.");
@@ -390,27 +392,113 @@ const calendarDetail = async (itemId, requestId) => {
   return [back, c];
 };
 
+// Shown month survives re-renders (refresh after edits) until the page is reloaded.
+let calendarView = null;
+const calendarItemDate = (i) => new Date(i.item_type === "deadline" ? i.due_at || i.starts_at : i.starts_at || i.due_at);
+const CALENDAR_YEAR_SPAN = 5;
+
+// Custom year listbox (same pattern as the property picker), no native select.
+const calendarYearPicker = (year, years, onPick) => {
+  const wrap = h("div", "pt-cal-year");
+  const btn = h("button", "pt-cal-year-button");
+  btn.type = "button";
+  btn.setAttribute("aria-haspopup", "listbox");
+  btn.setAttribute("aria-expanded", "false");
+  btn.setAttribute("aria-label", `År: ${year}. Velg år`);
+  btn.append(h("span", null, String(year)), icon("chevron", "pt-cal-year-chevron"));
+  const list = h("ul", "pt-cal-year-list");
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-label", "Velg år");
+  list.tabIndex = -1;
+  list.hidden = true;
+  const uid = `pt-cal-year-${Math.random().toString(36).slice(2, 8)}`;
+  const options = years.map((y, i) => {
+    const li = h("li", "pt-cal-year-option", String(y));
+    li.id = `${uid}-${i}`;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", y === year ? "true" : "false");
+    list.append(li);
+    return li;
+  });
+  let active = -1;
+  const setActive = (i) => {
+    active = Math.min(Math.max(i, 0), options.length - 1);
+    options.forEach((o, j) => o.classList.toggle("is-active", j === active));
+    list.setAttribute("aria-activedescendant", options[active].id);
+    options[active].scrollIntoView({ block: "nearest" });
+  };
+  const outside = (e) => { if (!wrap.contains(e.target)) close(); };
+  const close = (focus) => {
+    list.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("pointerdown", outside);
+    if (focus) btn.focus();
+  };
+  const open = () => {
+    list.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    setActive(years.indexOf(year));
+    list.focus();
+    document.addEventListener("pointerdown", outside);
+  };
+  const choose = (i) => { close(); onPick(years[i]); };
+  btn.addEventListener("click", () => (list.hidden ? open() : close(true)));
+  btn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); open(); }
+  });
+  list.addEventListener("keydown", (e) => {
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); setActive(active + 1); break;
+      case "ArrowUp": e.preventDefault(); setActive(active - 1); break;
+      case "Home": e.preventDefault(); setActive(0); break;
+      case "End": e.preventDefault(); setActive(options.length - 1); break;
+      case "Enter": case " ": e.preventDefault(); if (active >= 0) choose(active); break;
+      case "Escape": e.preventDefault(); close(true); break;
+      case "Tab": close(); break;
+      default: break;
+    }
+  });
+  options.forEach((o, i) => {
+    o.addEventListener("click", () => choose(i));
+    o.addEventListener("mousemove", () => { if (active !== i) setActive(i); });
+  });
+  wrap.append(btn, list);
+  return { wrap, focus: () => btn.focus() };
+};
+
 const calendarCard = async (pid, full = false) => {
   const c = card("Kalender", "calendar", full ? null : ["Se alle", "#kalender"]);
   const res = await calendarItems(pid);
   const items = res.error ? [] : (res.data ?? []).filter((i) => i.status !== "cancelled");
   const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const eventDays = new Set(items.map((i) => new Date(i.starts_at || i.due_at)).filter((d) => d.getFullYear() === y && d.getMonth() === m).map((d) => d.getDate()));
-  c.append(h("p", "pt-cal-title", now.toLocaleDateString("nb-NO", { month: "long", year: "numeric" })));
-  const grid = h("div", "pt-cal");
-  ["Ma", "Ti", "On", "To", "Fr", "Lø", "Sø"].forEach((d) => grid.append(h("span", "pt-cal-dow", d)));
-  const offset = (new Date(y, m, 1).getDay() + 6) % 7;
-  for (let i = 0; i < offset; i++) grid.append(h("span"));
-  const days = new Date(y, m + 1, 0).getDate();
-  for (let d = 1; d <= days; d++) {
-    grid.append(h("span", `pt-cal-day${d === now.getDate() ? " is-today" : ""}${eventDays.has(d) ? " has-event" : ""}`, String(d)));
-  }
-  c.append(grid);
-  const upcoming = items.filter((i) => new Date(i.starts_at || i.due_at) >= new Date(y, m, now.getDate())).slice(0, full ? 50 : 3);
-  const list = h("ul", "pt-list");
-  for (const i of upcoming) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (!calendarView) calendarView = { y: now.getFullYear(), m: now.getMonth() };
+  const itemYears = items.map((i) => calendarItemDate(i).getFullYear()).filter((y) => Number.isFinite(y));
+  const minYear = Math.min(now.getFullYear() - CALENDAR_YEAR_SPAN, ...itemYears);
+  const maxYear = Math.max(now.getFullYear() + CALENDAR_YEAR_SPAN, ...itemYears);
+  const years = [];
+  for (let y = minYear; y <= maxYear; y++) years.push(y);
+
+  const monthBox = h("div", "pt-cal-month");
+  const listBox = h("div");
+  const navButton = (label, cls, delta) => {
+    const b = h("button", `pt-cal-nav ${cls}`);
+    b.type = "button";
+    b.setAttribute("aria-label", label);
+    b.title = label;
+    b.append(icon("chevron", "pt-cal-nav-icon"));
+    const target = new Date(calendarView.y, calendarView.m + delta, 1).getFullYear();
+    b.disabled = target < minYear || target > maxYear;
+    b.addEventListener("click", () => {
+      const d = new Date(calendarView.y, calendarView.m + delta, 1);
+      if (d.getFullYear() < minYear || d.getFullYear() > maxYear) return;
+      calendarView = { y: d.getFullYear(), m: d.getMonth() };
+      draw(`.${cls}`);
+    });
+    return b;
+  };
+
+  const row = (i) => {
     const li = h("li", "pt-row");
     const main = h("div", "pt-row-main");
     const title = h("strong");
@@ -419,7 +507,7 @@ const calendarCard = async (pid, full = false) => {
     open.title = "Åpner kalenderpunktet";
     title.append(open);
     main.append(title, h("span", null, dateText(i.starts_at || i.due_at)));
-    li.append(icon("calendar"), main);
+    li.append(icon(i.maintenance_request_id ? "wrench" : "calendar"), main);
     if (full && isManager(pid) && i.status === "active") {
       li.append(
         button("Endre", "pt-btn-soft pt-btn-small", () => calendarForm(pid, i)),
@@ -434,12 +522,63 @@ const calendarCard = async (pid, full = false) => {
         }),
       );
     }
-    list.append(li);
-  }
+    return li;
+  };
+
+  const draw = (focusSel) => {
+    const { y, m } = calendarView;
+    const isNow = y === now.getFullYear() && m === now.getMonth();
+    const inMonth = items.filter((i) => { const d = calendarItemDate(i); return d.getFullYear() === y && d.getMonth() === m; });
+    const eventDays = new Set(inMonth.map((i) => calendarItemDate(i).getDate()));
+
+    const head = h("div", "pt-cal-head");
+    const label = h("p", "pt-cal-title", new Date(y, m, 1).toLocaleDateString("nb-NO", { month: "long" }));
+    label.setAttribute("aria-live", "polite");
+    const picker = calendarYearPicker(y, years, (year) => {
+      calendarView = { y: year, m };
+      draw(".pt-cal-year-button");
+    });
+    const nav = h("div", "pt-cal-navs");
+    if (!isNow) {
+      const todayBtn = h("button", "pt-cal-today", "I dag");
+      todayBtn.type = "button";
+      todayBtn.addEventListener("click", () => {
+        calendarView = { y: now.getFullYear(), m: now.getMonth() };
+        draw(".pt-cal-next");
+      });
+      nav.append(todayBtn);
+    }
+    nav.append(navButton("Forrige måned", "pt-cal-prev", -1), navButton("Neste måned", "pt-cal-next", 1));
+    head.append(label, picker.wrap, nav);
+
+    const grid = h("div", "pt-cal");
+    ["Ma", "Ti", "On", "To", "Fr", "Lø", "Sø"].forEach((d) => grid.append(h("span", "pt-cal-dow", d)));
+    const offset = (new Date(y, m, 1).getDay() + 6) % 7;
+    for (let i = 0; i < offset; i++) grid.append(h("span"));
+    const days = new Date(y, m + 1, 0).getDate();
+    for (let d = 1; d <= days; d++) {
+      grid.append(h("span", `pt-cal-day${isNow && d === now.getDate() ? " is-today" : ""}${eventDays.has(d) ? " has-event" : ""}`, String(d)));
+    }
+    monthBox.replaceChildren(head, grid);
+    if (focusSel) monthBox.querySelector(focusSel)?.focus();
+
+    // Full page: the shown month's items (from today in the current month). Overview: next three.
+    const shown = full
+      ? inMonth.filter((i) => !isNow || calendarItemDate(i) >= today)
+      : items.filter((i) => calendarItemDate(i) >= today).slice(0, 3);
+    const monthName = new Date(y, m, 1).toLocaleDateString("nb-NO", { month: "long", year: "numeric" });
+    if (res.error) listBox.replaceChildren(inline("Kalenderen kunne ikke hentes akkurat nå."));
+    else if (!shown.length) listBox.replaceChildren(inline(full && !isNow ? `Ingen hendelser i ${monthName}.` : "Ingen kommende hendelser."));
+    else {
+      const list = h("ul", "pt-list");
+      shown.sort((a, b) => calendarItemDate(a) - calendarItemDate(b)).forEach((i) => list.append(row(i)));
+      listBox.replaceChildren(list);
+    }
+  };
+  draw();
+  c.append(monthBox);
   if (isManager(pid)) c.append(actionsRow(button("+ Ny hendelse", "pt-btn-primary pt-btn-small", () => calendarForm(pid))));
-  if (res.error) c.append(inline("Kalenderen kunne ikke hentes akkurat nå."));
-  else if (!upcoming.length) c.append(inline("Ingen kommende hendelser."));
-  else c.append(list);
+  c.append(listBox);
   return c;
 };
 
@@ -1259,25 +1398,110 @@ const localParts = (value) => {
     time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
   };
 };
-const calendarForm = (pid, item) => {
-  const when = localParts(item?.starts_at || item?.due_at);
+// CalendarView's Hendelse sheet. New items are events (the app has no type choice when
+// creating); editing keeps the item's own type and the planned duration. «Merk som
+// vedlikeholdssak» (create only, as in the app) creates the case first and links the item
+// (CalendarHendelsePresentation): category «maintenance», priority normal, description falls
+// back to the title. Visibility and the case link are fixed once created (enforce_calendar_item_update).
+const CALENDAR_VISIBILITY = { manager_private: "Kun for utleiere", tenant_shared: "Delt med leietaker" };
+const calendarForm = async (pid, item) => {
+  const when = localParts(item?.item_type === "deadline" ? item.due_at : item?.starts_at || item?.due_at);
+  const deadline = item?.item_type === "deadline";
+  const linked = !!item?.maintenance_request_id;
+  const fields = [
+    { name: "title", label: "Tittel", type: "text", value: item?.title ?? "", required: true, maxLength: 160 },
+  ];
+  let tenancyOptions = [];
+  if (!item) {
+    const tenancies = mtActiveTenancies(pid);
+    const people = await tenancyPeople(pid);
+    const names = new Map();
+    for (const m of people.data ?? []) if (m.role === "tenant") names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name].filter(Boolean));
+    // calendarDefaultTenancyID: the active tenancy with the lowest id, among those with a tenant.
+    tenancyOptions = tenancies.filter((t) => names.has(t.id)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id).length ? names.get(t.id) : ["leietaker"]).join(", ")}`]);
+    fields.push(
+      { name: "maintenance", label: "Merk som vedlikeholdssak", type: "checkbox", value: false, help: "Viser skiftenøkkel og oppretter en vedlikeholdssak for hendelsen." },
+      { name: "maintenanceCategory", label: "Type vedlikehold", type: "select", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
+    );
+  } else {
+    fields.push({
+      name: "maintenance", label: "Merk som vedlikeholdssak", type: "checkbox", value: linked, disabled: true,
+      help: linked ? "Hendelsen er knyttet til en vedlikeholdssak. Koblingen kan ikke endres etter at hendelsen er opprettet." : "Kan bare velges når hendelsen opprettes.",
+    });
+  }
+  fields.push(
+    { name: "category", label: "Kategori", type: "select", options: act.CALENDAR_CATEGORIES, value: item?.category ?? "other", required: true },
+    { name: "date", label: deadline ? "Frist" : "Dato", type: "date", value: when.date, required: true },
+    { name: "allDay", label: "Hele dagen", type: "select", options: [["false", "Nei"], ["true", "Ja"]], value: item?.all_day ? "true" : "false", required: true },
+    { name: "time", label: "Klokkeslett", type: "time", value: when.time },
+    { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 5000, rows: 3 },
+  );
+  if (!item) {
+    fields.push(
+      { name: "visibility", label: "Synlighet", type: "select", value: "shared", required: true,
+        options: [["shared", "Delt med leietakerne på boligen"], ["private", "Kun for utleiere"]],
+        help: "Leietakere på boligen ser hendelsen, også de som flytter inn senere." },
+      { name: "maintenanceVisibility", label: "Synlighet", type: "select", required: true,
+        value: tenancyOptions[0]?.[0] ?? "private",
+        options: [...tenancyOptions, ["private", "Kun for utleiere"]],
+        help: tenancyOptions.length ? "Velg hvilket leieforhold saken gjelder, eller at den kun skal være synlig for utleiere." : "Ingen aktiv leietaker er knyttet til denne boligen." },
+    );
+  } else {
+    fields.push({
+      name: "visibility", label: "Synlighet", type: "select", disabled: true,
+      value: item.visibility, options: Object.entries(CALENDAR_VISIBILITY),
+      help: "Synligheten bestemmes når hendelsen opprettes og kan ikke endres etterpå.",
+    });
+  }
+  // A case created on an earlier, failed attempt is linked on retry instead of created twice.
+  let pendingCase = null;
   return act.openForm({
     title: item ? "Endre hendelse" : "Ny hendelse",
     submitLabel: item ? "Lagre endringer" : "Legg i kalenderen",
-    fields: [
-      { name: "title", label: "Tittel", type: "text", value: item?.title ?? "", required: true, maxLength: 200 },
-      { name: "kind", label: "Type", type: "select", options: [["event", "Hendelse"], ["deadline", "Frist"]], value: item?.item_type ?? "event", required: true },
-      { name: "category", label: "Kategori", type: "select", options: act.CALENDAR_CATEGORIES, value: item?.category ?? "other", required: true },
-      { name: "date", label: "Dato", type: "date", value: when.date, required: true },
-      { name: "allDay", label: "Hele dagen", type: "select", options: [["false", "Nei"], ["true", "Ja"]], value: item?.all_day ? "true" : "false", required: true },
-      { name: "time", label: "Klokkeslett", type: "time", value: when.time },
-      { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 2000, rows: 3 },
-    ],
-    onChange: (inputs, show) => show("time", inputs.allDay.value !== "true"),
+    fields,
+    onChange: (inputs, show) => {
+      show("time", inputs.allDay.value !== "true");
+      if (item) return;
+      const marked = inputs.maintenance.checked || !!pendingCase;
+      show("maintenanceCategory", marked);
+      show("category", !marked);
+      show("visibility", !marked);
+      show("maintenanceVisibility", marked);
+    },
     onSubmit: async (v) => {
-      const res = item ? await act.updateCalendarItem(item.id, v) : await act.createCalendarItem(pid, v);
-      if (res.error) return act.explain(res.error);
-      await refresh(item ? "Hendelsen er oppdatert." : "Lagt i kalenderen.");
+      if (item) {
+        const kind = item.item_type === "deadline" ? "deadline" : "event";
+        let endsAt = null;
+        if (kind === "event" && item.ends_at && item.starts_at) {
+          const start = new Date(v.allDay === "true" ? `${v.date}T00:00` : `${v.date}T${v.time || "09:00"}`);
+          endsAt = new Date(start.getTime() + Math.max(0, new Date(item.ends_at) - new Date(item.starts_at))).toISOString();
+        }
+        const res = await act.updateCalendarItem(item.id, { ...v, kind, endsAt });
+        if (res.error) return act.explain(res.error);
+        await refresh("Hendelsen er oppdatert.");
+        return null;
+      }
+      const marked = v.maintenance === "true" || !!pendingCase;
+      const values = { ...v, kind: "event", category: marked ? "maintenance" : v.category };
+      if (!marked) {
+        const res = await act.createCalendarItem(pid, values, { shared: v.visibility !== "private" });
+        if (res.error) return act.explain(res.error);
+        await refresh("Lagt i kalenderen.");
+        return null;
+      }
+      if (!pendingCase) {
+        const tenancyId = v.maintenanceVisibility === "private" ? null : v.maintenanceVisibility;
+        const made = await act.createMaintenance(pid, {
+          tenancyId, title: v.title, description: v.description || v.title, category: v.maintenanceCategory, priority: "normal",
+        }, []);
+        // A failed submit is fine here: linking the calendar item submits the case (server trigger).
+        if (!made.requestId) return made.message;
+        pendingCase = { id: made.requestId, tenancyId };
+      }
+      const res = await act.createCalendarItem(pid, values, { tenancyId: pendingCase.tenancyId, maintenanceRequestId: pendingCase.id });
+      if (res.error) return `Vedlikeholdssaken er opprettet, men hendelsen kunne ikke legges i kalenderen. ${act.explain(res.error)} Prøv igjen for å koble den til saken.`;
+      await refresh("Lagt i kalenderen og opprettet som vedlikeholdssak.");
       return null;
     },
   });
@@ -1634,7 +1858,6 @@ const maintenanceForm = async (pid) => {
     { name: "title", label: "Tittel", type: "text", required: true, maxLength: 160, placeholder: "Kort beskrivelse av problemet" },
     { name: "description", label: "Beskrivelse", type: "textarea", required: true, maxLength: 5000, rows: 5, help: "Beskriv problemet før du sender inn saken." },
     { name: "category", label: "Kategori", type: "select", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
-    { name: "priority", label: "Prioritet", type: "select", options: act.MAINTENANCE_PRIORITIES, value: "normal", required: true },
   ];
   if (manager) {
     const tenancies = mtActiveTenancies(pid);
@@ -1657,7 +1880,7 @@ const maintenanceForm = async (pid) => {
       if (v.images.length > act.MAINTENANCE_IMAGE_LIMIT) return `En sak kan ha maksimalt ${act.MAINTENANCE_IMAGE_LIMIT} bilder.`;
       const tenancyId = manager ? (v.visibility === "private" ? null : v.visibility) : null;
       if (!manager && !tenancyId) return "Du trenger et aktivt leieforhold for å melde inn en sak.";
-      const res = await act.createMaintenance(pid, { tenancyId, title: v.title, description: v.description, category: v.category, priority: v.priority }, v.images);
+      const res = await act.createMaintenance(pid, { tenancyId, title: v.title, description: v.description, category: v.category, priority: "normal" }, v.images);
       if (res.message) return res.message;
       location.hash = `vedlikehold/${res.requestId}`;
       refresh(res.imageError ? `Vedlikeholdssaken er opprettet, men ikke alle bildene ble lagt til. ${res.imageError}` : "Vedlikeholdssaken er opprettet.");
@@ -2101,6 +2324,10 @@ const maintenanceDetail = async (pid, rid) => {
             })),
           ));
         }
+      }
+      // Title, date, description and category of the planned date (update_calendar_item).
+      if (manager && item.status === "active" && !finished()) {
+        row.append(actionsRow(button("Rediger hendelsen", "pt-btn-soft pt-btn-small", () => calendarForm(pid, item))));
       }
       c.append(row);
     }
