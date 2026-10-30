@@ -149,10 +149,8 @@ const transactions = (pid) =>
   });
 // EconomyController.listDocumentLinks(propertyID): which posts have a receipt.
 const receiptLinks = (pid) => cached(`txdoc:${pid}`, () => act.transactionDocLinks(pid));
-const calendarItems = (pid) =>
-  cached(`cal:${pid}`, async () =>
-    supabase.from("property_calendar_items").select("id, title, description, item_type, category, all_day, starts_at, due_at, status")
-      .eq("property_id", pid).order("starts_at", { ascending: true }).limit(200));
+// Every row the caller may read on the property, including other rooms' tenancies (iOS #1521).
+const calendarItems = (pid) => cached(`cal:${pid}`, () => act.propertyCalendarItems(pid));
 const handbook = (pid) =>
   cached(`hb:${pid}`, async () =>
     supabase.from("property_handbook_sections").select("section_key, body").eq("property_id", pid).eq("is_enabled", true));
@@ -268,13 +266,29 @@ const kpis = async (pid) => {
   return grid;
 };
 
+// SharedPropertyCalendarAccess (iOS #1521). The list RPC sends can_respond and
+// maintenance_request_readable. Without them (table read, or before the migration) the
+// caller's own active tenancies decide, which is the same as before the shared calendar.
+const myActiveTenancy = (tid) => !!tid && state.tenantOf.has(tid) && state.tenancies.some((t) => t.id === tid && t.status === "active");
+const calendarCanRespond = (item, manager) => {
+  if (manager || item.status !== "active") return false;
+  if (typeof item.can_respond === "boolean") return item.can_respond;
+  if (!item.tenancy_id) return false;
+  return !item.maintenance_request_id || myActiveTenancy(item.tenancy_id);
+};
+const calendarShowsCase = (item, manager) => {
+  if (!item.maintenance_request_id) return false;
+  if (typeof item.maintenance_request_readable === "boolean") return item.maintenance_request_readable;
+  return manager || myActiveTenancy(item.tenancy_id);
+};
+
 const calendarTime = (value) => new Date(value).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
 const CALENDAR_STATUS = { active: "Aktiv", completed: "Fullført", cancelled: "Kansellert" };
 
 // #kalender/<id>[/<sak-id>]: one calendar item (CalendarView detail). A maintenance date
 // notification carries the case id too, so a missing or cancelled item opens the case instead.
 const calendarDetail = async (itemId, requestId) => {
-  const res = await act.calendarItem(itemId);
+  const res = await act.calendarItemWithAccess(itemId);
   let item = res.error ? null : res.data;
   if (item && item.property_id !== state.propertyId) {
     if (state.properties.some((p) => p.id === item.property_id)) selectProperty(item.property_id, false);
@@ -313,7 +327,10 @@ const calendarDetail = async (itemId, requestId) => {
     facts.append(d);
   });
   c.append(facts);
-  if (item.description) c.append(h("p", "pt-cal-description", item.description));
+  // A tenant who cannot open the linked case sees date and title only, no case details.
+  const caseLink = calendarShowsCase(item, manager);
+  const caseHidden = item.maintenance_request_readable === false || (!!item.maintenance_request_id && !caseLink);
+  if (item.description && !caseHidden) c.append(h("p", "pt-cal-description", item.description));
 
   const shared = !!item.tenancy_id && item.status === "active";
   if (shared && manager) {
@@ -324,7 +341,7 @@ const calendarDetail = async (itemId, requestId) => {
     if (decision === "accepted") c.append(responseBox("is-success", "Leietaker har godkjent"));
     else if (decision === "declined") c.append(responseBox("is-danger", "Leietaker har avslått", comment || "Svaret ligger i chatten."));
     else c.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på hendelsen ennå."));
-  } else if (shared && !manager) {
+  } else if (calendarCanRespond(item, manager)) {
     if (item.tenant_response === "accepted") c.append(responseBox("is-success", "Godkjent av leietaker"));
     else if (item.tenant_response === "declined") c.append(responseBox("is-danger", "Avslaget er sendt i chat", "Svaret ditt er sendt til utleier i chatten."));
     else {
@@ -353,7 +370,7 @@ const calendarDetail = async (itemId, requestId) => {
   }
 
   const links = [];
-  if (item.maintenance_request_id) {
+  if (caseLink) {
     c.append(h("p", "pt-muted", "Knyttet til vedlikeholdssak"));
     const a = h("a", "pt-btn pt-btn-soft pt-btn-small", "Åpne vedlikeholdssaken");
     a.href = `#vedlikehold/${item.maintenance_request_id}`;
@@ -2182,7 +2199,7 @@ const maintenanceDetail = async (pid, rid) => {
             })));
           }
         } else row.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på den planlagte datoen ennå."));
-      } else if (shared && !manager && !finished()) {
+      } else if (calendarCanRespond(item, manager) && !finished()) {
         if (item.tenant_response === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker"));
         else if (item.tenant_response === "declined") row.append(responseBox("is-danger", "Avslaget er sendt i chat", item.tenant_response_comment || "Svaret ligger i chatten."));
         else {
