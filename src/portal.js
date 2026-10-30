@@ -4634,8 +4634,13 @@ const selectProperty = (id, rerender = true) => {
 };
 
 // Sidebar property picker. Custom listbox in the portal's own design (no native <select>):
-// 0 properties: muted «Ingen boliger» row. 1 property: static row, nothing to pick.
-// 2+: a button that opens a listbox (Enter/Space/arrows/Home/End/Escape, click outside closes).
+// 0 properties: muted «Ingen boliger» row. 1 property: a link to «Om boligen».
+// 2+: a button that opens a listbox (Enter/Space/arrows/Home/End/Escape, click outside closes);
+// choosing a property (also the current one) opens its «Om boligen», like the single-property link.
+const PROPERTY_PAGE = "#om-boligen";
+const openPropertyPage = () => {
+  if (location.hash === PROPERTY_PAGE) render(); else location.hash = PROPERTY_PAGE;
+};
 const propRow = (tag, cls, p) => {
   const row = h(tag, `pt-prop-row ${cls}`);
   row.append(icon("building", "pt-prop-icon"));
@@ -4673,16 +4678,25 @@ const renderSelect = () => {
   }
   const current = props.find((p) => p.id === state.propertyId) ?? props[0];
   if (props.length === 1) {
-    const row = propRow("div", "pt-prop-static", current);
-    row.setAttribute("aria-labelledby", "pt-property-label");
-    row.setAttribute("role", "group");
-    wrap.append(row);
+    const link = propRow("a", "pt-prop-link", current);
+    link.href = PROPERTY_PAGE;
+    link.title = "Åpne «Om boligen»";
+    link.setAttribute("aria-label", `${addressOf(current).line}, åpne «Om boligen»`);
+    link.append(icon("chevron", "pt-prop-go"));
+    // Re-render when already on «Om boligen» (the hash does not change then).
+    link.addEventListener("click", (e) => {
+      if (location.hash !== PROPERTY_PAGE) return;
+      e.preventDefault();
+      render();
+    });
+    wrap.append(link);
     return;
   }
 
   const btn = propRow("button", "pt-prop-button", current);
   btn.type = "button";
   btn.id = "pt-property-button";
+  btn.title = "Velg bolig – åpner «Om boligen»";
   btn.setAttribute("aria-haspopup", "listbox");
   btn.setAttribute("aria-expanded", "false");
   btn.setAttribute("aria-controls", "pt-property-list");
@@ -4724,8 +4738,8 @@ const renderSelect = () => {
   const choose = (i) => {
     const id = options[i].dataset.id;
     closePicker();
-    if (id === state.propertyId) { btn.focus(); return; }
-    selectProperty(id);
+    if (id !== state.propertyId) selectProperty(id, false);
+    openPropertyPage();
     root.querySelector("#pt-property-button")?.focus();
   };
 
