@@ -200,14 +200,41 @@ button.btn {
 .phone-screen { overflow: hidden; border-radius: 2.15rem; background: #eef3fb; line-height: 0; }
 .phone-shot { width: 100%; height: auto; }
 .hero-note { margin: 0.9rem 0 0; max-width: 34rem; color: var(--muted); font-size: 0.98rem; }
-.steps { display: grid; gap: 0.85rem; margin: 0 0 3rem; }
-.step {
-  background: var(--paper); border: 1px solid var(--line); border-radius: 1.3rem;
-  padding: 1.15rem 1.2rem 1.2rem;
+/* Four-step introduction; scoped to the landing page. */
+.getting-started { padding-block: 1.5rem 4rem; scroll-margin-top: 5rem; }
+.getting-started .section-head { max-width: 46rem; margin: 0 auto 3rem; text-align: center; }
+.getting-started .section-head h2 { font-size: clamp(1.8rem, 3.6vw, 2.75rem); line-height: 1.15; color: #080f26; }
+.getting-started h2 span { color: #0878ff; }
+.getting-started .section-head p { margin-top: .8rem; }
+.onboarding-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; list-style: none; padding: 0; margin: 0; }
+.onboarding-step { position: relative; min-width: 0; padding: 2.3rem .85rem 1.4rem; text-align: center; background: var(--paper); border-radius: 1.3rem; box-shadow: 0 10px 28px #2f80ed0c; }
+.onboarding-number { position: absolute; top: -1.4rem; left: 50%; transform: translateX(-50%); display: grid; place-items: center; width: 2.8rem; height: 2.8rem; border: 2px solid #fff; border-radius: 50%; background: #e4f1ff; color: #0878ff; font-size: 1.4rem; font-weight: 750; }
+.onboarding-icon { position: relative; z-index: 3; display: grid; place-items: center; width: 5rem; height: 5rem; margin: 0 auto .8rem; border-radius: 1.2rem; background: #eaf4ff; }
+.onboarding-icon img, .onboarding-icon svg { width: 3.5rem; height: 3.5rem; }
+.onboarding-step h3 { position: relative; margin: 0 0 .5rem; color: #080f26; font-size: 1.03rem; line-height: 1.25; letter-spacing: -.045em; }
+.onboarding-step p { margin: 0; color: var(--muted); font-size: .88rem; line-height: 1.5; }
+.onboarding-connector { position: absolute; z-index: 2; top: 3rem; left: 72%; width: calc(56% + 1rem); height: 2.3rem; pointer-events: none; }
+.onboarding-connector path { fill: none; stroke: #2799ff; stroke-width: 1.5; stroke-dasharray: 5 5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.onboarding-actions { display: grid; justify-items: center; margin-top: 1.5rem; }
+.onboarding-cta { min-width: min(100%, 22rem); gap: 1.2rem; background: linear-gradient(135deg, #279dff, #0670ff); }
+.onboarding-cta span { font-size: 1.65rem; line-height: 1; }
+.store-note { margin: .6rem 0; color: var(--muted); font-size: .85rem; text-align: center; }
+.store-links { display: flex; justify-content: center; flex-wrap: wrap; gap: .8rem; }
+.store-link { display: flex; align-items: center; justify-content: center; width: 160px; height: 48px; }
+.store-link img { width: 100%; height: auto; }
+.store-link-google img { width: 184px; max-width: none; }
+@media (max-width: 759px) {
+  .onboarding-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3rem 1rem; }
+  .onboarding-step:nth-child(2) .onboarding-connector { display: none; }
 }
-.step-no { margin: 0 0 0.35rem; color: var(--blue); font-size: 0.82rem; font-weight: 720; letter-spacing: 0.04em; }
-.step h3 { margin: 0 0 0.28rem; font-size: 1.05rem; letter-spacing: -0.02em; }
-.step p { margin: 0; color: var(--muted); font-size: 0.98rem; }
+@media (max-width: 379px) {
+  .onboarding-steps { grid-template-columns: 1fr; gap: 2.8rem; }
+  .onboarding-connector { display: none; }
+}
+@media (max-width: 639px) {
+  .hero h1 { font-size: clamp(2.8rem, 11.5vw, 4.3rem); color: #080f26; }
+  .hero h1 span { display: block; color: #0878ff; }
+}
 .features-section { padding: 0 0 4rem; }
 .section-head { max-width: 32rem; margin-bottom: 1.25rem; }
 .section-head h2 { margin: 0 0 0.3rem; font-size: clamp(1.45rem, 3vw, 1.8rem); letter-spacing: -0.04em; }
@@ -343,7 +370,6 @@ button.btn {
 }
 @media (min-width: 980px) {
   .features { grid-template-columns: 1fr 1fr 1fr; }
-  .steps { grid-template-columns: 1fr 1fr 1fr; }
 }
 @media (min-width: 880px) {
   .hero { grid-template-columns: 1fr auto; padding: 2.2rem 0 3.4rem; gap: 3.5rem; }
