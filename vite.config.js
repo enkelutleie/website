@@ -71,6 +71,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(import.meta.dirname, "index.html"),
+        landingPreview: resolve(import.meta.dirname, "landing-full.html"),
         personvern: resolve(import.meta.dirname, "personvern/index.html"),
         omOss: resolve(import.meta.dirname, "om-oss/index.html"),
         faq: resolve(import.meta.dirname, "sporsmal-svar/index.html"),
