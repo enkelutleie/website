@@ -28,7 +28,7 @@ Ferdig statisk output ligger i `dist/`. Forhåndsvis med `pnpm preview`.
 
 ## Midlertidig «Kommer snart»-forside
 
-Forsiden (`index.html`) er midlertidig byttet ut med en enkel «Kommer snart»-side (`src/coming-soon.css`). Den fulle landingssiden er bevart urørt i `landing-full.html` (ikke med i Vite-bygget, så den rutes ikke og indekseres ikke). `/om-oss` og `/sporsmal-svar` sendes midlertidig til `/` med 302 i `public/_redirects`, og er fjernet fra `public/sitemap.xml`. `/personvern`, `/logg-inn` og `/portal/` fungerer som før.
+Forsiden (`index.html`) er midlertidig byttet ut med en enkel «Kommer snart»-side (`src/coming-soon.css`). Den fulle landingssiden ligger i `landing-full.html` og kan åpnes på `/forhåndsvisning` (og `/forhandsvisning`). Den bygges av Vite, men er merket `noindex, nofollow`. `/om-oss` og `/sporsmal-svar` sendes midlertidig til `/` med 302 i `public/_redirects`, og er fjernet fra `public/sitemap.xml`. `/personvern`, `/logg-inn` og `/portal/` fungerer som før.
 
 Slik gjenoppretter du den fulle siden:
 
@@ -62,7 +62,9 @@ npx wrangler pages deploy dist --project-name enkelutleie
 
 ## App Store-lenke
 
-Knappene til App Store er tatt bort til den ekte adressen finnes. Ikke lenk til forsiden av App Store, og ikke finn opp en App Store-ID.
+Firestegsseksjonen på forhåndsvisningen lenker direkte til registrert Production-app: App Store `https://apps.apple.com/no/app/id6797224548` (ID fra iOS-repoets `docs/STOREKIT_ASC_SETUP_CHECKLIST.md`) og Google Play `https://play.google.com/store/apps/details?id=no.enkelutleie.app` (Android applicationId). Appene er ikke lansert; seksjonen opplyser derfor «kommer snart». Nedlasting kan ikke verifiseres før publisering. Knappen «Kom i gang nå» åpner `/logg-inn`. Norske butikkmerker er hentet fra Apples og Googles offisielle badge-tjenester.
+
+Fire kort erstatter den gamle trestegsseksjonen, med nummer, blå ikoner og buede stiplede forbindelser. Oppsettet er fire kolonner på PC, to på mobil og én på de smaleste skjermene. Bakgrunnen er uendret. Mobilens hero-overskrift er større og sort/blå; resten av heroen er beholdt.
 
 ## Universal Links
 

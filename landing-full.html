@@ -53,7 +53,7 @@
         <div class="hero-copy">
           <img class="hero-mascot" src="/brand/house-mascot.png?v=2" width="160" height="160" alt="Det smilende huset til Enkel Utleie" />
           <p class="hero-slogan">Tryggere utleie, enklere hverdag</p>
-          <h1>Utleie, helt enkelt</h1>
+          <h1>Utleie, <span>helt enkelt</span></h1>
           <p class="lead">Bedre oversikt og et enklere leieforhold for begge parter. Alt samlet på ett sted, fra innflytting til utflytting.</p>
           <button class="btn" type="button" data-open-demo>Se hvordan det fungerer</button>
           <p class="hero-note">Samme konto i appen og på nett. iPhone-appen kommer snart i App Store.</p>
@@ -68,27 +68,47 @@
           </div>
         </div>
       </section>
-      <section class="wrap" id="slik">
+      <section class="getting-started wrap" id="slik" aria-labelledby="getting-started-title">
         <div class="section-head">
-          <h2>Slik kommer du i gang</h2>
-          <p>Enkel Utleie er laget for å være enkelt fra første stund.</p>
+          <h2 id="getting-started-title">Kom i gang på <span>4 enkle steg</span></h2>
+          <p>Med Enkel Utleie kommer du raskt i gang. Legg til boligen, inviter leietaker og håndter hele leieforholdet samlet i appen.</p>
         </div>
-        <div class="steps">
-          <article class="step">
-            <p class="step-no">01</p>
-            <h3>Opprett konto</h3>
-            <p>Kom raskt i gang med Apple, Google eller e-post.</p>
-          </article>
-          <article class="step">
-            <p class="step-no">02</p>
-            <h3>Legg til boligen</h3>
-            <p>Opprett boligen din og samle det som hører til leieforholdet på ett sted.</p>
-          </article>
-          <article class="step">
-            <p class="step-no">03</p>
+        <ol class="onboarding-steps">
+          <li class="onboarding-step">
+            <span class="onboarding-number" aria-hidden="true">1</span>
+            <span class="onboarding-icon" aria-hidden="true"><img src="/brand/app-logo-96.png" width="64" height="64" alt="" /></span>
+            <h3>Legg til bolig</h3>
+            <p>Opprett boligen og samle alt som hører til leieforholdet på ett sted.</p>
+            <svg class="onboarding-connector" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"><path d="M2 35Q60 0 118 35" /></svg>
+          </li>
+          <li class="onboarding-step">
+            <span class="onboarding-number" aria-hidden="true">2</span>
+            <span class="onboarding-icon" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none"><defs><linearGradient id="people-blue" x2="1" y2="1"><stop stop-color="#65CAFF"/><stop offset="1" stop-color="#0864F7"/></linearGradient></defs><g fill="url(#people-blue)"><circle cx="23" cy="22" r="9"/><circle cx="43" cy="18" r="11"/><path d="M7 49c0-11 6-17 16-17 4 0 7 1 10 4-5 4-7 10-7 20H13a6 6 0 0 1-6-7Z"/><path d="M27 51c0-13 6-20 16-20s17 7 17 20v3a4 4 0 0 1-4 4H31a4 4 0 0 1-4-4Z"/></g></svg></span>
             <h3>Inviter leietaker</h3>
-            <p>Send en invitasjon til leietakeren, så er dere klare til å bruke Enkel Utleie sammen.</p>
-          </article>
+            <p>Send en invitasjon direkte i appen, så kan dere bruke Enkel Utleie sammen.</p>
+            <svg class="onboarding-connector" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"><path d="M2 35Q60 0 118 35" /></svg>
+          </li>
+          <li class="onboarding-step">
+            <span class="onboarding-number" aria-hidden="true">3</span>
+            <span class="onboarding-icon" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none"><defs><linearGradient id="document-blue" x2="1" y2="1"><stop stop-color="#65CAFF"/><stop offset="1" stop-color="#0864F7"/></linearGradient></defs><path d="M13 5h25l13 13v25L36 59H13a5 5 0 0 1-5-5V10a5 5 0 0 1 5-5Z" fill="url(#document-blue)"/><path d="M38 5v13h13" fill="#095DE0"/><path d="M18 22h9M18 32h19M18 42h9" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="m34 48 17-17a5 5 0 0 1 7 7L41 55l-11 4 4-11Z" fill="#126AF3" stroke="#E8F3FF" stroke-width="2.5"/></svg></span>
+            <h3>Opprett leiekontrakt</h3>
+            <p>Lag og signer leiekontrakten enkelt og digitalt.</p>
+            <svg class="onboarding-connector" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"><path d="M2 35Q60 0 118 35" /></svg>
+          </li>
+          <li class="onboarding-step">
+            <span class="onboarding-number" aria-hidden="true">4</span>
+            <span class="onboarding-icon" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none"><defs><linearGradient id="key-blue" x2="1" y2="1"><stop stop-color="#65CAFF"/><stop offset="1" stop-color="#0864F7"/></linearGradient></defs><path d="M35 34 10 59H4v-9l7-7h7v-7l9-9a19 19 0 1 1 8 7Z" fill="url(#key-blue)"/><circle cx="45" cy="16" r="6" fill="#E8F3FF"/></svg></span>
+            <h3>Inn- og utflytting</h3>
+            <p>Håndter sjekklister, dokumentasjon og depositumsoppgjør i appen.</p>
+          </li>
+        </ol>
+        <div class="onboarding-actions">
+          <a class="btn onboarding-cta" href="/logg-inn">Kom i gang nå <span aria-hidden="true">→</span></a>
+          <p class="store-note" id="store-availability">Appene kommer snart i App Store og Google Play.</p>
+          <div class="store-links" aria-label="Last ned Enkel Utleie" aria-describedby="store-availability">
+            <a class="store-link" href="https://apps.apple.com/no/app/id6797224548" aria-label="Last ned Enkel Utleie i App Store"><img src="/brand/stores/app-store-no.svg" width="160" height="54" alt="Last ned i App Store" loading="lazy" /></a>
+            <a class="store-link store-link-google" href="https://play.google.com/store/apps/details?id=no.enkelutleie.app" aria-label="Last ned Enkel Utleie på Google Play"><img src="/brand/stores/google-play-no.png" width="194" height="75" alt="Last ned på Google Play" loading="lazy" /></a>
+          </div>
         </div>
       </section>
       <section class="features-section wrap" id="funksjoner">
