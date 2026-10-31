@@ -79,3 +79,7 @@ Dette domenet skal **ikke** hoste Apple Universal Links / AASA. Det ligger på `
 - Feature-kort for økonomi, overtakelse, inn-/utflyttingssjekkliste, chat og boliger
 - Personvernstub under `/personvern` (MK Product Development AS, `hei@enkelutleie.com`)
 - `robots.txt`, `sitemap.xml`, Open Graph-meta
+
+## Innloggingsdesign
+
+`logg-inn/index.html` og sidens egne regler i `src/login.css` følger mobilreferansen: sentrert hvitt kort, mørk Apple-knapp, hvit Google-knapp, «eller» med skillelinjer og romslige felter med blå Logg inn-knapp. Kortene vises under hverandre på mobil og ved siden av hverandre på større skjermer. Kun presentasjon og introduksjonstekst er endret; innloggingslogikk, skjemaets feltnavn og data-attributter er beholdt.

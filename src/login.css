@@ -1,3 +1,30 @@
 /* While a stored session is being confirmed, keep the form out of sight
    (no flash of the login form before the redirect to /portal/). */
 html[data-auth="in"] .login-card.is-checking [data-auth-panel] { visibility: hidden; }
+
+
+/* Login-only presentation; authentication hooks and shared pages stay unchanged. */
+.login-page .login-grid { padding-block: 1.25rem 3rem; }
+.login-page .login-card { padding: 1.1rem; border-radius: 1.25rem; }
+.login-page .login-card h1 { margin: .35rem 0 .65rem; font-size: 1.6rem; line-height: 1.2; font-weight: 750; color: #0d1b36; }
+.login-page .login-card > p { margin: 0 0 1.15rem; font-size: .94rem; line-height: 1.4; }
+.login-page .btn-apple,
+.login-page .btn-google,
+.login-page [data-email-form] .btn { min-height: 2.55rem; padding: .65rem 1rem; font-size: .94rem; line-height: 1.25; font-weight: 650; }
+.login-page .btn-apple { background: #101d38; }
+.login-page .btn-apple:hover { background: #1b2f50; }
+.login-page .btn-google { margin-top: .7rem; background: #fff; border: 1px solid #ccddf3; }
+.login-page .btn-google:hover { background: var(--mist); }
+.login-page .login-or { display: flex; align-items: center; gap: .65rem; margin: 1.15rem 0 .9rem; font-size: .94rem; }
+.login-page .login-or::before,
+.login-page .login-or::after { content: ""; flex: 1; height: 1px; background: #d3dce8; }
+.login-page [data-email-form] { gap: .4rem; }
+.login-page [data-email-form] label { margin-top: 0; font-size: .94rem; line-height: 1.35; font-weight: 650; color: #0d1b36; }
+.login-page [data-email-form] input { min-width: 0; width: 100%; min-height: 2.5rem; border: 1px solid #ccddf3; border-radius: .9rem; background: #f5f9fe; }
+.login-page [data-email-form] input + label { margin-top: .55rem; }
+.login-page [data-email-form] .btn { margin-top: .65rem; min-height: 2.7rem; }
+.login-page .login-message { margin: 1rem 0 0; }
+@media (min-width: 640px) {
+  .login-page .login-card { padding: 1.7rem; }
+  .login-page .login-card h1 { font-size: 2rem; }
+}
