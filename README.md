@@ -83,3 +83,15 @@ Dette domenet skal **ikke** hoste Apple Universal Links / AASA. Det ligger på `
 ## Innloggingsdesign
 
 `logg-inn/index.html` og sidens egne regler i `src/login.css` følger mobilreferansen: sentrert hvitt kort, mørk Apple-knapp, hvit Google-knapp, «eller» med skillelinjer og romslige felter med blå Logg inn-knapp. Kortene vises under hverandre på mobil og ved siden av hverandre på større skjermer. Kun presentasjon og introduksjonstekst er endret; innloggingslogikk, skjemaets feltnavn og data-attributter er beholdt.
+
+## Opprett konto og glemt passord
+
+Innloggingskortet har egne visninger for registrering, glemt passord, e-postbekreftelse og nytt passord. Reglene er avstemt mot iOS `AuthenticationController`/`AuthenticationPresentation` og Android `AuthValidation`: minst åtte tegn, gjentatt passord ved registrering/passordbytte, og kontonøytral kvittering ved passordlenke. Nettsidens registrering krever eksplisitt avkryssing for vilkårene; appen uttrykker aksept gjennom registreringshandlingen. Dette er ikke et nytt serverbasert samtykkeregister.
+
+Supabase SDK håndterer sesjoner og PKCE. Alle forespørsler bruker eksisterende Production-prosjekt og returadresse `https://enkelutleie.com/logg-inn/`. En bekreftet recovery-retur åpner passordbytte fremfor portalredirect. Oppdatering krever samme innloggede bruker som recovery-sesjonen. Bare bruker-ID-en som markerer pågående recovery lagres i sessionStorage; callbackkoder og tokens fjernes fra URL-en og lagres ikke av sidens egen kode. SDK-ens eksisterende sesjonslagring består. Avbrytelse logger ut bare denne nettleseren.
+
+Registreringsmailen bruker fortsatt appens eksisterende bekreftelsesmal på `link.enkelutleie.app/login`. Etter bekreftelsen går brukeren tilbake til nettsiden og logger inn. Ingen Auth-konfigurasjon eller e-postmal er endret. Ekte e-postlevering, returadressen i den deployede recovery-malen og passordbytte med testkonto er ikke live/E2E-verifisert i denne leveransen.
+
+`/vilkar/` og `/personvern/` gjengir appens eksisterende `docs/legal/vilkar.md` (6. oktober 2026) og `personvern.md` (22. oktober 2026), fra iOS `7a39eb52`. Tekstinnholdet er kontrollert med normaliserte checksums; Markdown-lenker blir klikkbare. Ingen ny juridisk ordlyd er skrevet.
+
+Risiko: Auth-klient (nivå 3), ingen schema-/RLS-/serverendring. Lokal verifikasjon: `node --test tests/auth-actions.test.mjs`, `npm run build`, `git diff --check`, nettleserkontroll på mobil/PC av navigasjon og negative tilfeller uten utsending eller kontooppretting. Full native regresjon og databasekjøring er utelatt fordi de flatene ikke er endret. Før funksjonen regnes som live E2E-verifisert må en kontrollert testkonto gjennomføre registrering → e-postbekreftelse → innlogging og glemt passord → e-post → nytt passord → ny innlogging.

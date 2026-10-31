@@ -28,3 +28,15 @@ html[data-auth="in"] .login-card.is-checking [data-auth-panel] { visibility: hid
   .login-page .login-card { padding: 1.7rem; }
   .login-page .login-card h1 { font-size: 2rem; }
 }
+
+.login-page [hidden] { display: none !important; }
+.login-page .auth-text-action { padding: .3rem 0; border: 0; background: none; color: var(--blue-deep); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: .15em; cursor: pointer; }
+.login-page .auth-forgot { justify-self: end; font-size: .85rem; }
+.login-page .auth-switch { margin: 1rem 0 0; font-size: .9rem; }
+.login-page .auth-legal-note, .login-page .password-help { margin: .3rem 0; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+.login-page .auth-legal-note { margin-top: 1rem; }
+.login-page [data-email-form] .terms-choice { display: flex; gap: .65rem; align-items: flex-start; margin-block: .65rem .25rem; text-align: left; font-size: .85rem; font-weight: 400; }
+.login-page [data-email-form] .terms-choice input { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; min-height: 0; margin: .1rem 0 0; accent-color: var(--blue); }
+.login-page .login-message.is-success { color: #17633a; }
+.login-page [aria-busy="true"] { cursor: progress; }
+.login-page button:disabled { opacity: .6; cursor: wait; }
