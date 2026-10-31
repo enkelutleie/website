@@ -14,3 +14,8 @@
 /sporsmal-svar / 302
 /sporsmal-svar/ / 302
 /sporsmal-svar/* / 302
+
+# Full landing page preview; keep the public coming-soon front page.
+/forhåndsvisning /landing-full.html 200
+/forh%C3%A5ndsvisning /landing-full.html 200
+/forhandsvisning /landing-full.html 200
