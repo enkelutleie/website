@@ -3,6 +3,9 @@ import { defineConfig } from "vite";
 
 function prettyPersonvern() {
   const rewrite = (req, _res, next) => {
+    if (req.url === "/vilkar") {
+      req.url = "/vilkar/";
+    }
     if (req.url === "/personvern") {
       req.url = "/personvern/";
     }
@@ -34,6 +37,7 @@ function prettyPersonvern() {
     const known =
       path === "/" ||
       path.startsWith("/personvern") ||
+      path.startsWith("/vilkar") ||
       path.startsWith("/slett-konto") ||
       path.startsWith("/logg-inn") ||
       path.startsWith("/portal") ||
@@ -73,6 +77,7 @@ export default defineConfig({
         main: resolve(import.meta.dirname, "index.html"),
         landingPreview: resolve(import.meta.dirname, "landing-full.html"),
         personvern: resolve(import.meta.dirname, "personvern/index.html"),
+        vilkar: resolve(import.meta.dirname, "vilkar/index.html"),
         omOss: resolve(import.meta.dirname, "om-oss/index.html"),
         faq: resolve(import.meta.dirname, "sporsmal-svar/index.html"),
         slettKonto: resolve(import.meta.dirname, "slett-konto/index.html"),
