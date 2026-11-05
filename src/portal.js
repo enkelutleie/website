@@ -7,6 +7,7 @@ import * as letter from "./portal-letter.js";
 import * as annual from "./portal-annual.js";
 import * as privacy from "./portal-privacy.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
+import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
 // and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
@@ -15,7 +16,6 @@ const root = document.querySelector("[data-portal]");
 const content = root?.querySelector("[data-content]");
 const toLogin = () => location.replace("/logg-inn/");
 
-const VISIBLE_TENANCY_STATUSES = ["draft", "invited", "active"];
 const OPEN_TASK_STATUSES = ["reported", "in_progress", "waiting"];
 const TENANCY_LABEL = { draft: "Utkast", invited: "Invitert", active: "Aktivt" };
 const HANDBOOK_TILES = [
@@ -63,7 +63,7 @@ const NAV = [
 ];
 
 const state = {
-  user: null, name: null, properties: [], tenancies: [], roles: new Map(),
+  user: null, name: null, properties: [], tenancies: [], manualOccupants: [], roles: new Map(),
   propertyId: null, openTasks: new Map(), cache: new Map(), receiptFilter: "all",
 };
 
@@ -683,7 +683,8 @@ const calendarCard = async (pid, full = false) => {
 
 const tenancyCard = async (pid) => {
   const c = card("Leieforhold", "person");
-  const own = state.tenancies.filter((t) => t.property_id === pid);
+  // Ended tenancies, including a manually registered one, are history — not this card.
+  const own = overviewTenancies(state.tenancies.filter((t) => t.property_id === pid));
   if (!own.length) {
     c.append(inline("Ingen leieforhold på denne boligen ennå."));
     if (isManager(pid)) c.append(actionsRow(button("Inviter leietaker", "pt-btn-primary pt-btn-small", () => inviteForm(pid))));
@@ -694,25 +695,27 @@ const tenancyCard = async (pid) => {
     isManager(pid) ? cached(`inv:${pid}`, () => act.pendingInvitations(own.map((t) => t.id))) : { data: [] },
   ]);
   for (const t of own) {
+    const view = overviewTenancyPresentation(t, { members: res.data ?? [], occupants: state.manualOccupants });
+    if (!view) continue;
     const sub = h("div");
     const head = h("p", "pt-label", "Leietaker");
     const status = h("span", `pt-chip${t.status === "active" ? " is-success" : " is-warning"}`, TENANCY_LABEL[t.status] ?? t.status);
     sub.append(head);
     const list = h("ul", "pt-list");
-    const tenants = (res.data ?? []).filter((m) => m.tenancy_id === t.id && m.role === "tenant");
-    if (!tenants.length) {
+    const period = [dateText(t.start_date) && `fra ${dateText(t.start_date)}`, dateText(t.end_date) && `til ${dateText(t.end_date)}`].filter(Boolean).join(" ");
+    if (!view.people.length) {
       const li = h("li", "pt-row");
       const main = h("div", "pt-row-main");
-      main.append(h("strong", null, "Ingen leietaker registrert"), h("span", null, [dateText(t.start_date) && `fra ${dateText(t.start_date)}`].filter(Boolean).join("")));
+      main.append(h("strong", null, "Ingen leietaker registrert"), h("span", null, period));
       li.append(main, status);
       list.append(li);
     }
-    tenants.forEach((m, i) => {
+    view.people.forEach((person, i) => {
       const li = h("li", "pt-row");
-      const name = m.name || "Leietaker";
+      const name = person.name || "Leietaker";
       li.append(h("span", "pt-avatar pt-avatar-sm", name.charAt(0).toUpperCase()));
       const main = h("div", "pt-row-main");
-      main.append(h("strong", null, name), h("span", null, [dateText(t.start_date) && `fra ${dateText(t.start_date)}`, dateText(t.end_date) && `til ${dateText(t.end_date)}`].filter(Boolean).join(" ")));
+      main.append(h("strong", null, name), h("span", null, [person.phone, period].filter(Boolean).join(" · ")));
       li.append(main);
       if (i === 0) li.append(status.cloneNode(true));
       list.append(li);
@@ -721,7 +724,7 @@ const tenancyCard = async (pid) => {
     sub.append(list);
     if (isManager(pid)) {
       sub.append(actionsRow(
-        !tenants.length && button("Inviter leietaker", "pt-btn-soft pt-btn-small", () => inviteForm(pid, t)),
+        view.kind !== "members" && button("Inviter leietaker", "pt-btn-soft pt-btn-small", () => inviteForm(pid, t)),
         t.status === "active" && button("Avslutt leieforhold", "pt-btn-quiet-destructive pt-btn-small", () => lifecycleForm(t, true)),
         (t.status === "draft" || t.status === "invited") && button("Kanseller leieforhold", "pt-btn-quiet-destructive pt-btn-small", () => lifecycleForm(t, false)),
       ));
@@ -756,7 +759,7 @@ const propertiesTable = () => {
     link.href = "#om-boligen";
     link.addEventListener("click", () => selectProperty(p.id, false));
     addr.append(link);
-    const own = state.tenancies.filter((t) => t.property_id === p.id);
+    const own = overviewTenancies(state.tenancies.filter((t) => t.property_id === p.id));
     const roleTd = h("td");
     const role = roleOf(p.id);
     if (role) roleTd.append(h("span", "pt-chip", role));
@@ -5360,13 +5363,14 @@ const premiumGate = (unknown) => {
 const load = async (session, isRefresh = false) => {
   const user = session.user;
   state.user = user;
-  const [profileRes, propertiesRes, propertyRolesRes, tenanciesRes, tasksRes] = await Promise.all([
+  const [profileRes, propertiesRes, propertyRolesRes, tenanciesRes, occupantsRes, tasksRes] = await Promise.all([
     supabase.from("profiles").select("first_name, display_name").eq("id", user.id).maybeSingle(),
     supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override, municipality_number, municipality_name")
       .eq("lifecycle_status", "active").order("created_at", { ascending: false }),
     supabase.from("property_members").select("property_id, role").eq("user_id", user.id).is("valid_until", null),
     supabase.from("tenancies").select("id, property_id, status, start_date, end_date")
-      .in("status", VISIBLE_TENANCY_STATUSES).is("archived_at", null).order("start_date", { ascending: false }),
+      .in("status", OVERVIEW_TENANCY_STATUSES).is("archived_at", null).order("start_date", { ascending: false }),
+    supabase.from("manual_occupants").select("id, property_id, tenancy_id, display_name, phone, party_role, claimed_user_id"),
     supabase.from("maintenance_requests").select("property_id").in("status", OPEN_TASK_STATUSES),
   ]);
   state.name = firstNameOf(profileRes.data, user);
@@ -5375,7 +5379,9 @@ const load = async (session, isRefresh = false) => {
   // you are only the tenant; those stay in the app and are never shown here.
   const manages = (pid) => ["owner", "co_landlord"].includes(state.roles.get(pid));
   state.properties = (propertiesRes.data ?? []).filter((p) => manages(p.id));
-  state.tenancies = (tenanciesRes.data ?? []).filter((t) => manages(t.property_id));
+  // Refresh drops a tenancy that was just ended. Ended rows are not loaded into this list.
+  state.tenancies = overviewTenancies((tenanciesRes.data ?? []).filter((t) => manages(t.property_id)));
+  state.manualOccupants = occupantsRes.error ? [] : (occupantsRes.data ?? []).filter((o) => manages(o.property_id));
   if (!tasksRes.error) {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
