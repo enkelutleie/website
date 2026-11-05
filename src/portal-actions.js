@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { historyRowForEndedManual, manualOccupantsFor, mergeTenancyHistory } from "./tenancy-listing.js";
 
 // Write actions for the portal. Every call mirrors the iOS app (same RPCs,
 // edge functions, tables, buckets and enum values) and runs with the user's own
@@ -2445,9 +2446,39 @@ export async function confirmPrivacyExportSaved(caseId) {
 }
 
 /* ---------- Leiehistorikk (TenancyHistory) ---------- */
+// Ended manual registrations belong in history (iOS #1553). list_tenancy_history is the
+// source. When it already returned the tenancy, that row is kept. When it did not, the
+// same read the landlord already has (tenancies + manual_occupants) fills the gap.
+// A failed read leaves the RPC rows unchanged. Nothing is written or deleted.
+async function endedManualHistorySupplements(pid, existing) {
+  const seen = new Set((existing ?? []).map((row) => row.tenancy_id));
+  const { data: tenancies, error } = await supabase.from("tenancies")
+    .select("id, property_id, status, start_date, end_date, ended_at, history_tenant_name, history_tenant_phone, history_tenant_email, history_tenants")
+    .eq("property_id", pid)
+    .eq("status", "ended");
+  if (error || !tenancies?.length) return [];
+  const missing = tenancies.filter((tenancy) => !seen.has(tenancy.id));
+  if (!missing.length) return [];
+  const { data: occupants, error: occupantError } = await supabase.from("manual_occupants")
+    .select("tenancy_id, display_name, phone, party_role, claimed_user_id")
+    .eq("property_id", pid)
+    .in("tenancy_id", missing.map((tenancy) => tenancy.id));
+  if (occupantError) return [];
+  return missing
+    .filter((tenancy) => manualOccupantsFor(occupants, tenancy.id).length)
+    .map((tenancy) => historyRowForEndedManual(tenancy, occupants))
+    .filter(Boolean);
+}
+
 export async function listTenancyHistory(pid) {
   const { data, error } = await supabase.rpc("list_tenancy_history", { requested_property_id: pid });
-  return error ? { error } : { data: data ?? [] };
+  if (error) return { error };
+  const existing = data ?? [];
+  try {
+    return { data: mergeTenancyHistory(existing, await endedManualHistorySupplements(pid, existing)) };
+  } catch {
+    return { data: existing };
+  }
 }
 
 const trimmedText = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
