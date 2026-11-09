@@ -16,7 +16,12 @@ import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time
 
 const root = document.querySelector("[data-portal]");
 const content = root?.querySelector("[data-content]");
-const toLogin = () => location.replace("/logg-inn/");
+let leaving = false;
+const toLogin = () => {
+  if (leaving) return;
+  leaving = true;
+  location.replace("/logg-inn/");
+};
 
 const OPEN_TASK_STATUSES = ["reported", "in_progress", "waiting"];
 const TENANCY_LABEL = { draft: "Utkast", invited: "Invitert", active: "Aktivt" };
