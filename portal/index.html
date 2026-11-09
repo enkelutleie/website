@@ -19,18 +19,23 @@
   <body class="pt-body">
     <div class="pt-app" data-portal aria-busy="true">
       <aside class="pt-sidebar" aria-label="Hovedmeny">
-        <a class="pt-brand" href="/portal/">
-          <img src="/brand/app-logo-48.png?v=1" srcset="/brand/app-logo-48.png?v=1 1x, /brand/app-logo-96.png?v=1 2x, /brand/app-logo-144.png?v=1 3x" width="44" height="44" alt="" />
-          <span class="pt-brand-text">
-            <strong>Enkel Utleie</strong>
-            <span>Tryggere utleie, enklere hverdag</span>
-          </span>
-        </a>
-        <span class="pt-select-label" id="pt-property-label">Bolig</span>
-        <div class="pt-prop" data-property-picker>
-          <div class="pt-prop-row pt-prop-static pt-prop-muted"><span class="pt-prop-text">Laster …</span></div>
+        <div class="pt-sidebar-head">
+          <a class="pt-brand" href="/portal/">
+            <img src="/brand/app-logo-48.png?v=1" srcset="/brand/app-logo-48.png?v=1 1x, /brand/app-logo-96.png?v=1 2x, /brand/app-logo-144.png?v=1 3x" width="44" height="44" alt="" />
+            <span class="pt-brand-text">
+              <strong>Enkel Utleie</strong>
+              <span>Tryggere utleie, enklere hverdag</span>
+            </span>
+          </a>
+          <button type="button" class="pt-menu-toggle" data-portal-menu aria-expanded="false" aria-controls="pt-sidebar-menu">Meny</button>
         </div>
-        <nav class="pt-nav" data-nav></nav>
+        <div class="pt-sidebar-menu" id="pt-sidebar-menu">
+          <span class="pt-select-label" id="pt-property-label">Bolig</span>
+          <div class="pt-prop" data-property-picker>
+            <div class="pt-prop-row pt-prop-static pt-prop-muted"><span class="pt-prop-text">Laster …</span></div>
+          </div>
+          <nav class="pt-nav" data-nav></nav>
+        </div>
       </aside>
       <div class="pt-main">
         <header class="pt-topbar">

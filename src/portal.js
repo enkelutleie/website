@@ -5191,10 +5191,15 @@ let renderToken = 0;
 // A page may leave something running (the chat's realtime channel); stop it on the next render.
 let pageCleanup = null;
 const setPageCleanup = (fn) => { pageCleanup?.(); pageCleanup = fn; };
+const closePortalMenu = () => {
+  root.querySelector(".pt-sidebar")?.classList.remove("is-open");
+  root.querySelector("[data-portal-menu]")?.setAttribute("aria-expanded", "false");
+};
 const render = async () => {
   setPageCleanup(null);
   const items = allItems();
   closeBell();
+  closePortalMenu();
   // Sub-routes: #vedlikehold/<sak-id>, #vedlikehold/historikk and #kalender/<id>[/<sak-id>].
   let [id, sub, extra] = location.hash.slice(1).split("/");
   if (id === "overtakelse") id = "inn-utflytting";
@@ -5443,6 +5448,16 @@ const load = async (session, isRefresh = false) => {
 };
 
 if (root) {
+  const menuBtn = root.querySelector("[data-portal-menu]");
+  menuBtn?.addEventListener("click", () => {
+    const sidebar = root.querySelector(".pt-sidebar");
+    const open = !sidebar.classList.contains("is-open");
+    sidebar.classList.toggle("is-open", open);
+    menuBtn.setAttribute("aria-expanded", String(open));
+  });
+  root.querySelector("[data-nav]")?.addEventListener("click", (e) => {
+    if (e.target.closest("a")) closePortalMenu();
+  });
   root.querySelector("[data-sign-out]")?.addEventListener("click", logOut);
   if (document.documentElement.getAttribute("data-auth") !== "in") {
     toLogin();

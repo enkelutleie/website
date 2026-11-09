@@ -373,14 +373,21 @@ test.describe("portal", () => {
     await expect(page).toHaveURL(/#oversikt$/);
   });
 
-  test("known bug: the portal does not stack on a phone", async ({ page }) => {
+  test("the portal stacks into a menu on a phone", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await openPortal(page);
     await portalReady(page);
     await page.screenshot({ path: "/opt/cursor/artifacts/portal-mobile.png" });
     const box = await page.locator(".pt-content").boundingBox();
-    test.fail(true, ".pt-app keeps a 220px sidebar at 860px and never stacks");
     expect(box.width).toBeGreaterThan(300);
+    const menu = page.getByRole("button", { name: "Meny" });
+    await expect(menu).toBeVisible();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeHidden();
+    await menu.click();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    await expect(page.locator("[data-page-title]")).toHaveText("Økonomi");
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
   });
 
   test("known bug: clicking the bell icon closes the panel on the same click", async ({ page }) => {
