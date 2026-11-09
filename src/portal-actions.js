@@ -849,6 +849,45 @@ export async function createAgreementDraft(tenancy, v) {
   });
 }
 
+// Husleieloven, same rule as the apps: a tidsbestemt lease is at least one year,
+// or three years when the landlord is næringsdrivende. An empty draft stays allowed.
+const BUSINESS_LANDLORD_KINDS = new Set([
+  "business", "company", "organization", "commercial", "professional",
+  "self_employed", "sole_trader", "naeringsdrivende",
+]);
+export function isBusinessLandlord(property) {
+  const profile = property?.rental_profile;
+  if (!profile || typeof profile !== "object") return false;
+  const kind = String(profile.landlord_kind ?? "").trim().toLowerCase();
+  if (BUSINESS_LANDLORD_KINDS.has(kind)) return true;
+  return Boolean(
+    String(profile.organization_number ?? "").trim()
+    || String(profile.business_name ?? "").trim()
+    || String(profile.legal_form ?? "").trim(),
+  );
+}
+const pad2 = (n) => String(n).padStart(2, "0");
+// Calendar anniversary. 29 February lands on 28 February in a non-leap year.
+export function minimumFixedTermEnd(start, years) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start ?? "");
+  if (!match) return null;
+  const year = Number(match[1]) + years;
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!year || month < 1 || month > 12 || day < 1) return null;
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${pad2(month)}-${pad2(Math.min(day, last))}`;
+}
+export function fixedTermError(v, { business = false } = {}) {
+  if (v?.termType !== "fixed" || !v.start || !v.end || v.end <= v.start) return null;
+  const years = business ? 3 : 1;
+  const earliest = minimumFixedTermEnd(v.start, years);
+  if (!earliest || v.end >= earliest) return null;
+  return business
+    ? "En tidsbestemt leieavtale for næringsdrivende må vare i minst 3 år."
+    : "En tidsbestemt leieavtale må vare i minst 1 år.";
+}
+
 // Draft terms are encodeIfPresent in the app: empty fields are left out.
 const termsOf = (v) => {
   const digits = (v.account ?? "").replace(/\D/g, "");

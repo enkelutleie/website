@@ -139,3 +139,22 @@ test("portal pages reuse the session and realtime bursts reload once", async ({ 
   expect(count(detail, "POST rpc/list_calendar_items_for_property")).toBe(0);
   expect(count(detail, "GET property_calendar_items")).toBe(1);
 });
+
+test("a fixed-term contract shorter than a year is rejected in Norwegian", async ({ page }) => {
+  const writes = [];
+  await installSupabase(page, { writes });
+  await page.goto("/portal/#leiekontrakt");
+  await expect(page.locator("[data-page-title]")).toHaveText("Leiekontrakt");
+  await page.getByRole("button", { name: "Opprett leiekontrakt" }).click();
+  await page.getByRole("button", { name: "Avtaletype: Løpende" }).click();
+  await page.getByRole("option", { name: "Fast periode" }).click();
+  await page.locator("input[name=start]").fill("2026-01-15");
+  await page.locator("input[name=end]").fill("2026-06-01");
+  await page.getByRole("button", { name: "Lagre utkast" }).click();
+  await expect(page.getByRole("alert")).toHaveText("En tidsbestemt leieavtale må vare i minst 1 år.");
+  expect(writes.some((entry) => String(entry.path).includes("create_rental_agreement_draft"))).toBe(false);
+  await page.locator("input[name=end]").fill("2027-01-15");
+  await page.getByRole("button", { name: "Lagre utkast" }).click();
+  await expect(page.getByRole("heading", { name: "Ny leiekontrakt" })).toHaveCount(0);
+  expect(writes.some((entry) => String(entry.path).includes("create_rental_agreement_draft"))).toBe(true);
+});

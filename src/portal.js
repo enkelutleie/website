@@ -1562,6 +1562,8 @@ const contractForm = (pid, detail) => {
       if (v.deposit && depositMinor == null) return "Skriv et gyldig depositum.";
       if (rentMinor && depositMinor && depositMinor > rentMinor * 6) return "Depositumet kan ikke være mer enn seks måneders husleie.";
       if (v.termType === "fixed" && v.start && v.end && v.end <= v.start) return "Sluttdatoen må være etter startdatoen.";
+      const termError = act.fixedTermError(v, { business: act.isBusinessLandlord(p) });
+      if (termError) return termError;
       if (v.payday && !(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Betalingsdagen må være mellom 1 og 31.";
       if (v.notice && !(Number(v.notice) >= 1 && Number(v.notice) <= 12)) return "Oppsigelsestiden må være mellom 1 og 12 måneder.";
       if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummer må være 11 siffer";
