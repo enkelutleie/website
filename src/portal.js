@@ -193,12 +193,12 @@ const tenancyPeople = (pid) =>
   cached(`people:${pid}`, async () => {
     const ids = state.tenancies.filter((t) => t.property_id === pid).map((t) => t.id);
     if (!ids.length) return { data: [] };
-    const members = await supabase.from("tenancy_members").select("tenancy_id, user_id, role")
-      .in("tenancy_id", ids).is("valid_until", null);
+    const members = await act.tenancyMemberRows(ids);
     if (members.error) return members;
-    const userIds = [...new Set((members.data ?? []).map((m) => m.user_id))];
+    const current = (members.data ?? []).filter((m) => !m.valid_until);
+    const userIds = [...new Set(current.map((m) => m.user_id))];
     const names = await act.linkedContactNames(userIds);
-    return { data: (members.data ?? []).map((m) => ({ ...m, name: names.get(m.user_id) ?? null })) };
+    return { data: current.map((m) => ({ ...m, name: names.get(m.user_id) ?? null })) };
   });
 
 /* ---------- sections ---------- */
@@ -233,7 +233,7 @@ const onboarding = async () => {
   if (stored.error || stored.data === true) return null;
   const own = state.tenancies.filter((t) => t.property_id === p.id && !t.archived_at);
   const active = own.filter((t) => t.status === "active");
-  const [people, agreements, insp] = await Promise.all([tenancyPeople(p.id), act.listAgreements(p.id), inspections(p.id)]);
+  const [people, agreements, insp] = await Promise.all([tenancyPeople(p.id), agreementsFor(p.id), inspections(p.id)]);
   if (people.error || agreements.error || insp.error) return null;
   const hasTenant = (people.data ?? []).some((m) => m.role === "tenant");
   const tenantPending = !hasTenant && own.some((t) => t.status === "invited");
@@ -927,6 +927,7 @@ const isManager = (pid = state.propertyId) => ["owner", "co_landlord"].includes(
 const isOwner = (pid = state.propertyId) => state.roles.get(pid) === "owner";
 let session = null;
 const refresh = async (message) => {
+  act.invalidatePortalReads();
   state.cache.clear();
   await load(session, true);
   if (message) act.toast(message);
@@ -1118,12 +1119,13 @@ const propertyForm = (p) => {
           }
           if (id && images.length) {
             let failed = 0;
-            for (const file of images) {
+            await act.mapWithLimit(images, 2, async (file) => {
               try {
                 const err = await act.uploadPropertyPhoto(id, state.user.id, file);
                 if (err) failed += 1;
               } catch { failed += 1; }
-            }
+              return null;
+            });
             if (failed) {
               act.toast(failed === images.length
                 ? "Boligen er opprettet, men bildene fra FINN kunne ikke lagres. Du kan legge dem til under «Boligbilder»."
@@ -1271,7 +1273,7 @@ const inviteForm = async (pid, tenancy) => {
   const p = state.properties.find((x) => x.id === pid);
   let rooms = null;
   if (p?.housing_kind === "shared") {
-    const res = await act.invitableRooms(pid);
+    const res = await act.invitableRooms(pid, state.tenancies);
     if (res.error) return act.toast("Rommene kunne ikke hentes akkurat nå. Prøv igjen.");
     rooms = res.data;
     if (!rooms.length) return act.toast("Ingen rom ennå. Legg til det første rommet.");
@@ -1451,13 +1453,14 @@ const agreementRow = async (pid, a, replacementIds, knownChanges = null) => {
   return [li, ...extra];
 };
 
+const agreementsFor = (pid) => cachedOk(`agreements:${pid}`, () => act.listAgreements(pid));
 const landlordContractCard = async (p) => {
   const c = card("Leiekontrakter", "contract");
   const hasTenancy = state.tenancies.some((t) => t.property_id === p.id);
   c.append(actionsRow(hasTenancy
     ? button("Opprett leiekontrakt", "pt-btn-primary pt-btn-small", () => contractForm(p.id))
     : button("Inviter leietaker først", "pt-btn-secondary pt-btn-small", () => inviteForm(p.id))));
-  const res = await act.listAgreements(p.id);
+  const res = await agreementsFor(p.id);
   if (res.error) {
     c.append(inline("Kontraktene kunne ikke hentes akkurat nå."));
     return c;
@@ -1626,7 +1629,7 @@ const calendarForm = async (pid, item) => {
     );
   } else {
     // CalendarItemScopeEditor (iOS #1530): link or unlink a maintenance case after creation.
-    const res = await act.listMaintenance(pid);
+    const res = await maintenanceRows(pid);
     cases = (res.data ?? []).filter((r) => !act.isFinishedMaintenance(r) || r.id === item.maintenance_request_id);
     if (linked && !cases.some((r) => r.id === item.maintenance_request_id)) cases.unshift({ id: item.maintenance_request_id, title: "Nåværende sak", tenancy_id: item.tenancy_id });
     fields.push(
@@ -2263,9 +2266,10 @@ const maintenanceHistoryCard = (r) => {
   return a;
 };
 
+const maintenanceRows = (pid) => cachedOk(`mt:${pid}`, () => act.listMaintenance(pid));
 const maintenanceList = async (pid) => {
   const manager = isManager(pid);
-  const res = await act.listMaintenance(pid);
+  const res = await maintenanceRows(pid);
   const c = card("Vedlikehold", "wrench", manager ? ["Vedlikeholdshistorikk", "#vedlikehold/historikk"] : null);
   c.append(h("p", "pt-muted", manager ? "Følg opp innmeldte saker og registrer vedlikehold på boligen." : "Meld inn problemer og følg status på saker for leieforholdet ditt."));
   if (manager) c.append(actionsRow(button("+ Ny sak", "pt-btn-primary pt-btn-small", () => maintenanceForm(pid))));
@@ -2317,8 +2321,9 @@ const historyLine = (title, sub) => {
   if (sub) main.append(h("span", null, sub));
   return main;
 };
+const tenancyHistory = (pid) => cachedOk(`history:${pid}`, () => act.listTenancyHistory(pid));
 const tenancyHistoryList = async (pid) => {
-  const res = await act.listTenancyHistory(pid);
+  const res = await tenancyHistory(pid);
   const c = card("Leiehistorikk", "history");
   if (res.error) {
     c.append(h("p", "pt-muted", "Leiehistorikken kunne ikke lastes."), button("Prøv igjen", "pt-btn-secondary pt-btn-small", () => refresh()));
@@ -2335,7 +2340,7 @@ const tenancyHistoryList = async (pid) => {
   return [c];
 };
 const tenancyHistoryDetail = async (pid, tid) => {
-  const res = await act.listTenancyHistory(pid);
+  const res = await tenancyHistory(pid);
   const e = res.data?.find((x) => x.tenancy_id === tid);
   if (!e) return [historyBack(), emptyPage("history", "Leieforholdet er ikke tilgjengelig", "Leiehistorikken kunne ikke lastes.")];
   const head = card(act.historyTitle(e), "history");
@@ -2386,7 +2391,7 @@ const tenancyHistoryDetail = async (pid, tid) => {
 
 const maintenanceHistory = async (pid) => {
   if (!isManager(pid)) return maintenanceList(pid);
-  const res = await act.listMaintenance(pid);
+  const res = await maintenanceRows(pid);
   const intro = h("section", "pt-card pt-mt-history-intro");
   const head = h("div", "pt-mt-history-head");
   const mascot = h("img", "pt-mt-mascot");
@@ -2462,6 +2467,7 @@ const maintenanceDetail = async (pid, rid) => {
   const reloadRequest = async (message) => {
     const r = await act.getMaintenance(rid);
     if (r.data) st.request = r.data;
+    state.cache.delete(`mt:${pid}`);
     await Promise.all([loadEvents(), loadSchedule()]);
     draw();
     if (message) act.toast(message);
@@ -2841,14 +2847,23 @@ const hoTenancy = (pid) => {
   return list.find((t) => t.id === hoTenancyId) ?? list[0] ?? null;
 };
 const hoLatest = (rows, test) => [...rows].reverse().find(test) ?? null;
+// Inspections, the move-out and the deposit pointer are read once per tenancy.
+// Photos stay in the app; this page does not fetch property_images.
+const hoSnapshot = (t) => cachedOk(`ho:${t.id}`, async () => {
+  const [insp, proc, dep] = await Promise.all([
+    act.listInspections(t.id), act.listMoveOutProcesses([t.id]), act.depositPointer(t.id),
+  ]);
+  if (insp.error || proc.error) return { error: insp.error || proc.error };
+  return { data: { list: insp.data ?? [], procs: proc.data ?? [], deposit: dep.error ? null : dep.data ?? null } };
+});
 const hoLoad = async (t) => {
-  const [insp, proc, dep] = await Promise.all([act.listInspections(t.id), act.listMoveOutProcesses([t.id]), act.depositPointer(t.id)]);
-  if (insp.error || proc.error) return null;
-  const list = insp.data ?? [];
-  const procs = proc.data ?? [];
+  const snap = await hoSnapshot(t);
+  if (snap.error || !snap.data) return null;
+  const { list, procs, deposit } = snap.data;
+  await Promise.all(list.map((inspection) => act.clearInspectionReviewDone(inspection).catch(() => null)));
   const process = hoLatest(procs, (p) => act.OPEN_MOVE_OUT.includes(p.state)) ?? hoLatest(procs, (p) => p.state === "ended");
   const moveOut = process?.inspection_id ? list.find((i) => i.id === process.inspection_id) ?? null : null;
-  return { moveIn: hoLatest(list, (i) => i.type === "move_in"), moveOut, process, deposit: dep.error ? null : dep.data ?? null };
+  return { moveIn: hoLatest(list, (i) => i.type === "move_in"), moveOut, process, deposit };
 };
 const hoChip = ([text, tone]) => h("span", `pt-chip${tone}`, text);
 const hoMoveInStatus = (i, manager) => {
@@ -2878,7 +2893,9 @@ const hoDepositStatus = (d) => {
   return ["Uenighet", " is-danger"];
 };
 const hoReloadPage = async (message) => {
-  state.cache.clear();
+  for (const key of [...state.cache.keys()]) {
+    if (key.startsWith("ho:") || key.startsWith("ho-items:") || key.startsWith("ho-comments:")) state.cache.delete(key);
+  }
   await render();
   if (message) act.toast(message);
 };
@@ -2906,7 +2923,7 @@ const hoTrack = (promise) => {
   promise.finally(() => hoSaves.delete(promise)).catch(() => {});
   return promise;
 };
-const hoSaveItem = (item, condition, note) => hoTrack(act.updateInspectionItem(item, condition, note));
+const hoSaveItem = (item, condition, note) => hoTrack(act.saveInspectionItem(item, condition, note));
 // Returns true when the save is in fact stored: a late "already sent" reply for a
 // value that the locked checklist already holds is not an error.
 const hoSaveFailed = async (res, item, condition, note) => {
@@ -3100,8 +3117,9 @@ const hoShared = (items, phase, editable) => {
 const hoComments = async (inspection, canComment) => {
   const c = card("Kommentarer", "chat");
   const list = h("ul", "pt-ho-comments");
+  const stored = () => cachedOk(`ho-comments:${inspection.id}`, () => act.listInspectionComments(inspection.id));
   const draw = async () => {
-    const res = await act.listInspectionComments(inspection.id);
+    const res = await stored();
     const rows = res.data ?? [];
     list.replaceChildren(...rows.map((r) => {
       const li = h("li", "pt-ho-comment");
@@ -3126,6 +3144,14 @@ const hoComments = async (inspection, canComment) => {
       add.disabled = false;
       if (res.error) return act.toast(act.inspectionError(res));
       text.value = "";
+      const added = Array.isArray(res.data) ? res.data[0] : res.data;
+      const row = added?.body ? added : {
+        author_role: isManager() ? "landlord" : "tenant",
+        body,
+        created_at: new Date().toISOString(),
+      };
+      const current = await stored();
+      if (current.data) current.data.push(row);
       await draw();
     });
     c.append(text, actionsRow(add));
@@ -3133,7 +3159,7 @@ const hoComments = async (inspection, canComment) => {
   return c;
 };
 const hoProtocolCards = async (inspection, editable, canComment) => {
-  const items = await act.listInspectionItems(inspection.id);
+  const items = await cachedOk(`ho-items:${inspection.id}`, () => act.listInspectionItems(inspection.id));
   if (items.error) return [inline("Sjekklisten kunne ikke hentes akkurat nå.")];
   const rows = items.data ?? [];
   return [hoChecklist(rows, editable), hoShared(rows, inspection.type, editable), await hoComments(inspection, canComment)].filter(Boolean);
@@ -3594,8 +3620,8 @@ async function templateContext(pid) {
   const people = (peopleRes.data ?? []).filter((m) => m.role === "tenant" && tenancies.some((t) => t.id === m.tenancy_id));
   const [contactsRes, agreementsRes, meRes] = await Promise.all([
     people.length ? act.linkedContacts([...new Set(people.map((m) => m.user_id))]) : Promise.resolve({ data: [] }),
-    act.listAgreements(pid),
-    supabase.from("profiles").select("display_name, phone_number").eq("id", state.user.id).maybeSingle(),
+    agreementsFor(pid),
+    act.ownProfile(state.user.id),
   ]);
   if (contactsRes.error) return { error: true };
   const contacts = new Map((contactsRes.data ?? []).map((c) => [c.user_id, c]));
@@ -3715,7 +3741,10 @@ async function documentsPage() {
   const p = property();
   if (!p) return [emptyPage("folder", "Dokumenter", "Velg en bolig for å se dokumentene.")];
   const manager = isManager(p.id);
-  const [docs, access] = await Promise.all([act.listPropertyDocuments(p.id), manager ? act.listDocumentAccess(p.id) : Promise.resolve({ data: [] })]);
+  const [docs, access] = await Promise.all([
+    cachedOk(`docs:${p.id}`, () => act.listPropertyDocuments(p.id)),
+    manager ? cachedOk(`docaccess:${p.id}`, () => act.listDocumentAccess(p.id)) : Promise.resolve({ data: [] }),
+  ]);
   const out = [];
   if (manager) out.push(templatesCard(p.id));
   const c = card(manager ? "Dokumenter" : "Delte dokumenter", "folder");
@@ -3789,7 +3818,7 @@ const loadAnnual = async (pid, year) => {
     act.listMileageTrips(pid, start, end),
     annual.ownershipShares(pid, year),
     cached("inventory", loadInventory),
-    supabase.from("profiles").select("display_name").eq("id", state.user.id).maybeSingle(),
+    act.ownProfile(state.user.id),
     tenancyPeople(pid),
   ]);
   if (txs.error || links.error) return { error: true };
@@ -4438,7 +4467,7 @@ const roomForm = (pid, rooms, room = null) => act.openForm({
 });
 
 const roomsCard = async (pid) => {
-  const res = await cached(`rooms:${pid}`, () => act.propertyRooms(pid));
+  const res = await cached(`rooms:${pid}`, () => act.propertyRooms(pid, state.tenancies));
   const c = card("Rom", "building");
   if (res.error) {
     c.append(h("p", null, "Rommene kunne ikke hentes akkurat nå. Prøv igjen."),
@@ -4696,10 +4725,13 @@ const galleryCard = async (p) => {
     const room = act.GALLERY_LIMIT - images.length;
     if (files.length > room) act.toast("Du kan legge til inntil 12 bilder per bolig.");
     const chosen = files.slice(0, room);
+    const results = await act.mapWithLimit(chosen, 2, async (file) => {
+      if (!file.type?.startsWith("image/")) return "Velg en bildefil.";
+      return act.uploadPropertyPhoto(p.id, state.user.id, file).catch(() => "Bildet kunne ikke lagres. Prøv igjen.");
+    });
     let added = 0;
-    for (const file of chosen) {
-      if (!file.type?.startsWith("image/")) { act.toast("Velg en bildefil."); break; }
-      const err = await act.uploadPropertyPhoto(p.id, state.user.id, file).catch(() => "Bildet kunne ikke lagres. Prøv igjen.");
+    for (const err of results) {
+      if (err === undefined) break;
       if (err) { act.toast(err); break; }
       added += 1;
     }
@@ -5546,16 +5578,17 @@ const load = async (session, isRefresh = false) => {
   const user = session.user;
   state.user = user;
   const [profileRes, propertiesRes, propertyRolesRes, tenanciesRes, occupantsRes, tasksRes] = await Promise.all([
-    supabase.from("profiles").select("first_name, display_name").eq("id", user.id).maybeSingle(),
+    act.ownProfile(user.id),
     supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override, municipality_number, municipality_name")
       .eq("lifecycle_status", "active").order("created_at", { ascending: false }),
     supabase.from("property_members").select("property_id, role").eq("user_id", user.id).is("valid_until", null),
-    supabase.from("tenancies").select("id, property_id, status, start_date, end_date")
+    supabase.from("tenancies").select("id, property_id, unit_id, status, start_date, end_date")
       .in("status", OVERVIEW_TENANCY_STATUSES).is("archived_at", null).order("start_date", { ascending: false }),
     supabase.from("manual_occupants").select("id, property_id, tenancy_id, display_name, phone, party_role, claimed_user_id"),
     supabase.from("maintenance_requests").select("property_id").in("status", OPEN_TASK_STATUSES),
   ]);
-  state.name = firstNameOf(profileRes.data, user);
+  state.profile = profileRes.data ?? null;
+  state.name = firstNameOf(state.profile, user);
   const overviewFailed = Boolean(propertiesRes.error || propertyRolesRes.error || tenanciesRes.error);
   state.roles = new Map(overviewFailed ? [] : (propertyRolesRes.data ?? []).map((r) => [r.property_id, r.role]));
   // The web portal is always the landlord view. RLS also returns properties and tenancies where
@@ -5565,6 +5598,7 @@ const load = async (session, isRefresh = false) => {
   // Refresh drops a tenancy that was just ended. Ended rows are not loaded into this list.
   state.tenancies = overviewFailed ? [] : overviewTenancies((tenanciesRes.data ?? []).filter((t) => manages(t.property_id)));
   state.manualOccupants = occupantsRes.error || overviewFailed ? [] : (occupantsRes.data ?? []).filter((o) => manages(o.property_id));
+  if (!occupantsRes.error && !overviewFailed) act.rememberOccupants(occupantsRes.data ?? []);
   if (tasksRes.error || overviewFailed) state.openTasks.clear();
   else {
     for (const p of state.properties) state.openTasks.set(p.id, 0);

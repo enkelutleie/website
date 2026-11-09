@@ -318,7 +318,10 @@ export async function installSupabase(page, options = {}) {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
       premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery,
     });
-    if (options.requests) options.requests.push({ method: req.method(), path: url.pathname, select: url.searchParams.get("select") });
+    if (options.requests) options.requests.push({
+      method: req.method(), path: url.pathname, select: url.searchParams.get("select"),
+      scope: body?.requested_role_scope ?? null,
+    });
     if (result.abort) {
       await route.abort("failed");
       return;
