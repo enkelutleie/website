@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
 import { historyRowForEndedManual, manualOccupantsFor, mergeTenancyHistory } from "./tenancy-listing.js";
 
 // Write actions for the portal. Every call mirrors the iOS app (same RPCs,
@@ -164,7 +165,11 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       close(true);
     });
     dialog.showModal();
-    form.querySelector("input:not([type=hidden]), select, textarea, .pt-choice-button")?.focus();
+    // Skip the FINN import field and anything inside a hidden row (the image
+    // checkbox starts hidden, and so does «Antall rom» until bofellesskap).
+    [...form.querySelectorAll("input:not([type=hidden]):not([data-pt-skip-focus]), select, textarea, .pt-choice-button")]
+      .find((el) => !el.closest("[hidden]"))
+      ?.focus();
   });
 }
 
@@ -415,9 +420,41 @@ export const validateProperty = (v) => {
   if ((v.unit ?? "").length > 30) return "Enhet kan være maks 30 tegn.";
   if (!/^\d{4}$/.test(v.postal)) return "Postnummeret må være fire siffer.";
   if (!v.city || v.city.length > 100) return "Poststed må fylles ut (maks 100 tegn).";
-  if (v.finn && !/^\d{6,12}$/.test(v.finn.replace(/\D/g, ""))) return "Finn-koden skal bare være tall.";
+  if (v.finn && !isStoredFinnCode(v.finn)) return "Finn-koden må være 5 til 12 siffer.";
   return null;
 };
+
+async function functionErrorDetails(error) {
+  const context = error?.context;
+  let status = typeof context?.status === "number" ? context.status : null;
+  let code = null;
+  if (context && typeof context.json === "function") {
+    try {
+      const body = await (typeof context.clone === "function" ? context.clone() : context).json();
+      if (typeof body?.error === "string") code = body.error;
+    } catch { /* body was empty or not JSON */ }
+  } else if (typeof context?.error === "string") {
+    code = context.error;
+  }
+  return { code, status, name: error?.name ?? "", message: error?.message ?? "" };
+}
+
+// Logged-in read of the deployed finn-listing function. The user's JWT is sent
+// by the shared Supabase client; this does not write anything.
+export async function fetchFinnListing(code) {
+  try {
+    const { data, error } = await supabase.functions.invoke("finn-listing", { body: { code } });
+    if (error) return { error: finnImportMessage(classifyFinnFailure(await functionErrorDetails(error))) };
+    if (data && typeof data === "object" && typeof data.error === "string" && !data.address_line1 && !data.address) {
+      return { error: finnImportMessage(classifyFinnFailure({ code: data.error })) };
+    }
+    if (!data || typeof data !== "object") return { error: finnImportMessage("unknown") };
+    return { data };
+  } catch (err) {
+    return { error: finnImportMessage(classifyFinnFailure(await functionErrorDetails(err))) };
+  }
+}
+
 const profileOf = (use, existing) => ({
   landlord_kind: existing?.landlord_kind ?? "individual",
   legal_form: existing?.legal_form ?? null,

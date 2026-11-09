@@ -17,6 +17,8 @@ pnpm dev
 - Om oss: `/om-oss`
 - Spørsmål og svar: `/sporsmal-svar`
 - Personvern: `/personvern`
+- Slett konto: `/slett-konto`
+- Support: `/support`
 
 ## Bygg
 
@@ -28,7 +30,7 @@ Ferdig statisk output ligger i `dist/`. Forhåndsvis med `pnpm preview`.
 
 ## Midlertidig «Kommer snart»-forside
 
-Forsiden (`index.html`) er midlertidig byttet ut med en enkel «Kommer snart»-side (`src/coming-soon.css`). Den fulle landingssiden ligger i `landing-full.html` og kan åpnes på `/forhåndsvisning` (og `/forhandsvisning`). Den bygges av Vite, men er merket `noindex, nofollow`. `/om-oss` og `/sporsmal-svar` sendes midlertidig til `/` med 302 i `public/_redirects`, og er fjernet fra `public/sitemap.xml`. `/personvern`, `/logg-inn` og `/portal/` fungerer som før.
+Forsiden (`index.html`) er midlertidig byttet ut med en enkel «Kommer snart»-side (`src/coming-soon.css`). Den fulle landingssiden ligger i `landing-full.html` og kan åpnes på `/forhåndsvisning` (og `/forhandsvisning`). Den bygges av Vite, men er merket `noindex, nofollow`. `/om-oss` og `/sporsmal-svar` sendes midlertidig til `/` med 302 i `public/_redirects`, og er fjernet fra `public/sitemap.xml`. `/personvern`, `/slett-konto`, `/support`, `/logg-inn` og `/portal/` fungerer som før. `/support` ligger utenfor 302-blokken og skal ikke peke til forsiden.
 
 Slik gjenoppretter du den fulle siden:
 
