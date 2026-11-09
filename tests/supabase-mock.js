@@ -162,7 +162,8 @@ function matches(row, url) {
   return true;
 }
 
-function rpcPayload(name, body, premium) {
+function rpcPayload(name, body, options = {}) {
+  const premium = options.premium;
   const offset = Number(body?.requested_offset ?? 0);
   if (offset > 0) return [];
   const pid = body?.requested_property_id;
@@ -174,7 +175,16 @@ function rpcPayload(name, body, premium) {
     case "list_calendar_items_for_property":
       return pid === PROPERTY_ID ? [calendarItem] : [];
     case "list_my_property_rental_agreements":
-      return pid === PROPERTY_ID ? [agreement] : [];
+      return pid === PROPERTY_ID ? [{ ...agreement, agreement_status: options.signedAgreement ? "signed" : agreement.agreement_status }] : [];
+    case "list_rental_agreement_changes":
+      return options.signedAgreement ? [{
+        id: "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1",
+        agreement_id: agreement.agreement_id,
+        request_kind: "revision",
+        status: "completed",
+        replacement_agreement_id: null,
+        can_respond: false,
+      }] : [];
     case "list_tenancy_history":
       return pid === PROPERTY_ID ? [historyEntry] : [];
     case "list_my_chat_conversations_v2":
@@ -225,7 +235,7 @@ function respond(url, req, body, options) {
     if (fail.has(name) || errorOn.has(name)) {
       return json(400, { message: "duplicate key value violates unique constraint \"property_handbook_sections_pkey\"", code: "23505" });
     }
-    return json(200, rpcPayload(name, body, options.premium));
+    return json(200, rpcPayload(name, body, options));
   }
   if (url.pathname.startsWith("/rest/v1/")) {
     const table = decodeURIComponent(url.pathname.slice("/rest/v1/".length));
@@ -274,7 +284,11 @@ export async function installSupabase(page, options = {}) {
       try { body = JSON.parse(raw); } catch { body = raw; }
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
-    const result = respond(url, req, body, { fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword, premium: options.premium });
+    const result = respond(url, req, body, {
+      fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
+      premium: options.premium, signedAgreement: options.signedAgreement,
+    });
+    if (options.requests) options.requests.push({ method: req.method(), path: url.pathname });
     if (result.abort) {
       await route.abort("failed");
       return;

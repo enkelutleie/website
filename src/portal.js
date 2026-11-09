@@ -1367,7 +1367,7 @@ const editContract = async (pid, a) => {
   contractForm(pid, res.data);
 };
 
-const agreementRow = async (pid, a, replacementIds) => {
+const agreementRow = async (pid, a, replacementIds, knownChanges = null) => {
   const STATUS = { draft: "Utkast", ready_for_review: "Klar til gjennomgang", awaiting_signatures: "Venter på signatur", partially_signed: "Venter på signatur", signed: "Signert", cancelled: "Avbrutt", rejected: "Avvist", declined: "Avslått", superseded: "Erstattet" };
   const st = a.agreement_status;
   const li = h("li", "pt-row");
@@ -1406,8 +1406,7 @@ const agreementRow = async (pid, a, replacementIds) => {
     if (lease.parties?.length) extra.push(signaturesList(lease.parties));
   }
   if (st === "signed") {
-    const ch = await act.listChanges(a.agreement_id);
-    const changes = ch.data ?? [];
+    const changes = knownChanges ?? (await act.listChanges(a.agreement_id)).data ?? [];
     if (!changes.some((x) => OPEN_CHANGE.includes(x.status))) {
       actions.append(button("Foreslå endringer", "pt-btn-soft pt-btn-small", async () => {
         if (!(await act.confirmAction({ title: "Foreslå endringer i kontrakten?", text: "Det lages et nytt utkast basert på den signerte kontrakten. Den gjeldende kontrakten gjelder til den nye er signert av alle.", confirmLabel: "Lag utkast", destructive: false }))) return;
@@ -1445,13 +1444,17 @@ const landlordContractCard = async (p) => {
   }
   // Replacement drafts made by a change request are named as such.
   const replacementIds = new Set();
+  const changesByAgreement = new Map();
   await Promise.all(rows.filter((a) => a.agreement_status === "signed").map(async (a) => {
     const ch = await act.listChanges(a.agreement_id);
-    for (const x of ch.data ?? []) if (x.replacement_agreement_id) replacementIds.add(x.replacement_agreement_id);
+    const changes = ch.data ?? [];
+    changesByAgreement.set(a.agreement_id, changes);
+    for (const x of changes) if (x.replacement_agreement_id) replacementIds.add(x.replacement_agreement_id);
   }));
   const list = h("ul", "pt-list");
   for (const a of rows) {
-    const [li, ...extra] = await agreementRow(p.id, a, replacementIds);
+    const known = changesByAgreement.has(a.agreement_id) ? changesByAgreement.get(a.agreement_id) : null;
+    const [li, ...extra] = await agreementRow(p.id, a, replacementIds, known);
     list.append(li);
     for (const x of extra) {
       const sub = h("li", "pt-row");

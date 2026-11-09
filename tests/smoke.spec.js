@@ -512,6 +512,16 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
+  test("a signed contract reads its change list once", async ({ page }) => {
+    const requests = [];
+    await openPortal(page, { requests, signedAgreement: true });
+    await page.getByRole("link", { name: "Leiekontrakt", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Foreslå endringer" })).toBeVisible();
+    await expect(page.getByText("Endring av kontrakten")).toBeVisible();
+    const calls = requests.filter((entry) => entry.path.includes("list_rental_agreement_changes"));
+    expect(calls).toHaveLength(1);
+  });
+
   test("premium gate when the account has no entitlement", async ({ page }) => {
     await openPortal(page, { premium: false });
     await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
