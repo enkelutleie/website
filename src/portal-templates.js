@@ -1,6 +1,7 @@
 // Landlord letter templates (LandlordDocumentTemplates.swift): fields for the form,
 // validation, and the PDF blocks. Pure module; the PDF itself is portal-letter.js.
 import { unsupportedCharacters } from "./portal-letter.js";
+import { osloParts } from "./oslo-time.js";
 
 export const TEMPLATES = [
   { id: "reference", title: "Referanse", subtitle: "Vurdering av leietaker", icon: "person", fileName: "Referanse.pdf" },
@@ -32,10 +33,16 @@ export function suggestedEndDate(noticeISO, months = 3) {
 export function nextDueDate(payday, today = new Date()) {
   const day = Number(payday);
   if (!day) return "";
-  const at = (y, mo) => new Date(y, mo, Math.min(day, new Date(y, mo + 1, 0).getDate()));
-  let d = at(today.getFullYear(), today.getMonth());
-  if (isoOf(d) < isoOf(today)) d = at(today.getFullYear(), today.getMonth() + 1);
-  return isoOf(d);
+  const here = osloParts(today);
+  const at = (y, mo) => {
+    const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+    return `${y}-${pad(mo + 1)}-${pad(Math.min(day, last))}`;
+  };
+  const current = at(here.year, here.month - 1);
+  if (current >= here.date) return current;
+  const nextMonth = here.month === 12 ? 0 : here.month;
+  const nextYear = here.month === 12 ? here.year + 1 : here.year;
+  return at(nextYear, nextMonth);
 }
 export function kronerText(raw) {
   const s = String(raw ?? "").replace(/kr/i, "").replace(/[\s\u00a0]/g, "").replace(",", ".");

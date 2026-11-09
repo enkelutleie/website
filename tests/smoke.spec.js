@@ -277,8 +277,10 @@ test.describe("portal", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Varsler" })).toHaveAttribute("aria-expanded", "false");
 
+    await page.evaluate(() => sessionStorage.setItem("pt-property", "should-not-survive"));
     await page.getByRole("button", { name: "Logg ut" }).click();
     await expect(page).toHaveURL(/\/logg-inn\/?/);
+    expect(await page.evaluate(() => sessionStorage.getItem("pt-property"))).toBeNull();
 
     const unexpected = errors.filter((error) => !/websocket|WebSocket/i.test(String(error)));
     expect(unexpected).toEqual([]);
@@ -374,11 +376,10 @@ test.describe("portal", () => {
     await expect(page.getByRole("button", { name: "Inviter leietaker" })).toHaveCount(0);
   });
 
-  test("known bug: an unknown hash stays in the address bar", async ({ page }) => {
+  test("an unknown hash is replaced with oversikt", async ({ page }) => {
     await openPortal(page);
     await page.evaluate(() => { location.hash = "#finnes-ikke"; });
     await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
-    test.fail(true, "render falls back to oversikt without replacing the hash");
     await expect(page).toHaveURL(/#oversikt$/);
   });
 
@@ -408,6 +409,37 @@ test.describe("portal", () => {
     await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[role=dialog]") != null)).toBe(true);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Varsler" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("a failed save does not reveal the database message", async ({ page }) => {
+    await openPortal(page, { errorOn: ["create_financial_transaction"] });
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    await page.getByRole("button", { name: "Ny inntekt" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
+    await dialog.getByRole("button", { name: /Kategori/ }).click();
+    await dialog.getByRole("option", { name: "Husleie", exact: true }).click();
+    await dialog.getByLabel("Beløp").fill("1500");
+    await dialog.getByLabel("Hva gjelder inntekten?").fill("Husleie");
+    await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
+    await expect(dialog.getByText("Det gikk ikke. Prøv igjen om litt.")).toBeVisible();
+    await expect(dialog.getByText(/property_handbook_sections_pkey/)).toHaveCount(0);
+  });
+
+  test("a new all-day event is stored as midnight in Norway", async ({ page }) => {
+    const { writes, errors } = await openPortal(page);
+    await page.getByRole("link", { name: "Kalender", exact: true }).click();
+    await page.getByRole("button", { name: "+ Ny hendelse" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny hendelse" }) });
+    await dialog.getByLabel("Tittel").fill("Visning");
+    await dialog.getByLabel("Dato").fill("2026-11-15");
+    await dialog.getByRole("button", { name: /Hele dagen/ }).click();
+    await dialog.getByRole("option", { name: "Ja", exact: true }).click();
+    await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
+    await expect.poll(() => writes.find((entry) => entry.path.includes("create_calendar_item"))).toBeTruthy();
+    const saved = writes.find((entry) => entry.path.includes("create_calendar_item"));
+    expect(saved.body.requested_starts_at).toBe("2026-11-14T23:00:00Z");
+    expect(saved.body.requested_all_day).toBe(true);
+    expect(errors).toEqual([]);
   });
 
   test("premium gate when the account has no entitlement", async ({ page }) => {

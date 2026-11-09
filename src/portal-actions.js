@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { osloWallToUtcIso } from "./oslo-time.js";
 import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
 import { historyRowForEndedManual, manualOccupantsFor, mergeTenancyHistory } from "./tenancy-listing.js";
 
@@ -19,7 +20,7 @@ export const explain = (error) => {
   if (/jwt|auth|401/i.test(msg)) return "Økten er utløpt. Logg inn på nytt.";
   if (/permission|not_authorized|unauthorized|42501|403/i.test(msg)) return "Du har ikke tilgang til å gjøre dette.";
   if (/conflict|stale|expected_updated_at|revision/i.test(msg)) return "Noen har endret dette i mellomtiden. Last siden på nytt og prøv igjen.";
-  return msg ? `Det gikk ikke: ${msg}` : "Det gikk ikke. Prøv igjen om litt.";
+  return "Det gikk ikke. Prøv igjen om litt.";
 };
 
 export const minorOf = (text) => {
@@ -1114,7 +1115,11 @@ export const CALENDAR_CATEGORIES = [
   ["other", "Annet"], ["maintenance", "Vedlikehold"], ["inspection", "Befaring"],
   ["tenancy", "Leieforhold"], ["payment", "Betaling"], ["document", "Dokument"],
 ];
-const iso = (local) => new Date(local).toISOString().replace(/\.\d{3}Z$/, "Z");
+// Calendar fields are Norway wall time, including an all-day event at 00:00.
+const iso = (local) => {
+  const [date, time = "00:00"] = String(local).split("T");
+  return osloWallToUtcIso(date.slice(0, 10), (time.slice(0, 5) || "00:00"));
+};
 const calendarFields = (v) => {
   const when = v.allDay === "true" ? `${v.date}T00:00` : `${v.date}T${v.time || "09:00"}`;
   return {
@@ -1601,7 +1606,7 @@ export const scheduleMaintenanceVisit = (request, startsAt) =>
   });
 // Reschedule keeps the item and its duration; the server resets the tenant's answer.
 export function rescheduleMaintenanceVisit(item, startsAt) {
-  const start = new Date(startsAt);
+  const start = new Date(iso(startsAt));
   const ends = item.ends_at && item.starts_at ? new Date(start.getTime() + (new Date(item.ends_at) - new Date(item.starts_at))) : null;
   return supabase.rpc("update_calendar_item", {
     requested_calendar_item_id: item.id, requested_title: item.title, requested_description: item.description,

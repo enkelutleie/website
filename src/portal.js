@@ -9,6 +9,7 @@ import * as privacy from "./portal-privacy.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
 import { createFinnImport } from "./portal-finn.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
+import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
 // and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
@@ -85,8 +86,13 @@ const money = (minor) =>
     .format(Number(minor) / 100).replace("NOK", "").trim() + " kr";
 const dateText = (value) => {
   if (!value) return "";
-  const d = new Date(value.includes("T") ? value : `${value}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("nb-NO", { day: "numeric", month: "short", year: "numeric" });
+  if (!String(value).includes("T")) {
+    const [y, m, d] = String(value).slice(0, 10).split("-").map(Number);
+    if (!y || !m || !d) return "";
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("nb-NO", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" });
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("nb-NO", { timeZone: "Europe/Oslo", day: "numeric", month: "short", year: "numeric" });
 };
 const addressOf = (p) => ({
   line: [p.address_line1, p.address_line2].filter(Boolean).join(", ") || "Bolig uten adresse",
@@ -139,7 +145,7 @@ const responseBox = (cls, title, body) => {
 /* ---------- data (read-only) ---------- */
 const transactions = (pid) =>
   cached(`tx:${pid}`, async () => {
-    const yearStart = `${new Date().getFullYear()}-01-01`;
+    const yearStart = `${osloYear()}-01-01`;
     return supabase.from("financial_transactions")
       .select("id, transaction_type, category, legacy_category, amount_minor, transaction_date, description, counterparty, maintenance_request_id, updated_at")
       // As in the app (#1468): future-dated posts (e.g. a recurring series) are not shown yet.
@@ -248,7 +254,7 @@ const kpis = async (pid) => {
   // FinancialSummary.totals: financing costs are not part of the result.
   const sum = (type) => (rows ?? []).filter((r) => r.transaction_type === type && r.category !== "financing_costs").reduce((a, r) => a + Number(r.amount_minor), 0);
   const has = rows && rows.length > 0;
-  const note = res.error ? "Kunne ikke hentes" : has ? `Hittil i ${new Date().getFullYear()}` : "Ingen poster ennå";
+  const note = res.error ? "Kunne ikke hentes" : has ? `Hittil i ${osloYear()}` : "Ingen poster ennå";
   const income = sum("income");
   const expense = sum("expense");
   const tiles = [
@@ -280,7 +286,7 @@ const calendarShowsCase = (item, manager) => {
   return manager;
 };
 
-const calendarTime = (value) => new Date(value).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+const calendarTime = (value) => new Date(value).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Oslo" });
 const CALENDAR_STATUS = { active: "Aktiv", completed: "Fullført", cancelled: "Kansellert" };
 
 // #kalender/<id>[/<sak-id>]: one calendar item (CalendarView detail). A maintenance date
@@ -539,15 +545,27 @@ const calendarCard = async (pid, full = false) => {
     .filter((i) => i.status !== "cancelled")
     .map((i) => (answers.get(i.id) && answers.get(i.id) !== i.tenant_response ? { ...i, tenant_response: answers.get(i.id) } : i));
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (!calendarView) calendarView = { y: now.getFullYear(), m: now.getMonth() };
-  const itemYears = items.map((i) => calendarItemDate(i).getFullYear()).filter((y) => Number.isFinite(y));
-  const minYear = Math.min(now.getFullYear() - CALENDAR_YEAR_SPAN, ...itemYears);
-  const maxYear = Math.max(now.getFullYear() + CALENDAR_YEAR_SPAN, ...itemYears);
+  const here = osloParts(now);
+  const today = new Date(osloWallToUtcIso(here.date, "00:00"));
+  if (!calendarView) calendarView = { y: here.year, m: here.month - 1 };
+  const itemOslo = (i) => {
+    const d = calendarItemDate(i);
+    return Number.isNaN(d.getTime()) ? null : osloParts(d);
+  };
+  const itemYears = items.map((i) => itemOslo(i)?.year).filter((y) => Number.isFinite(y));
+  const minYear = Math.min(here.year - CALENDAR_YEAR_SPAN, ...itemYears);
+  const maxYear = Math.max(here.year + CALENDAR_YEAR_SPAN, ...itemYears);
   const years = [];
   for (let y = minYear; y <= maxYear; y++) years.push(y);
   const ctx = { now, hasTenant, manager };
-  const sameDay = (d, y, m, day) => d.getFullYear() === y && d.getMonth() === m && d.getDate() === day;
+  const sameDay = (i, y, m, day) => {
+    const p = itemOslo(i);
+    return !!p && p.year === y && p.month - 1 === m && p.day === day;
+  };
+  const shiftMonth = (y, m, delta) => {
+    const d = new Date(Date.UTC(y, m + delta, 1));
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() };
+  };
   let selected = null; // { y, m, d } after a day is tapped
   let showAll = false;
 
@@ -560,12 +578,12 @@ const calendarCard = async (pid, full = false) => {
     b.setAttribute("aria-label", label);
     b.title = label;
     b.append(icon("chevron", "pt-cal-nav-icon"));
-    const target = new Date(calendarView.y, calendarView.m + delta, 1).getFullYear();
-    b.disabled = target < minYear || target > maxYear;
+    const target = shiftMonth(calendarView.y, calendarView.m, delta);
+    b.disabled = target.y < minYear || target.y > maxYear;
     b.addEventListener("click", () => {
-      const d = new Date(calendarView.y, calendarView.m + delta, 1);
-      if (d.getFullYear() < minYear || d.getFullYear() > maxYear) return;
-      calendarView = { y: d.getFullYear(), m: d.getMonth() };
+      const next = shiftMonth(calendarView.y, calendarView.m, delta);
+      if (next.y < minYear || next.y > maxYear) return;
+      calendarView = next;
       draw(`.${cls}`);
     });
     return b;
@@ -574,9 +592,9 @@ const calendarCard = async (pid, full = false) => {
   const drawDay = () => {
     if (!selected) { dayBox.replaceChildren(); return; }
     const { y, m, d } = selected;
-    const dayItems = items.filter((i) => sameDay(calendarItemDate(i), y, m, d))
+    const dayItems = items.filter((i) => sameDay(i, y, m, d))
       .sort((a, b) => calendarItemDate(a) - calendarItemDate(b));
-    const title = new Date(y, m, d).toLocaleDateString("nb-NO", { weekday: "long", day: "numeric", month: "long" });
+    const title = new Date(Date.UTC(y, m, d)).toLocaleDateString("nb-NO", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long" });
     const head = h("p", "pt-cal-section-title", title);
     if (!dayItems.length) { dayBox.replaceChildren(head, inline("Ingen hendelser denne dagen.")); return; }
     const list = h("ul", "pt-cal-items");
@@ -586,15 +604,15 @@ const calendarCard = async (pid, full = false) => {
 
   const draw = (focusSel) => {
     const { y, m } = calendarView;
-    const isNow = y === now.getFullYear() && m === now.getMonth();
+    const isNow = y === here.year && m === here.month - 1;
     const eventDays = new Set(items
-      .filter((i) => { const d = calendarItemDate(i); return d.getFullYear() === y && d.getMonth() === m; })
-      .map((i) => calendarItemDate(i).getDate()));
+      .filter((i) => { const p = itemOslo(i); return p && p.year === y && p.month - 1 === m; })
+      .map((i) => itemOslo(i).day));
 
     // CalendarView.monthHeader (iOS): ‹  november 2026  ›, the year opens the year list.
     const head = h("div", "pt-cal-head");
     const center = h("div", "pt-cal-center");
-    const label = h("span", "pt-cal-title", new Date(y, m, 1).toLocaleDateString("nb-NO", { month: "long" }));
+    const label = h("span", "pt-cal-title", new Date(Date.UTC(y, m, 1)).toLocaleDateString("nb-NO", { timeZone: "UTC", month: "long" }));
     label.setAttribute("aria-live", "polite");
     const picker = calendarYearPicker(y, years, (year) => {
       calendarView = { y: year, m };
@@ -605,7 +623,7 @@ const calendarCard = async (pid, full = false) => {
       const todayBtn = h("button", "pt-cal-today", "I dag");
       todayBtn.type = "button";
       todayBtn.addEventListener("click", () => {
-        calendarView = { y: now.getFullYear(), m: now.getMonth() };
+        calendarView = { y: here.year, m: here.month - 1 };
         selected = null;
         drawDay();
         draw(".pt-cal-next");
@@ -616,16 +634,16 @@ const calendarCard = async (pid, full = false) => {
 
     const grid = h("div", "pt-cal");
     ["Ma", "Ti", "On", "To", "Fr", "Lø", "Sø"].forEach((d) => grid.append(h("span", "pt-cal-dow", d)));
-    const offset = (new Date(y, m, 1).getDay() + 6) % 7;
+    const offset = (new Date(Date.UTC(y, m, 1)).getUTCDay() + 6) % 7;
     for (let i = 0; i < offset; i++) grid.append(h("span"));
-    const days = new Date(y, m + 1, 0).getDate();
+    const days = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
     for (let d = 1; d <= days; d++) {
-      const isToday = isNow && d === now.getDate();
+      const isToday = isNow && d === here.day;
       const isSel = selected && selected.y === y && selected.m === m && selected.d === d;
       const b = h("button", `pt-cal-day${isToday ? " is-today" : ""}${isSel ? " is-selected" : ""}${eventDays.has(d) ? " has-event" : ""}`);
       b.type = "button";
       b.append(h("span", "pt-cal-day-num", String(d)), h("span", "pt-cal-dot"));
-      const long = new Date(y, m, d).toLocaleDateString("nb-NO", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+      const long = new Date(Date.UTC(y, m, d)).toLocaleDateString("nb-NO", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric" });
       b.setAttribute("aria-label", `${long}${isToday ? ", i dag" : ""}${eventDays.has(d) ? ", har hendelser" : ""}`);
       b.setAttribute("aria-pressed", isSel ? "true" : "false");
       b.addEventListener("click", () => {
@@ -878,10 +896,7 @@ const refresh = async (message) => {
   await load(session, true);
   if (message) act.toast(message);
 };
-const todayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
+const todayISO = () => osloTodayISO();
 const rpcError = (res) => (res?.error ? act.explain(res.error) : null);
 
 /* ---------- forms ---------- */
@@ -925,7 +940,10 @@ const transactionForm = (pid, type, row) => {
       }
       if (row) return;
       if (inputs.category.value === "rent" && !inputs.repeats.dataset.touched) inputs.repeats.value = "yes";
-      inputs.repeats.addEventListener("change", () => { inputs.repeats.dataset.touched = "1"; }, { once: true });
+      if (!inputs.repeats.dataset.bound) {
+        inputs.repeats.dataset.bound = "1";
+        inputs.repeats.addEventListener("change", () => { inputs.repeats.dataset.touched = "1"; });
+      }
       show("recurrence", inputs.repeats.value === "yes");
       const caption = inputs.recurrence.closest(".pt-field").querySelector(".pt-field-help");
       if (caption) caption.textContent = recurrenceCaption(inputs.recurrence.value, inputs.date.value);
@@ -1253,16 +1271,25 @@ const pdfButton = (label, cls, load) => button(label, cls, async (e) => {
   const tab = window.open("", "_blank");
   b.disabled = true;
   b.textContent = "Henter PDF …";
-  const pdf = await load();
-  b.disabled = false;
-  b.textContent = label;
-  if (!pdf.url) {
+  try {
+    const pdf = await load();
+    if (!pdf?.url) {
+      tab?.close();
+      act.toast(pdf?.message || "PDF-en kunne ikke åpnes.");
+      return;
+    }
+    if (tab) tab.location.href = pdf.url;
+    else act.toast("Tillat nye faner for å åpne kontrakten.");
+    setTimeout(() => URL.revokeObjectURL(pdf.url), 300_000);
+  } catch {
     tab?.close();
-    return act.toast(pdf.message);
+    act.toast("PDF-en kunne ikke åpnes. Prøv igjen.");
+  } finally {
+    if (b.isConnected) {
+      b.disabled = false;
+      b.textContent = label;
+    }
   }
-  if (tab) tab.location.href = pdf.url;
-  else act.toast("Tillat nye faner for å åpne kontrakten.");
-  setTimeout(() => URL.revokeObjectURL(pdf.url), 300_000);
 });
 
 const PARTY_ROLE = { landlord: "Utleier", co_landlord: "Utleier", tenant: "Leietaker", guarantor: "Garantist" };
@@ -1515,11 +1542,8 @@ const contractForm = (pid, detail) => {
 
 const localParts = (value) => {
   if (!value) return { date: todayISO(), time: "09:00" };
-  const d = new Date(value);
-  return {
-    date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-    time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
-  };
+  const p = osloParts(new Date(value));
+  return { date: p.date, time: p.time };
 };
 // CalendarView's Hendelse sheet. New items are events (the app has no type choice when
 // creating); editing keeps the item's own type and the planned duration. «Merk som
@@ -1776,13 +1800,12 @@ const noProperty = () => (state.properties.length
 /* ---------- Meldinger (ChatView / ChatController) ---------- */
 const chatTime = (iso) => {
   const d = new Date(iso);
-  const today = new Date();
-  const time = d.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === today.toDateString()) return time;
-  const y = new Date(today);
-  y.setDate(today.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return `I går ${time}`;
-  return `${d.toLocaleDateString("nb-NO", { day: "numeric", month: "short" })} ${time}`;
+  const time = d.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Oslo" });
+  const day = osloParts(d).date;
+  if (day === osloTodayISO()) return time;
+  const yesterday = osloParts(new Date(new Date(osloWallToUtcIso(osloTodayISO(), "00:00")).getTime() - 60_000)).date;
+  if (day === yesterday) return `I går ${time}`;
+  return `${d.toLocaleDateString("nb-NO", { day: "numeric", month: "short", timeZone: "Europe/Oslo" })} ${time}`;
 };
 const joinNames = (people) => {
   const names = people.map((p) => p.display_name?.trim() || p.email?.trim()).filter(Boolean);
@@ -2103,7 +2126,7 @@ const mtEventTitle = (e) => {
   return MT_EVENT_TITLES[e.event_type] ?? "Hendelse";
 };
 const mtStatusChip = (r) => h("span", `pt-chip ${r.status === "resolved" ? "pt-chip-resolved" : "is-info"}`, act.MAINTENANCE_STATUS[r.status] ?? r.status);
-const mtTime = (v) => new Date(v).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+const mtTime = (v) => new Date(v).toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Oslo" });
 const mtDateTime = (v) => `${dateText(v)} kl. ${mtTime(v)}`;
 const mtActiveTenancies = (pid) => state.tenancies.filter((t) => t.property_id === pid && t.status === "active");
 const mtSortEvents = (events) => events.sort((a, b) => (a.created_at === b.created_at ? (a.id < b.id ? -1 : 1) : new Date(a.created_at) - new Date(b.created_at)));
@@ -2254,7 +2277,7 @@ const tenancyHistoryList = async (pid) => {
   if (!res.data.length) return [emptyPage("history", "Leiehistorikk", "Ingen tidligere leieforhold ennå.")];
   const list = h("ul", "pt-list");
   list.append(...res.data.map((e) => {
-    const open = h("a", "pt-btn-secondary pt-btn-small", "Åpne");
+    const open = h("a", "pt-btn pt-btn-secondary pt-btn-small", "Åpne");
     open.href = `#historikk/${e.tenancy_id}`;
     return historyRow(historyContact(e), [open]);
   }));
@@ -3765,7 +3788,7 @@ const reportTable = (columns, rows, sum) => {
 
 const annualPage = async (pid) => {
   const p = property();
-  const thisYear = new Date().getFullYear();
+  const thisYear = osloYear();
   const year = annualState.year ?? annual.defaultYear();
   const back = h("a", "pt-back", "‹ Økonomi");
   back.href = "#okonomi";
@@ -3899,7 +3922,7 @@ const mileageForm = (pid, trip) => {
 };
 
 const mileagePage = async (pid) => {
-  const thisYear = new Date().getFullYear();
+  const thisYear = osloYear();
   const year = mileageState.year ?? thisYear;
   const back = h("a", "pt-back", "‹ Økonomi");
   back.href = "#okonomi";
@@ -4201,7 +4224,7 @@ const assetRow = (item, row, alloc, data, showProperty) => {
 };
 
 const assetsPage = async (pid) => {
-  const thisYear = new Date().getFullYear();
+  const thisYear = osloYear();
   const year = assetState.year ?? thisYear;
   const back = h("a", "pt-back", "‹ Økonomi");
   back.href = "#okonomi";
@@ -5218,7 +5241,13 @@ const render = async () => {
   let [id, sub, extra] = location.hash.slice(1).split("/");
   if (id === "overtakelse") id = "inn-utflytting";
   let item = activeItem(items, id, sub);
-  if (!item) { id = "oversikt"; sub = undefined; extra = undefined; item = activeItem(items, id); }
+  if (!item) {
+    id = "oversikt";
+    sub = undefined;
+    extra = undefined;
+    item = activeItem(items, id);
+    if (location.hash !== "#oversikt") history.replaceState(null, "", `${location.pathname}${location.search}#oversikt`);
+  }
   renderNav(routeOf(item));
   root.querySelector("[data-page-title]").textContent = item.label;
   const role = property() ? roleOf(state.propertyId) : null;
@@ -5237,6 +5266,7 @@ const render = async () => {
 
 const selectProperty = (id, rerender = true) => {
   state.propertyId = id;
+  state.receiptFilter = "all";
   try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
   renderSelect();
   if (rerender) render();
@@ -5388,6 +5418,8 @@ const renderSelect = () => {
 };
 
 const logOut = async () => {
+  state.receiptFilter = "all";
+  try { sessionStorage.removeItem("pt-property"); } catch { /* ignore */ }
   try { await signOut(); } finally { toLogin(); }
 };
 
