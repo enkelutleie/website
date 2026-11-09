@@ -99,7 +99,72 @@ test("portal pages reuse the session and realtime bursts reload once", async ({ 
     await page.goto("/portal/#inn-utflytting");
     await settle(page, "Inn- og utflytting");
   });
+  const innflytting = await take(async () => {
+    await page.goto("/portal/#inn-utflytting/innflytting");
+    await settle(page, "Inn- og utflytting");
+  });
+  const utflytting = await take(async () => {
+    await page.goto("/portal/#inn-utflytting/utflytting");
+    await settle(page, "Inn- og utflytting");
+  });
+  const depositum = await take(async () => {
+    await page.goto("/portal/#inn-utflytting/depositum");
+    await settle(page, "Inn- og utflytting");
+  });
+  const handoverAgain = await take(async () => {
+    await page.goto("/portal/#inn-utflytting");
+    await settle(page, "Inn- og utflytting");
+  });
+  const historikk = await take(async () => {
+    await page.goto("/portal/#historikk");
+    await settle(page, "Leiehistorikk");
+  });
+  const historikkAgain = await take(async () => {
+    await page.goto("/portal/#oversikt");
+    await settle(page, "Oversikt");
+    await page.goto("/portal/#historikk");
+    await settle(page, "Leiehistorikk");
+  });
+  const dokumenter = await take(async () => {
+    await page.goto("/portal/#dokumenter");
+    await settle(page, "Dokumenter og maler");
+  });
+  const dokumenterAgain = await take(async () => {
+    await page.goto("/portal/#oversikt");
+    await settle(page, "Oversikt");
+    await page.goto("/portal/#dokumenter");
+    await settle(page, "Dokumenter og maler");
+  });
+  const vedlikehold = await take(async () => {
+    await page.goto("/portal/#vedlikehold");
+    await settle(page, "Vedlikehold");
+  });
+  const vedlikeholdAgain = await take(async () => {
+    await page.goto("/portal/#oversikt");
+    await settle(page, "Oversikt");
+    await page.goto("/portal/#vedlikehold");
+    await settle(page, "Vedlikehold");
+  });
+  const bilder = await take(async () => {
+    await page.goto("/portal/#bilder");
+    await settle(page, "Boligbilder");
+  });
+  const boligperm = await take(async () => {
+    await page.goto("/portal/#boligperm");
+    await settle(page, "Boligperm");
+  });
+  const arsoppgave = await take(async () => {
+    await page.goto("/portal/#okonomi/arsoppgave");
+    await settle(page, "Økonomi");
+  });
+  const kontraktAgain = await take(async () => {
+    await page.goto("/portal/#leiekontrakt");
+    await settle(page, "Leiekontrakt");
+  });
   const inspectionSelect = handover.find((row) => keyOf(row) === "GET inspections")?.select;
+  const notificationScopes = [...oversikt, ...varsler, ...bellBurst]
+    .filter((row) => keyOf(row) === "POST rpc/list_my_notifications")
+    .map((row) => row.scope ?? null);
 
   console.log(`LOAD_COUNTS ${JSON.stringify({
     Oversikt: { total: oversikt.length, counts: tally(oversikt) },
@@ -112,6 +177,22 @@ test("portal pages reuse the session and realtime bursts reload once", async ({ 
     again: { total: again.length, counts: tally(again) },
     bellBurst: tally(bellBurst),
     chatBurst: tally(chatBurst),
+    Handover: { total: handover.length, counts: tally(handover) },
+    Innflytting: { total: innflytting.length, counts: tally(innflytting) },
+    Utflytting: { total: utflytting.length, counts: tally(utflytting) },
+    Depositum: { total: depositum.length, counts: tally(depositum) },
+    HandoverAgain: { total: handoverAgain.length, counts: tally(handoverAgain) },
+    Historikk: { total: historikk.length, counts: tally(historikk) },
+    HistorikkAgain: { total: historikkAgain.length, counts: tally(historikkAgain) },
+    Dokumenter: { total: dokumenter.length, counts: tally(dokumenter) },
+    DokumenterAgain: { total: dokumenterAgain.length, counts: tally(dokumenterAgain) },
+    Vedlikehold: { total: vedlikehold.length, counts: tally(vedlikehold) },
+    VedlikeholdAgain: { total: vedlikeholdAgain.length, counts: tally(vedlikeholdAgain) },
+    Bilder: { total: bilder.length, counts: tally(bilder) },
+    Boligperm: { total: boligperm.length, counts: tally(boligperm) },
+    Arsoppgave: { total: arsoppgave.length, counts: tally(arsoppgave) },
+    KontraktAgain: { total: kontraktAgain.length, counts: tally(kontraktAgain) },
+    notificationScopes,
     inspectionSelect,
   })}`);
 
@@ -130,10 +211,26 @@ test("portal pages reuse the session and realtime bursts reload once", async ({ 
   expect(oversikt).toHaveLength(17);
   expect(bolig).toHaveLength(5);
   expect(kontrakt).toHaveLength(1);
-  expect(meldinger).toHaveLength(7);
+  expect(meldinger).toHaveLength(5);
   expect(kalender).toHaveLength(0);
   expect(okonomi).toHaveLength(1);
   expect(varsler).toHaveLength(1);
+  expect(handover).toHaveLength(3);
+  expect(innflytting).toHaveLength(0);
+  expect(utflytting).toHaveLength(0);
+  expect(depositum).toHaveLength(0);
+  expect(handoverAgain).toHaveLength(0);
+  expect(historikk).toHaveLength(2);
+  expect(historikkAgain).toHaveLength(0);
+  expect(dokumenter).toHaveLength(2);
+  expect(dokumenterAgain).toHaveLength(0);
+  expect(vedlikehold).toHaveLength(1);
+  expect(vedlikeholdAgain).toHaveLength(0);
+  expect(arsoppgave).toHaveLength(9);
+  expect(kontraktAgain).toHaveLength(0);
+  expect(notificationScopes.every((scope) => scope === "manager")).toBe(true);
+  expect(notificationScopes).not.toContain("tenant");
+  expect(requests.some((row) => keyOf(row) === "POST rpc/clear_inspection_review_done")).toBe(false);
   // Oversikt and Bolig again add nothing. Meldinger again keeps the live inbox reads only.
   expect(again).toHaveLength(4);
   expect(count(detail, "POST rpc/list_calendar_items_for_property")).toBe(0);

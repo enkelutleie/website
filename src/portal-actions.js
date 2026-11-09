@@ -3,6 +3,69 @@ import { osloWallToUtcIso } from "./oslo-time.js";
 import { collectPages } from "./paged.js";
 import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
 import { historyRowForEndedManual, manualOccupantsFor, mergeTenancyHistory } from "./tenancy-listing.js";
+import {
+  createKeyedGate,
+  createLatestCoalescer,
+  createOccupantCache,
+  createReadCache,
+  mapWithLimit,
+  shouldClearInspectionReviewDone,
+} from "./portal-cache.js";
+
+// One in-memory copy of the reads the property and tenancy cards share.
+// Invalidated after the user's own changes (invalidatePortalReads), never on a timer.
+const reads = createReadCache();
+const occupants = createOccupantCache();
+const collectionUploads = createKeyedGate(2);
+const clearedReviews = new Set();
+export { mapWithLimit, shouldClearInspectionReviewDone };
+export const rememberOccupants = (rows) => occupants.rememberAll(rows ?? []);
+export function invalidatePortalReads() {
+  reads.invalidate(null);
+  occupants.invalidate();
+  clearedReviews.clear();
+}
+
+const MEMBER_COLUMNS = "tenancy_id, user_id, role, invitation_status, valid_until";
+const PROFILE_COLUMNS = "first_name, display_name, phone_number, tax_residence_tiltakssone";
+const UNIT_COLUMNS = "id, property_id, kind, display_label, operational_status";
+
+const sortedIds = (ids) => [...new Set(ids)].filter(Boolean).sort();
+function coveringRows(prefix, ids, field) {
+  const want = new Set(ids);
+  const hit = reads.find(prefix).find(({ key }) => {
+    const have = key.slice(prefix.length).split(",").filter(Boolean);
+    return [...want].every((id) => have.includes(id));
+  });
+  if (!hit) return null;
+  return hit.promise.then((res) => (
+    res?.error ? res : { data: (res.data ?? []).filter((row) => want.has(row[field])) }
+  ));
+}
+
+// Tenancy members for these tenancies, shared by the tenancy card, chat and contracts.
+export function tenancyMemberRows(tenancyIds) {
+  const ids = sortedIds(tenancyIds);
+  if (!ids.length) return Promise.resolve({ data: [] });
+  return coveringRows("members:", ids, "tenancy_id") ?? reads.read(`members:${ids.join(",")}`, () =>
+    supabase.from("tenancy_members").select(MEMBER_COLUMNS).in("tenancy_id", ids));
+}
+
+// The signed-in profile, once per session. National identity numbers are never selected.
+export function ownProfile(userId) {
+  return reads.read(`profile:${userId}`, () =>
+    supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", userId).maybeSingle());
+}
+
+export function propertyUnitRows(propertyId) {
+  return reads.read(`units:${propertyId}`, () =>
+    supabase.from("property_units").select(UNIT_COLUMNS).eq("property_id", propertyId));
+}
+
+export function imageCollections(propertyId) {
+  return reads.read(`collections:${propertyId}`, () =>
+    supabase.from("image_collections").select("id, kind, status").eq("property_id", propertyId).order("created_at", { ascending: true }));
+}
 
 // Write actions for the portal. Every call mirrors the iOS app (same RPCs,
 // edge functions, tables, buckets and enum values) and runs with the user's own
@@ -610,28 +673,35 @@ const imageLifecycle = async (body) => {
   return data;
 };
 
-export async function uploadPropertyPhoto(propertyId, userId, file) {
-  const jpeg = await toJpeg(file);
-  if (jpeg.size > 12_000_000) return "Velg et bilde på maksimalt 12 MB.";
-  let { data: collections, error } = await supabase.from("image_collections")
-    .select("id, kind, status").eq("property_id", propertyId).order("created_at", { ascending: true });
-  if (error) return explain(error);
-  let gallery = (collections ?? []).find((c) => c.kind === "general" && c.status === "active");
-  if (!gallery) {
+const galleryCreates = new Map();
+async function ensureGalleryCollection(propertyId, userId) {
+  const running = galleryCreates.get(propertyId);
+  if (running) return running;
+  const pending = (async () => {
+    const loaded = await imageCollections(propertyId);
+    if (loaded.error) return explain(loaded.error);
+    const active = (rows) => (rows ?? []).find((c) => c.kind === "general" && c.status === "active");
+    let gallery = active(loaded.data);
+    if (gallery) return gallery;
     // Insert without RETURNING, then read back, as the app does (ImageController.ensureGalleryCollection).
     // insert().select() is rejected by RLS on the returned row (42501) even though the insert is allowed.
     const created = await supabase.from("image_collections").insert({
       property_id: propertyId, tenancy_id: null, kind: "general", title: "Boligbilder", created_by: userId,
     });
     if (created.error) return explain(created.error);
-    const reread = await supabase.from("image_collections")
-      .select("id, kind, status").eq("property_id", propertyId).order("created_at", { ascending: true });
+    reads.invalidate(`collections:${propertyId}`);
+    const reread = await imageCollections(propertyId);
     if (reread.error) return explain(reread.error);
-    gallery = (reread.data ?? []).find((c) => c.kind === "general" && c.status === "active");
-    if (!gallery) return "Bildealbumet kunne ikke opprettes. Prøv igjen.";
-  }
+    gallery = active(reread.data);
+    return gallery || "Bildealbumet kunne ikke opprettes. Prøv igjen.";
+  })().finally(() => galleryCreates.delete(propertyId));
+  galleryCreates.set(propertyId, pending);
+  return pending;
+}
+
+async function storePropertyPhoto(propertyId, galleryId, jpeg) {
   const reservation = await imageLifecycle({
-    action: "reserve", property_id: propertyId, collection_id: gallery.id,
+    action: "reserve", property_id: propertyId, collection_id: galleryId,
     reservation_key: crypto.randomUUID(), caption: null,
   });
   if (reservation?.outcome === "already_ready") return null;
@@ -646,14 +716,23 @@ export async function uploadPropertyPhoto(propertyId, userId, file) {
   return fin?.outcome && !/fail|error|invalid/i.test(fin.outcome) ? null : "Bildet ble lastet opp, men kunne ikke ferdigstilles. Prøv igjen.";
 }
 
+export async function uploadPropertyPhoto(propertyId, userId, file) {
+  const jpeg = await toJpeg(file);
+  if (jpeg.size > 12_000_000) return "Velg et bilde på maksimalt 12 MB.";
+  const gallery = await ensureGalleryCollection(propertyId, userId);
+  if (typeof gallery === "string") return gallery;
+  // Same album: at most two uploads in flight. Other albums have their own queue.
+  return collectionUploads(gallery.id, () => storePropertyPhoto(propertyId, gallery.id, jpeg));
+}
+
 // ImageController.galleryImages: ready images in the active "general" collections, oldest first.
 // The first one is the hero photo on the property card.
 export const GALLERY_LIMIT = 12; // PropertyCoverPhotoStore.maximumPhotoCount
 export async function galleryImages(propertyId) {
   const [cols, imgs] = await Promise.all([
-    supabase.from("image_collections").select("id, kind, status").eq("property_id", propertyId),
-    supabase.from("property_images").select("id, collection_id, storage_path, status, created_at")
-      .eq("property_id", propertyId).eq("status", "ready").order("created_at", { ascending: true }),
+    imageCollections(propertyId),
+    reads.read(`ready-images:${propertyId}`, () => supabase.from("property_images").select("id, collection_id, storage_path, status, created_at")
+      .eq("property_id", propertyId).eq("status", "ready").order("created_at", { ascending: true })),
   ]);
   if (cols.error || imgs.error) return { error: cols.error ?? imgs.error };
   const general = new Set((cols.data ?? []).filter((c) => c.kind === "general" && c.status === "active").map((c) => c.id));
@@ -711,10 +790,18 @@ export async function inviteToExisting(tenancyId, email) {
 }
 
 // TenancyInvitationUnitPicker: active rooms, each marked when it already has a tenancy.
-export async function invitableRooms(propertyId) {
+async function tenancyOccupancy(propertyId, knownTenancies) {
+  if (knownTenancies) {
+    return { data: knownTenancies.filter((t) => t.property_id === propertyId && ["draft", "invited", "active"].includes(t.status) && !t.archived_at) };
+  }
+  return reads.read(`tenancy-units:${propertyId}`, () =>
+    supabase.from("tenancies").select("unit_id, status, property_id").eq("property_id", propertyId).in("status", ["draft", "invited", "active"]).is("archived_at", null));
+}
+
+export async function invitableRooms(propertyId, knownTenancies = null) {
   const [units, tenancies] = await Promise.all([
-    supabase.from("property_units").select("id, property_id, kind, display_label, operational_status").eq("property_id", propertyId),
-    supabase.from("tenancies").select("unit_id, status").eq("property_id", propertyId).in("status", ["draft", "invited", "active"]).is("archived_at", null),
+    propertyUnitRows(propertyId),
+    tenancyOccupancy(propertyId, knownTenancies),
   ]);
   if (units.error || tenancies.error) return { error: units.error ?? tenancies.error };
   const blocked = new Map();
@@ -742,10 +829,10 @@ const roomMsg = (error, map, fallback) => {
 const ROOM_DUPLICATE = "Det finnes allerede et rom med dette navnet.";
 const ROOM_INVALID = "Skriv inn et gyldig navn på rommet.";
 
-export async function propertyRooms(propertyId) {
+export async function propertyRooms(propertyId, knownTenancies = null) {
   const [units, tenancies] = await Promise.all([
-    supabase.from("property_units").select("id, property_id, kind, display_label, operational_status").eq("property_id", propertyId),
-    supabase.from("tenancies").select("unit_id, status").eq("property_id", propertyId).in("status", ["draft", "invited", "active"]).is("archived_at", null),
+    propertyUnitRows(propertyId),
+    tenancyOccupancy(propertyId, knownTenancies),
   ]);
   if (units.error || tenancies.error) return { error: units.error ?? tenancies.error };
   const occupied = new Map();
@@ -827,16 +914,27 @@ export const parseRoomCount = (text) => {
 };
 
 /* ---------- Navn (list_linked_profile_contacts, samme RPC som iOS) ---------- */
+export function linkedContactRows(userIds) {
+  const ids = sortedIds(userIds);
+  if (!ids.length) return Promise.resolve({ data: [] });
+  return coveringRows("contacts:", ids, "user_id") ?? reads.read(`contacts:${ids.join(",")}`, async () => {
+    const rows = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await supabase.rpc("list_linked_profile_contacts", { requested_user_ids: ids.slice(i, i + 100) });
+      if (error) return { error };
+      rows.push(...(data ?? []));
+    }
+    return { data: rows };
+  });
+}
+
 export async function linkedContactNames(userIds) {
   const names = new Map();
-  const ids = [...new Set(userIds)].filter(Boolean);
-  for (let i = 0; i < ids.length; i += 100) {
-    const { data, error } = await supabase.rpc("list_linked_profile_contacts", { requested_user_ids: ids.slice(i, i + 100) });
-    if (error) break;
-    for (const c of data ?? []) {
-      const name = c.display_name?.trim() || c.email?.trim() || null;
-      if (name) names.set(c.user_id, name);
-    }
+  const res = await linkedContactRows(userIds);
+  if (res.error) return names;
+  for (const c of res.data ?? []) {
+    const name = c.display_name?.trim() || c.email?.trim() || null;
+    if (name) names.set(c.user_id, name);
   }
   return names;
 }
@@ -847,12 +945,13 @@ export const listAgreements = (propertyId) =>
 
 export async function createAgreementDraft(tenancy, v) {
   const [tm, pm] = await Promise.all([
-    supabase.from("tenancy_members").select("user_id, role").eq("tenancy_id", tenancy.id).is("valid_until", null),
-    supabase.from("property_members").select("user_id, role").eq("property_id", tenancy.property_id).is("valid_until", null),
+    tenancyMemberRows([tenancy.id]),
+    reads.read(`property-members:${tenancy.property_id}`, () =>
+      supabase.from("property_members").select("user_id, role").eq("property_id", tenancy.property_id).is("valid_until", null)),
   ]);
   if (tm.error || pm.error) return { error: tm.error || pm.error };
   const landlords = (pm.data ?? []).filter((m) => m.role === "owner" || m.role === "co_landlord").map((m) => m.user_id);
-  const tenants = (tm.data ?? []).filter((m) => m.role === "tenant").map((m) => m.user_id);
+  const tenants = (tm.data ?? []).filter((m) => m.role === "tenant" && !m.valid_until).map((m) => m.user_id);
   if (!tenants.length) return { message: "Leietakeren må ha godtatt invitasjonen før kontrakten kan lages." };
   const parties = [];
   for (const id of landlords) parties.push({ user_id: id, party_role: "landlord", required_to_sign: true, signing_order: parties.length + 1 });
@@ -1484,9 +1583,16 @@ export const advanceChatSeen = (conversationId, sequenceNo) =>
   supabase.rpc("advance_chat_last_seen", { requested_conversation_id: conversationId, requested_sequence_no: sequenceNo });
 export const deleteChatMessage = (conversationId, messageId) =>
   supabase.rpc("delete_chat_message", { requested_conversation_id: conversationId, requested_message_id: messageId });
-export const chatTenantMembers = (tenancyIds) =>
-  supabase.from("tenancy_members").select("tenancy_id, user_id").in("tenancy_id", tenancyIds).eq("role", "tenant").eq("invitation_status", "accepted");
-export const linkedContacts = (userIds) => supabase.rpc("list_linked_profile_contacts", { requested_user_ids: userIds });
+export async function chatTenantMembers(tenancyIds) {
+  const res = await tenancyMemberRows(tenancyIds);
+  if (res.error) return res;
+  return {
+    data: (res.data ?? [])
+      .filter((m) => m.role === "tenant" && m.invitation_status === "accepted")
+      .map((m) => ({ tenancy_id: m.tenancy_id, user_id: m.user_id })),
+  };
+}
+export const linkedContacts = (userIds) => linkedContactRows(userIds);
 // Rows without counterpart_avatars (v1 server) get one list_chat_counterpart_avatars call each.
 // The result is kept for the session, and a second ask for the same conversation shares that call.
 const counterpartAvatars = new Map();
@@ -1704,9 +1810,8 @@ export const listMaintenanceEvents = (requestId) =>
 // Who reported the case: a tenant on the case's tenancy (MaintenanceController.reporterIsTenant).
 export async function maintenanceReporterIsTenant(request) {
   if (!request?.tenancy_id || !request.created_by) return false;
-  const { data } = await supabase.from("tenancy_members").select("user_id")
-    .eq("tenancy_id", request.tenancy_id).eq("user_id", request.created_by).eq("role", "tenant").limit(1);
-  return (data ?? []).length > 0;
+  const { data } = await tenancyMemberRows([request.tenancy_id]);
+  return (data ?? []).some((m) => m.user_id === request.created_by && m.role === "tenant");
 }
 
 // MaintenanceController.setStatus: a finished case goes back to «Under behandling» via reopen.
@@ -2098,6 +2203,30 @@ export const updateInspectionItem = (item, condition, note) =>
     requested_item_id: item.id, requested_condition: condition,
     requested_note: note && note.trim() ? note : null, expected_updated_at: item.updated_at,
   }).then(one);
+// Rapid edits of the same checklist point: the write in flight finishes, then only the
+// latest state is sent. Intermediate states are dropped; the last one is never lost.
+const inspectionSaves = createLatestCoalescer((_id, { item, condition, note }) =>
+  updateInspectionItem(item, condition, note).then((res) => {
+    if (res?.data?.updated_at) item.updated_at = res.data.updated_at;
+    return res;
+  }));
+export const saveInspectionItem = (item, condition, note) => inspectionSaves(item.id, { item, condition, note });
+// clear_inspection_review_done only when the flag is actually set. The handover select
+// does not include the column, so this stays a no-op until a row carries review_done.
+export function clearInspectionReviewDone(inspection) {
+  if (!shouldClearInspectionReviewDone(inspection) || !inspection.id || clearedReviews.has(inspection.id)) {
+    return Promise.resolve({ skipped: true });
+  }
+  clearedReviews.add(inspection.id);
+  return supabase.rpc("clear_inspection_review_done", { p_inspection_id: inspection.id }).then((res) => {
+    if (res?.error) clearedReviews.delete(inspection.id);
+    else inspection.review_done = false;
+    return res;
+  }, (error) => {
+    clearedReviews.delete(inspection.id);
+    return { error };
+  });
+}
 
 // iOS PropertyHandoverLifecycle.finalizeStoredInspection + MoveInSendStatus (same as Android #250):
 // read the row fresh, send the move-in right before the lock only when it is an unsent draft,
@@ -2590,7 +2719,7 @@ export async function correctMileageTrip(tripId, v, clientRequestId) {
 }
 // ProfileRepository: tax_residence_tiltakssone picks 18,5 % instead of 22 %.
 export async function taxResidenceInTiltakssone(userId) {
-  const { data } = await supabase.from("profiles").select("tax_residence_tiltakssone").eq("id", userId).maybeSingle();
+  const { data } = await ownProfile(userId);
   return data?.tax_residence_tiltakssone === true;
 }
 
@@ -2745,21 +2874,28 @@ export async function confirmPrivacyExportSaved(caseId) {
 // A failed read leaves the RPC rows unchanged. Nothing is written or deleted.
 async function endedManualHistorySupplements(pid, existing) {
   const seen = new Set((existing ?? []).map((row) => row.tenancy_id));
-  const { data: tenancies, error } = await supabase.from("tenancies")
+  const { data: tenancies, error } = await reads.read(`ended-tenancies:${pid}`, () => supabase.from("tenancies")
     .select("id, property_id, status, start_date, end_date, ended_at, history_tenant_name, history_tenant_phone, history_tenant_email, history_tenants")
     .eq("property_id", pid)
-    .eq("status", "ended");
+    .eq("status", "ended"));
   if (error || !tenancies?.length) return [];
   const missing = tenancies.filter((tenancy) => !seen.has(tenancy.id));
   if (!missing.length) return [];
-  const { data: occupants, error: occupantError } = await supabase.from("manual_occupants")
-    .select("tenancy_id, display_name, phone, party_role, claimed_user_id")
-    .eq("property_id", pid)
-    .in("tenancy_id", missing.map((tenancy) => tenancy.id));
-  if (occupantError) return [];
+  const ids = missing.map((tenancy) => tenancy.id);
+  const unknown = occupants.missing(ids);
+  if (unknown.length) {
+    const { data, error: occupantError } = await supabase.from("manual_occupants")
+      .select("tenancy_id, display_name, phone, party_role, claimed_user_id")
+      .eq("property_id", pid)
+      .in("tenancy_id", unknown);
+    if (occupantError) return [];
+    const fetched = data ?? [];
+    for (const id of unknown) occupants.rememberTenancy(id, fetched.filter((row) => row.tenancy_id === id));
+  }
+  const rows = ids.flatMap((id) => occupants.rows(id));
   return missing
-    .filter((tenancy) => manualOccupantsFor(occupants, tenancy.id).length)
-    .map((tenancy) => historyRowForEndedManual(tenancy, occupants))
+    .filter((tenancy) => manualOccupantsFor(rows, tenancy.id).length)
+    .map((tenancy) => historyRowForEndedManual(tenancy, rows))
     .filter(Boolean);
 }
 
