@@ -157,6 +157,14 @@ button.btn {
   border-radius: 0.7rem;
   background: #0b1220;
 }
+.video-modal-empty {
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  color: #fff;
+  text-align: center;
+}
+.video-modal-empty p { margin: 0; font-weight: 620; }
 @media (prefers-reduced-motion: no-preference) {
   .video-modal:not([hidden]) .video-modal-dialog { animation: video-modal-in 140ms ease-out; }
 }

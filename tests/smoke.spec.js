@@ -91,10 +91,15 @@ test.describe("public pages", () => {
     await expect(dialog).toBeHidden();
   });
 
-  test("known bug: demo video file is missing from the build", async ({ request }) => {
-    const response = await request.get("/brand/slik-fungerer-det.mp4");
-    test.fail(true, "public/brand has no slik-fungerer-det.mp4");
-    expect(response.status()).toBe(200);
+  test("demo modal shows a coming-soon state and does not request a video", async ({ page }) => {
+    const videos = [];
+    page.on("request", (request) => {
+      if (request.url().includes(".mp4")) videos.push(request.url());
+    });
+    await page.goto("/landing-full.html");
+    await page.getByRole("button", { name: "Se hvordan det fungerer" }).click();
+    await expect(page.getByRole("dialog", { name: "Se hvordan det fungerer" }).getByText("Video kommer snart")).toBeVisible();
+    expect(videos).toEqual([]);
   });
 
   test("known bug: vite preview does not serve /forhandsvisning", async ({ page }) => {
