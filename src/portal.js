@@ -7,6 +7,7 @@ import * as letter from "./portal-letter.js";
 import * as annual from "./portal-annual.js";
 import * as privacy from "./portal-privacy.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
+import { createFinnImport } from "./portal-finn.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
@@ -1008,6 +1009,8 @@ const receiptDialog = async (pid, r, docIds) => {
 
 const propertyForm = (p) => {
   const use = p?.rental_profile?.home_use;
+  // Import is only offered when creating. Editing keeps the stored Finn-kode field.
+  const finn = p ? null : createFinnImport({ fetchListing: act.fetchFinnListing });
   // As in the app: only the owner sees «Arkiver bolig», below the save button.
   const footer = p && isOwner(p.id) ? (close) => {
     const box = h("div", "pt-archive-entry");
@@ -1019,6 +1022,7 @@ const propertyForm = (p) => {
   } : undefined;
   return act.openForm({
     footer,
+    sections: finn ? [finn.section] : [],
     title: p ? "Rediger informasjon" : "Ny bolig",
     submitLabel: p ? "Lagre endringer" : "Opprett bolig",
     fields: [
@@ -1034,34 +1038,57 @@ const propertyForm = (p) => {
       { name: "finn", label: "Finn-kode", type: "text", value: p?.finn_code ?? "", maxLength: 12 },
       ...(p ? [{ name: "account", label: "Kontonummer for husleie", type: "text", value: p.payment_account_override ?? "", maxLength: 20, help: "Tomt betyr kontonummeret fra profilen din." }] : []),
     ],
-    onChange: (inputs, show) => { if (inputs.housingKind) show("roomCount", inputs.housingKind.value === "shared"); },
+    onChange: (inputs, show) => {
+      finn?.bind(inputs);
+      if (inputs.housingKind) show("roomCount", inputs.housingKind.value === "shared");
+    },
     onSubmit: async (v) => {
-      const invalid = act.validateProperty(v);
-      if (invalid) return invalid;
-      if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
-      if (!p) {
-        const managed = state.properties.filter((x) => isManager(x.id)).length;
-        if (managed >= 4) return "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
-        const shared = v.housingKind === "shared";
-        const roomCount = shared ? act.parseRoomCount(v.roomCount) : null;
-        if (shared && !v.roomCount) return "Du må oppgi antall rom som skal leies ut.";
-        if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
-        const res = await act.createProperty(state.user.id, v);
-        if (res.error) return act.explain(res.error);
-        const id = res.data?.[0]?.id;
-        if (id && roomCount) {
-          const rooms = await act.ensureSharedRooms(id, roomCount);
-          if (rooms.error) act.toast(`Boligen er opprettet, men ${rooms.error.charAt(0).toLowerCase()}${rooms.error.slice(1)} Legg til rom under «Om boligen».`);
+      finn?.setLocked(true);
+      try {
+        const invalid = act.validateProperty(v);
+        if (invalid) return invalid;
+        if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
+        if (!p) {
+          const managed = state.properties.filter((x) => isManager(x.id)).length;
+          if (managed >= 4) return "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+          const shared = v.housingKind === "shared";
+          const roomCount = shared ? act.parseRoomCount(v.roomCount) : null;
+          if (shared && !v.roomCount) return "Du må oppgi antall rom som skal leies ut.";
+          if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
+          const images = finn?.files() ?? [];
+          const res = await act.createProperty(state.user.id, v);
+          if (res.error) return act.explain(res.error);
+          const id = res.data?.[0]?.id;
+          if (id && roomCount) {
+            const rooms = await act.ensureSharedRooms(id, roomCount);
+            if (rooms.error) act.toast(`Boligen er opprettet, men ${rooms.error.charAt(0).toLowerCase()}${rooms.error.slice(1)} Legg til rom under «Om boligen».`);
+          }
+          if (id && images.length) {
+            let failed = 0;
+            for (const file of images) {
+              try {
+                const err = await act.uploadPropertyPhoto(id, state.user.id, file);
+                if (err) failed += 1;
+              } catch { failed += 1; }
+            }
+            if (failed) {
+              act.toast(failed === images.length
+                ? "Boligen er opprettet, men bildene fra FINN kunne ikke lagres. Du kan legge dem til under «Boligbilder»."
+                : `Boligen er opprettet, men ${failed} av ${images.length} bilder fra FINN kunne ikke lagres.`);
+            }
+          }
+          if (id) try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
+          await refresh("Boligen er opprettet.");
+          location.hash = "#om-boligen";
+          return null;
         }
-        if (id) try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
-        await refresh("Boligen er opprettet.");
-        location.hash = "#om-boligen";
+        const res = await act.updateProperty(p, v);
+        if (res.error) return act.explain(res.error);
+        await refresh("Informasjonen er lagret.");
         return null;
+      } finally {
+        finn?.setLocked(false);
       }
-      const res = await act.updateProperty(p, v);
-      if (res.error) return act.explain(res.error);
-      await refresh("Informasjonen er lagret.");
-      return null;
     },
   });
 };

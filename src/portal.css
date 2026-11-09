@@ -316,6 +316,20 @@ svg { flex: none; }
 .pt-input { font: inherit; font-size: var(--fs-subheadline); color: var(--ink); background: var(--field-surface); border: 1px solid var(--brand-border); border-radius: var(--radius-sm); padding: 10px 12px; min-height: var(--button-min-height); width: 100%; }
 .pt-textarea { min-height: 96px; resize: vertical; line-height: 1.4; }
 .pt-form-error { color: var(--danger); font-size: var(--fs-footnote); font-weight: 600; }
+.pt-finn { display: flex; flex-direction: column; gap: var(--space-s); background: var(--soft-surface); border-radius: var(--radius-md); padding: var(--space-m) var(--space-l); }
+.pt-finn-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-s); }
+.pt-finn-row .pt-field { flex: 1 1 12rem; min-width: 0; }
+.pt-finn-row .pt-btn { flex: none; }
+.pt-finn .pt-form-error { margin: 0; }
+.pt-finn-status { margin: 0; font-size: var(--fs-footnote); color: var(--secondary-ink); }
+.pt-finn-status.is-ok { color: var(--brand-dark); font-weight: 600; }
+.pt-finn-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.pt-finn-notes li { font-size: var(--fs-footnote); color: var(--secondary-ink); overflow-wrap: anywhere; }
+.pt-finn-photos { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-s); margin: 0; padding: 0; }
+.pt-finn-thumb { display: block; width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--brand-border); background: var(--surface); }
+.pt-finn-include { display: flex; align-items: flex-start; gap: var(--space-s); font-size: var(--fs-footnote); font-weight: 600; color: var(--ink); cursor: pointer; }
+.pt-finn-include .pt-check { accent-color: var(--brand); }
+.pt-finn-include:has(.pt-check:disabled) { cursor: default; opacity: .75; }
 .pt-modal-actions { display: flex; justify-content: flex-end; gap: var(--space-s); }
 .pt-btn:disabled { opacity: 0.55; cursor: default; }
 .pt-row .pt-btn-small { flex: none; }
