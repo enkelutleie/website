@@ -1415,7 +1415,7 @@ const agreementRow = async (pid, a, replacementIds, knownChanges = null) => {
       if (err) act.toast(err); else refresh("Kontrakten er klar til gjennomgang.");
     }));
   }
-  if (st === "ready_for_review") actions.append(button("Signer", "pt-btn-primary pt-btn-small", () => landlordSignForm(a)));
+  if (st === "ready_for_review") actions.append(button("Signer", "pt-btn-primary pt-btn-small", () => landlordSignForm({ ...a, property_id: a.property_id || pid })));
   if (st === "draft" || st === "ready_for_review") {
     actions.append(button("Slett utkast", "pt-btn-quiet-destructive pt-btn-small", async () => {
       if (!(await act.confirmAction({ title: "Slett utkast?", text: "Utkastet slettes. Leieforholdet påvirkes ikke.", confirmLabel: "Slett utkast" }))) return;
