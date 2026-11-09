@@ -3482,7 +3482,6 @@ const hoOverview = async (p, t, d) => {
     tiles.append(a);
   });
   out.push(info, tiles);
-  if (manager) out.push(h("p", "pt-muted", "Innflytting og utflytting er valgfritt. Du kan hoppe over det. Leietaker ser sjekklistene først når du har startet."));
   return out;
 };
 
