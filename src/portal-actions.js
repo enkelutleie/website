@@ -849,6 +849,45 @@ export async function createAgreementDraft(tenancy, v) {
   });
 }
 
+// Husleieloven, same rule as the apps: a tidsbestemt lease is at least one year,
+// or three years when the landlord is næringsdrivende. An empty draft stays allowed.
+const BUSINESS_LANDLORD_KINDS = new Set([
+  "business", "company", "organization", "commercial", "professional",
+  "self_employed", "sole_trader", "naeringsdrivende",
+]);
+export function isBusinessLandlord(property) {
+  const profile = property?.rental_profile;
+  if (!profile || typeof profile !== "object") return false;
+  const kind = String(profile.landlord_kind ?? "").trim().toLowerCase();
+  if (BUSINESS_LANDLORD_KINDS.has(kind)) return true;
+  return Boolean(
+    String(profile.organization_number ?? "").trim()
+    || String(profile.business_name ?? "").trim()
+    || String(profile.legal_form ?? "").trim(),
+  );
+}
+const pad2 = (n) => String(n).padStart(2, "0");
+// Calendar anniversary. 29 February lands on 28 February in a non-leap year.
+export function minimumFixedTermEnd(start, years) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start ?? "");
+  if (!match) return null;
+  const year = Number(match[1]) + years;
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!year || month < 1 || month > 12 || day < 1) return null;
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${pad2(month)}-${pad2(Math.min(day, last))}`;
+}
+export function fixedTermError(v, { business = false } = {}) {
+  if (v?.termType !== "fixed" || !v.start || !v.end || v.end <= v.start) return null;
+  const years = business ? 3 : 1;
+  const earliest = minimumFixedTermEnd(v.start, years);
+  if (!earliest || v.end >= earliest) return null;
+  return business
+    ? "En tidsbestemt leieavtale for næringsdrivende må vare i minst 3 år."
+    : "En tidsbestemt leieavtale må vare i minst 1 år.";
+}
+
 // Draft terms are encodeIfPresent in the app: empty fields are left out.
 const termsOf = (v) => {
   const digits = (v.account ?? "").replace(/\D/g, "");
@@ -1450,16 +1489,77 @@ export async function loadChatAttachment(attachmentId) {
   return { url: URL.createObjectURL(blob), filename: row.original_file_name || "dokument.pdf" };
 }
 
+// One call per quiet period. Events that arrive while a call is running schedule a single follow-up.
+export function coalesceCalls(fn, wait = 1000) {
+  let timer = null;
+  let running = false;
+  let queued = false;
+  const flush = () => {
+    if (running) {
+      queued = true;
+      return;
+    }
+    running = true;
+    queued = false;
+    Promise.resolve().then(fn).finally(() => {
+      running = false;
+      if (queued) schedule();
+    });
+  };
+  const schedule = () => {
+    queued = true;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      flush();
+    }, wait);
+  };
+  schedule.cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+    queued = false;
+  };
+  return schedule;
+}
+
+// Present only when a load measurement set pt-measure. Production pages never do.
+export function exposeMeasure(name, fn) {
+  try {
+    if (typeof sessionStorage === "undefined" || sessionStorage.getItem("pt-measure") !== "1") return;
+  } catch { return; }
+  const host = window.__ptMeasure ?? {};
+  host[name] = fn;
+  window.__ptMeasure = host;
+}
+
+// A hidden tab does not reconnect. The waiter is removed on stop or when the tab is shown.
+const waitUntilVisible = (fn) => {
+  if (typeof document === "undefined" || !document.hidden) return null;
+  const onShow = () => {
+    if (document.hidden) return;
+    document.removeEventListener("visibilitychange", onShow);
+    fn();
+  };
+  document.addEventListener("visibilitychange", onShow);
+  return () => document.removeEventListener("visibilitychange", onShow);
+};
+
 // ChatRealtimeRemote.changes(conversationID): RLS decides what arrives; the UI reloads, never trusts payloads.
+// A burst of inserts reloads the open thread once, a second after the last event.
 export function subscribeChat(conversationId, onChange) {
+  const notify = coalesceCalls(() => onChange());
+  exposeMeasure("pokeChat", notify);
   const filter = `conversation_id=eq.${conversationId}`;
   const channel = supabase.channel(`chat:${conversationId}:${crypto.randomUUID()}`);
   for (const table of ["chat_messages", "chat_member_read_cursors"]) {
-    channel.on("postgres_changes", { event: "INSERT", schema: "public", table, filter }, () => onChange(table));
-    channel.on("postgres_changes", { event: "UPDATE", schema: "public", table, filter }, () => onChange(table));
+    channel.on("postgres_changes", { event: "INSERT", schema: "public", table, filter }, () => notify());
+    channel.on("postgres_changes", { event: "UPDATE", schema: "public", table, filter }, () => notify());
   }
   channel.subscribe();
-  return () => supabase.removeChannel(channel);
+  return () => {
+    notify.cancel();
+    supabase.removeChannel(channel);
+  };
 }
 
 /* ---------- Vedlikehold (MaintenanceController.swift, MaintenanceRealtimeRemote) ---------- */
@@ -1653,11 +1753,14 @@ export async function propertyCalendarItems(propertyId) {
 }
 // One item with the access fields from the list RPC when it has them. The table row is the
 // source of truth for existence; only can_respond, maintenance_request_readable and a hidden
-// maintenance_request_id are taken from the RPC row.
-export async function calendarItemWithAccess(itemId) {
+// maintenance_request_id are taken from the RPC row. knownList is the page's already loaded
+// list, so opening an item does not ask for the whole property again.
+export async function calendarItemWithAccess(itemId, knownList = null) {
   const res = await calendarItem(itemId);
   if (res.error || !res.data) return res;
-  const listed = await supabase.rpc("list_calendar_items_for_property", { requested_property_id: res.data.property_id });
+  const listed = Array.isArray(knownList)
+    ? { data: knownList, error: null }
+    : await supabase.rpc("list_calendar_items_for_property", { requested_property_id: res.data.property_id });
   const row = listed.error ? null : (listed.data ?? []).find((r) => r.id === res.data.id);
   if (!row) return res;
   const item = { ...res.data };
@@ -1680,8 +1783,12 @@ export function subscribeMaintenance(requestId, { onEvent, onResync }) {
   let attempt = 0;
   let timer = null;
   let hadConnection = false;
+  let cancelWait = null;
   const connect = () => {
     if (stopped) return;
+    cancelWait?.();
+    cancelWait = waitUntilVisible(connect);
+    if (cancelWait) return;
     const ch = supabase.channel(`maintenance:${rid}:${crypto.randomUUID()}`);
     channel = ch;
     ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "maintenance_events", filter: `maintenance_request_id=eq.${rid}` }, (payload) => {
@@ -1693,7 +1800,7 @@ export function subscribeMaintenance(requestId, { onEvent, onResync }) {
     ch.subscribe((status) => {
       if (stopped || ch !== channel) return;
       if (status === "SUBSCRIBED") {
-        if (hadConnection || attempt > 0) onResync?.();
+        if ((hadConnection || attempt > 0) && !document.hidden) onResync?.();
         hadConnection = true;
         attempt = 0;
       } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
@@ -1702,7 +1809,10 @@ export function subscribeMaintenance(requestId, { onEvent, onResync }) {
         const delay = Math.min(30_000, 1000 * 2 ** attempt);
         attempt += 1;
         clearTimeout(timer);
-        timer = setTimeout(connect, delay);
+        cancelWait?.();
+        const retry = () => { timer = setTimeout(connect, delay); };
+        cancelWait = waitUntilVisible(retry);
+        if (!cancelWait) retry();
       }
     });
   };
@@ -1710,6 +1820,7 @@ export function subscribeMaintenance(requestId, { onEvent, onResync }) {
   return () => {
     stopped = true;
     clearTimeout(timer);
+    cancelWait?.();
     if (channel) supabase.removeChannel(channel);
     channel = null;
   };
@@ -1752,9 +1863,13 @@ export function subscribeNotifications(onChange) {
   let attempt = 0;
   let timer = null;
   let hadConnection = false;
-  const wake = () => { if (!stopped) onChange(); };
+  let cancelWait = null;
+  const wake = () => { if (!stopped && !document.hidden) onChange(); };
   const connect = () => {
     if (stopped) return;
+    cancelWait?.();
+    cancelWait = waitUntilVisible(connect);
+    if (cancelWait) return;
     const ch = supabase.channel(`notifications-domain:${crypto.randomUUID()}`);
     channel = ch;
     ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "maintenance_events" }, wake)
@@ -1766,7 +1881,7 @@ export function subscribeNotifications(onChange) {
     ch.subscribe((status) => {
       if (stopped || ch !== channel) return;
       if (status === "SUBSCRIBED") {
-        if (hadConnection || attempt > 0) wake();
+        if ((hadConnection || attempt > 0) && !document.hidden) wake();
         hadConnection = true;
         attempt = 0;
       } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
@@ -1775,7 +1890,10 @@ export function subscribeNotifications(onChange) {
         const delay = Math.min(30_000, 1000 * 2 ** attempt);
         attempt += 1;
         clearTimeout(timer);
-        timer = setTimeout(connect, delay);
+        cancelWait?.();
+        const retry = () => { timer = setTimeout(connect, delay); };
+        cancelWait = waitUntilVisible(retry);
+        if (!cancelWait) retry();
       }
     });
   };
@@ -1783,6 +1901,7 @@ export function subscribeNotifications(onChange) {
   return () => {
     stopped = true;
     clearTimeout(timer);
+    cancelWait?.();
     if (channel) supabase.removeChannel(channel);
     channel = null;
   };
@@ -1796,10 +1915,13 @@ export const INSPECTION_CONDITIONS = [["ok", "Ingen merknad"], ["note", "Merknad
 export const INSPECTION_NOTE_LIMIT = 8000;
 const one = (res) => (res.error ? res : { data: Array.isArray(res.data) ? res.data[0] ?? null : res.data });
 
+// Columns the handover screens read. A star select pulls notes and photos the list never shows.
+export const INSPECTION_COLUMNS = "id, tenancy_id, type, status, protocol_mark, sent_for_review_at, tenant_decision, tenant_may_fill, tenant_fill_done_at, finalized_at, created_at, updated_at";
+export const INSPECTION_ITEM_COLUMNS = "id, inspection_id, area_code, condition, note, sort_order, updated_at";
 export const listInspections = (tenancyId) =>
-  supabase.from("inspections").select("*").eq("tenancy_id", tenancyId).order("created_at", { ascending: true });
+  supabase.from("inspections").select(INSPECTION_COLUMNS).eq("tenancy_id", tenancyId).order("created_at", { ascending: true });
 export const listInspectionItems = (inspectionId) =>
-  supabase.from("inspection_items").select("*").eq("inspection_id", inspectionId).order("sort_order", { ascending: true });
+  supabase.from("inspection_items").select(INSPECTION_ITEM_COLUMNS).eq("inspection_id", inspectionId).order("sort_order", { ascending: true });
 export const listInspectionComments = (inspectionId) =>
   supabase.from("inspection_comments").select("id, author_id, author_role, body, created_at").eq("inspection_id", inspectionId).order("created_at", { ascending: true });
 export const createMoveIn = (tenancyId) =>
@@ -1856,7 +1978,7 @@ export function withChecklistDone(existing, list, index, done) {
   return visible ? `${visible}\n${next}` : next;
 }
 export const getInspectionItem = (itemId) =>
-  supabase.from("inspection_items").select("*").eq("id", itemId).maybeSingle();
+  supabase.from("inspection_items").select(INSPECTION_ITEM_COLUMNS).eq("id", itemId).maybeSingle();
 // update_inspection_item on a checklist that is already sent/locked (55000).
 export const isChecklistLocked = (res) =>
   /finalized_inspection_immutable/.test(String(res?.error?.message)) || res?.error?.code === "55000";
@@ -1870,7 +1992,7 @@ export const updateInspectionItem = (item, condition, note) =>
 // read the row fresh, send the move-in right before the lock only when it is an unsent draft,
 // then finalize that fresh row. A retry never sends twice or finalizes an older version.
 const freshInspection = async (id) => {
-  const r = await supabase.from("inspections").select("*").eq("id", id).maybeSingle();
+  const r = await supabase.from("inspections").select(INSPECTION_COLUMNS).eq("id", id).maybeSingle();
   return r.error || !r.data ? null : r.data;
 };
 const moveInNeedsSend = (i) => i.type === "move_in" && i.status === "draft" && !i.sent_for_review_at;

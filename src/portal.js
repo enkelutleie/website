@@ -120,6 +120,22 @@ const cached = (key, fn) => {
   if (!state.cache.has(key)) state.cache.set(key, Promise.resolve().then(fn).catch(() => ({ error: true })));
   return state.cache.get(key);
 };
+// Same session cache, but a failed read is forgotten so the next visit can try again.
+const cachedOk = (key, fn) => {
+  if (!state.cache.has(key)) {
+    const pending = Promise.resolve().then(fn).then((res) => {
+      if (res?.error) state.cache.delete(key);
+      return res;
+    }).catch((error) => {
+      state.cache.delete(key);
+      return { error };
+    });
+    state.cache.set(key, pending);
+  }
+  return state.cache.get(key);
+};
+const propertyGallery = (pid) => cachedOk(`gallery:${pid}`, () => act.galleryImages(pid));
+const storedImage = (path) => cachedOk(`img:${path}`, () => act.propertyImageUrl(path).then((url) => ({ data: url ?? null })));
 
 const card = (title, iconName, link) => {
   const c = h("section", "pt-card");
@@ -210,7 +226,10 @@ const band = () => {
 const onboarding = async () => {
   const p = property();
   if (!isManager(p.id)) return null;
+  // Once the guide is done it stays done. A false result is read again next visit.
+  if (state.cache.get(`guide:${p.id}`) === true) return null;
   const stored = await supabase.rpc("get_property_home_guide_completed", { requested_property_id: p.id });
+  if (!stored.error && stored.data === true) state.cache.set(`guide:${p.id}`, true);
   if (stored.error || stored.data === true) return null;
   const own = state.tenancies.filter((t) => t.property_id === p.id && !t.archived_at);
   const active = own.filter((t) => t.status === "active");
@@ -302,7 +321,13 @@ const CALENDAR_STATUS = { active: "Aktiv", completed: "Fullført", cancelled: "K
 // #kalender/<id>[/<sak-id>]: one calendar item (CalendarView detail). A maintenance date
 // notification carries the case id too, so a missing or cancelled item opens the case instead.
 const calendarDetail = async (itemId, requestId) => {
-  const res = await act.calendarItemWithAccess(itemId);
+  let known = null;
+  const pending = state.cache.get(`cal:${state.propertyId}`);
+  if (pending) {
+    const listed = await pending;
+    if (!listed.error && Array.isArray(listed.data)) known = listed.data;
+  }
+  const res = await act.calendarItemWithAccess(itemId, known);
   let item = res.error ? null : res.data;
   if (item && item.property_id !== state.propertyId) {
     if (state.properties.some((p) => p.id === item.property_id)) selectProperty(item.property_id, false);
@@ -547,7 +572,7 @@ const calendarCard = async (pid, full = false) => {
   const [res, hasTenant, responses] = await Promise.all([
     calendarItems(pid),
     calendarHasTenant(pid),
-    manager ? Promise.resolve(act.calendarResponses(pid)).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+    manager ? cachedOk(`calresp:${pid}`, () => act.calendarResponses(pid)).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
   ]);
   // applying(responses:) (iOS): a fresher answer from list_calendar_item_responses wins.
   const answers = new Map((responses?.data ?? []).map((r) => [r.calendar_item_id, r.decision]));
@@ -1537,6 +1562,8 @@ const contractForm = (pid, detail) => {
       if (v.deposit && depositMinor == null) return "Skriv et gyldig depositum.";
       if (rentMinor && depositMinor && depositMinor > rentMinor * 6) return "Depositumet kan ikke være mer enn seks måneders husleie.";
       if (v.termType === "fixed" && v.start && v.end && v.end <= v.start) return "Sluttdatoen må være etter startdatoen.";
+      const termError = act.fixedTermError(v, { business: act.isBusinessLandlord(p) });
+      if (termError) return termError;
       if (v.payday && !(Number(v.payday) >= 1 && Number(v.payday) <= 31)) return "Betalingsdagen må være mellom 1 og 31.";
       if (v.notice && !(Number(v.notice) >= 1 && Number(v.notice) <= 12)) return "Oppsigelsestiden må være mellom 1 og 12 måneder.";
       if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummer må være 11 siffer";
@@ -1831,9 +1858,11 @@ async function chatPeople(convs) {
   const tenantPresent = new Map();
   const managed = convs.filter((c) => c.role_snapshot !== "tenant" && !c.is_property_chat);
   if (managed.length) {
-    const members = await act.chatTenantMembers([...new Set(managed.map((c) => c.tenancy_id))]);
+    const tenancyIds = [...new Set(managed.map((c) => c.tenancy_id))].sort();
+    const members = await cachedOk(`chat-tenants:${tenancyIds.join()}`, () => act.chatTenantMembers(tenancyIds));
     const rows = members.data ?? [];
-    const contacts = rows.length ? (await act.linkedContacts([...new Set(rows.map((m) => m.user_id))])).data ?? [] : [];
+    const userIds = [...new Set(rows.map((m) => m.user_id))].sort();
+    const contacts = userIds.length ? ((await cachedOk(`chat-contacts:${userIds.join()}`, () => act.linkedContacts(userIds))).data ?? []) : [];
     const byUser = new Map(contacts.map((c) => [c.user_id, c]));
     for (const c of managed) {
       const people = rows.filter((m) => m.tenancy_id === c.tenancy_id).map((m) => byUser.get(m.user_id) ?? {});
@@ -1847,7 +1876,11 @@ async function chatPeople(convs) {
 
 async function chatPage() {
   const token = renderToken;
-  await act.provisionChats();
+  // Provision is idempotent. A successful call covers the rest of the session; refresh clears it.
+  if (state.cache.get("chats-provisioned") !== true) {
+    const provisioned = await act.provisionChats();
+    if (!provisioned.error) state.cache.set("chats-provisioned", true);
+  }
   if (token !== renderToken) return [];
   const res = await act.listChatConversations();
   if (token !== renderToken) return [];
@@ -2749,7 +2782,10 @@ const maintenanceDetail = async (pid, rid) => {
 
   // iOS #1506: live timeline; RLS decides what arrives, the list dedupes by id.
   if (token === renderToken) {
-    setPageCleanup(act.subscribeMaintenance(rid, {
+    const refreshAttachments = act.coalesceCalls(async () => { await loadAttachments(); if (token === renderToken) draw(); });
+    const refreshRequest = act.coalesceCalls(() => reloadRequest());
+    const refreshEvents = act.coalesceCalls(async () => { await loadEvents(); if (token === renderToken) drawTimeline(); });
+    const stop = act.subscribeMaintenance(rid, {
       onEvent: async (row) => {
         if (st.events.some((e) => e.id === row.id)) return;
         st.events = mtSortEvents([...st.events, row]);
@@ -2757,12 +2793,18 @@ const maintenanceDetail = async (pid, rid) => {
           const m = await act.linkedContactNames([row.actor_id]);
           st.names.set(row.actor_id, m.get(row.actor_id) ?? null);
         }
-        if (/^(image|document)_/.test(row.event_type)) { await loadAttachments(); draw(); }
-        else if (MT_RELOAD_REQUEST.has(row.event_type)) await reloadRequest();
+        if (/^(image|document)_/.test(row.event_type)) refreshAttachments();
+        else if (MT_RELOAD_REQUEST.has(row.event_type)) refreshRequest();
         else drawTimeline();
       },
-      onResync: async () => { await loadEvents(); drawTimeline(); },
-    }));
+      onResync: () => refreshEvents(),
+    });
+    setPageCleanup(() => {
+      refreshAttachments.cancel();
+      refreshRequest.cancel();
+      refreshEvents.cancel();
+      stop();
+    });
   }
   return [wrap];
 };
@@ -4557,7 +4599,7 @@ const galleryViewer = (images, start, urls, onRemove) => {
     page.textContent = `${index + 1} av ${images.length}`;
     img.alt = `Boligbilde ${index + 1} av ${images.length}`;
     img.removeAttribute("src");
-    const url = urls.get(image.id) ?? (await act.propertyImageUrl(image.storage_path).catch(() => null));
+    const url = urls.get(image.id) ?? (await storedImage(image.storage_path).catch(() => null))?.data ?? null;
     if (url && images[index] === image) { urls.set(image.id, url); img.src = url; }
   };
   const prev = button("Forrige", "pt-btn-soft pt-btn-small", () => { index = (index - 1 + images.length) % images.length; show(); });
@@ -4606,7 +4648,7 @@ const limitConcurrency = (limit) => {
 const galleryCard = async (p) => {
   const c = card("Boligbilder", "photo");
   const loadImage = limitConcurrency(4);
-  const res = await act.galleryImages(p.id);
+  const res = await propertyGallery(p.id);
   if (res.error) {
     c.append(inline("Kunne ikke hente bildene. Prøv igjen."));
     return c;
@@ -4626,7 +4668,7 @@ const galleryCard = async (p) => {
       b.type = "button";
       b.setAttribute("aria-label", `Åpne boligbilde ${i + 1} av ${images.length}`);
       const img = mtThumb(async () => {
-        const url = await loadImage(() => act.propertyImageUrl(image.storage_path).catch(() => null));
+        const url = await loadImage(() => storedImage(image.storage_path).then((r) => r?.data ?? null).catch(() => null));
         if (url) urls.set(image.id, url);
         return url;
       }, `Boligbilde ${i + 1}`);
@@ -4708,7 +4750,9 @@ const PAGES = {
     // Boligperm, Dokumenter og maler, Vedlikeholdshistorikk and Boligbilder live in the sidebar.
     c.append(dl);
     const out = [band()];
-    const photo = await act.coverPhotoUrl(p.id).catch(() => null);
+    const listed = await propertyGallery(p.id);
+    const coverPath = listed.data?.[0]?.storage_path;
+    const photo = coverPath ? (await storedImage(coverPath).catch(() => null))?.data ?? null : null;
     if (photo) {
       const img = document.createElement("img");
       img.className = "pt-photo";
@@ -4933,7 +4977,7 @@ const PRIVACY_TEXT = {
   downloaded: "Dataene dine er lastet ned.",
   blocked: "Fikk ikke kontakt med eksporttjenesten. Sjekk nettforbindelsen og prøv igjen.",
 };
-const PRIVACY_POLL_MS = 10_000;
+const PRIVACY_POLL_MS = 30_000;
 const PRIVACY_STALL_MS = 180_000;
 const PRIVACY_TOTAL_MS = 300_000;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -5032,6 +5076,21 @@ function privacyExportCard() {
         show("delayed", [startButton("Prøv igjen"), button("Lukk", "pt-btn-secondary pt-btn-small", idle)]);
         return;
       }
+      // An export the user is waiting on is still a poll: at most every 30s, and not while the tab is hidden.
+      if (document.hidden) {
+        const hiddenSince = Date.now();
+        await new Promise((resolve) => {
+          const done = () => {
+            if (document.hidden) return;
+            document.removeEventListener("visibilitychange", done);
+            resolve();
+          };
+          document.addEventListener("visibilitychange", done);
+        });
+        const away = Date.now() - hiddenSince;
+        progressAt += away;
+        continue;
+      }
       await wait(PRIVACY_POLL_MS);
     }
   };
@@ -5117,7 +5176,10 @@ const syncBellScope = () => {
 };
 const wakeBell = () => {
   clearTimeout(bell.wakeTimer);
-  bell.wakeTimer = setTimeout(() => { if (bell.scope) loadBell({ quiet: true }); }, 400);
+  bell.wakeTimer = setTimeout(() => {
+    if (!bell.scope || document.hidden) return;
+    loadBell({ quiet: true });
+  }, 1000);
 };
 
 const openNotification = (n) => {
@@ -5230,10 +5292,11 @@ const startBell = () => {
   });
   document.addEventListener("click", (e) => { if (bell.open && !wrap.contains(e.target)) closeBell(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && bell.open) { closeBell(); btn.focus(); } });
-  window.addEventListener("focus", wakeBell);
-  // ForegroundRefreshCadence.notificationReminder: refetch every 5 minutes while open.
+  window.addEventListener("focus", () => { if (!document.hidden) wakeBell(); });
+  // Foreground reminder: at most every 5 minutes, and only while the tab is visible.
   setInterval(() => { if (!document.hidden) wakeBell(); }, 300_000);
   bell.stop = act.subscribeNotifications(wakeBell);
+  act.exposeMeasure("pokeBell", wakeBell);
   drawBell();
 };
 
