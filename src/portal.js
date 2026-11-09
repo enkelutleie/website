@@ -1810,8 +1810,11 @@ async function chatPeople(convs) {
 }
 
 async function chatPage() {
+  const token = renderToken;
   await act.provisionChats();
+  if (token !== renderToken) return [];
   const res = await act.listChatConversations();
+  if (token !== renderToken) return [];
   if (res.error) return [emptyPage("chat", "Ingen samtaler", "Kunne ikke hente samtalene dine. Prøv igjen.")];
   // Landlord-only portal: chats where you are the tenant stay in the app.
   const all = (res.data ?? []).filter((c) => c.role_snapshot !== "tenant");
@@ -1824,6 +1827,7 @@ async function chatPage() {
     c.counterpart_avatars = r.data ?? [];
   }));
   const { labels, tenantPresent } = await chatPeople(convs);
+  if (token !== renderToken) return [];
   const titleOf = (c) => (c.is_property_chat ? "Alle i boligen" : labels.get(c.conversation_id) ?? "Leietaker");
   const placeOf = (c) => [c.property_display_name, c.unit_display_label].filter(Boolean).join(" · ");
   const needsInvite = (c) => !c.is_property_chat && c.conversation_status === "active" && tenantPresent.get(c.conversation_id) === false;
@@ -2026,14 +2030,20 @@ async function chatPage() {
   };
 
   const open = async (c) => {
+    if (token !== renderToken) return;
     current = c;
     replyTo = null;
     pendingFile = null;
     drawList();
     thread.replaceChildren(inline("Henter meldinger …"));
-    setPageCleanup(act.subscribeChat(c.conversation_id, () => reload(c)));
+    if (token !== renderToken) return;
+    setPageCleanup(act.subscribeChat(c.conversation_id, () => {
+      if (token === renderToken) reload(c);
+    }));
     const ok = await loadThread(c);
-    if (current === c) { drawThread(c, !ok); drawList(); }
+    if (token !== renderToken || current !== c) return;
+    drawThread(c, !ok);
+    drawList();
   };
 
   drawList();
