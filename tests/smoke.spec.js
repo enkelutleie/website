@@ -180,6 +180,18 @@ test.describe("login", () => {
     await portalReady(page);
   });
 
+  test("a dropped login request can be tried again", async ({ page }) => {
+    await installSupabase(page, { session: false, abortPassword: true });
+    await page.goto("/logg-inn/");
+    await page.getByLabel("E-post").fill("kari@example.com");
+    await page.getByLabel("Passord").fill("hemmelig");
+    const submit = page.getByRole("button", { name: "Logg inn", exact: true });
+    await submit.click();
+    await expect(page.getByText("Innloggingen kunne ikke fullføres. Prøv igjen.")).toBeVisible();
+    await expect(submit).toBeEnabled();
+    await expect(page).toHaveURL(/\/logg-inn\/?$/);
+  });
+
   test("logged-out portal returns to login", async ({ page }) => {
     await installSupabase(page, { session: false });
     await page.goto("/portal/");
@@ -376,6 +388,22 @@ test.describe("portal", () => {
     await openPortal(page, { fail: ["tenancies"] });
     await expect(page.getByRole("heading", { name: "Vi fikk ikke hentet oversikten" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Inviter leietaker" })).toHaveCount(0);
+  });
+
+  test("a late chat response does not replace the page you moved to", async ({ page }) => {
+    await openPortal(page, {
+      delayRpc: {
+        provision_my_chat_conversations: 600,
+        list_my_chat_conversations_v2: 600,
+        list_my_property_chat_conversations_v2: 600,
+      },
+    });
+    await page.getByRole("link", { name: "Meldinger", exact: true }).click();
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
+    await page.waitForTimeout(900);
+    await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
+    await expect(page.locator(".pt-chat")).toHaveCount(0);
   });
 
   test("an unknown hash is replaced with oversikt", async ({ page }) => {

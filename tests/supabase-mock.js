@@ -206,6 +206,9 @@ function respond(url, req, body, options) {
   const errorOn = options.errorOn ?? new Set();
   if (url.pathname.startsWith("/auth/v1/")) {
     if (url.pathname.endsWith("/logout")) return { status: 204, body: "" };
+    if (url.pathname.endsWith("/token") && url.searchParams.get("grant_type") === "password" && options.abortPassword) {
+      return { abort: true };
+    }
     if (url.pathname.endsWith("/token") && url.searchParams.get("grant_type") === "password" && options.invalidPassword) {
       return json(400, { error: "invalid_grant", error_description: "Invalid login credentials", msg: "Invalid login credentials", message: "Invalid login credentials" });
     }
@@ -271,11 +274,17 @@ export async function installSupabase(page, options = {}) {
       try { body = JSON.parse(raw); } catch { body = raw; }
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
-    const result = respond(url, req, body, { fail, errorOn, invalidPassword: options.invalidPassword, premium: options.premium });
+    const result = respond(url, req, body, { fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword, premium: options.premium });
+    if (result.abort) {
+      await route.abort("failed");
+      return;
+    }
     if (result.unmocked && !seen.has(result.unmocked)) {
       seen.add(result.unmocked);
       console.log(`UNMOCKED ${result.unmocked}`);
     }
+    const delay = options.delayRpc?.[decodeURIComponent(url.pathname.split("/").pop())];
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     await route.fulfill({
       status: result.status,
       contentType: "application/json",
