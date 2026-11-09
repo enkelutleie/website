@@ -4586,8 +4586,26 @@ const galleryViewer = (images, start, urls, onRemove) => {
   show();
 };
 
+const limitConcurrency = (limit) => {
+  let active = 0;
+  const waiting = [];
+  return (fn) => new Promise((resolve, reject) => {
+    const start = () => {
+      active += 1;
+      Promise.resolve().then(fn).then(resolve, reject).finally(() => {
+        active -= 1;
+        const next = waiting.shift();
+        if (next) next();
+      });
+    };
+    if (active < limit) start();
+    else waiting.push(start);
+  });
+};
+
 const galleryCard = async (p) => {
   const c = card("Boligbilder", "photo");
+  const loadImage = limitConcurrency(4);
   const res = await act.galleryImages(p.id);
   if (res.error) {
     c.append(inline("Kunne ikke hente bildene. Prøv igjen."));
@@ -4608,7 +4626,7 @@ const galleryCard = async (p) => {
       b.type = "button";
       b.setAttribute("aria-label", `Åpne boligbilde ${i + 1} av ${images.length}`);
       const img = mtThumb(async () => {
-        const url = await act.propertyImageUrl(image.storage_path).catch(() => null);
+        const url = await loadImage(() => act.propertyImageUrl(image.storage_path).catch(() => null));
         if (url) urls.set(image.id, url);
         return url;
       }, `Boligbilde ${i + 1}`);

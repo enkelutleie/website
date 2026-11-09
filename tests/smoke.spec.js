@@ -539,6 +539,17 @@ test.describe("portal", () => {
     expect(files).toHaveLength(1);
   });
 
+  test("gallery images download at most four at a time", async ({ page }) => {
+    const requests = [];
+    const stats = { inflight: 0, maxPropertyImages: 0 };
+    await openPortal(page, { requests, stats, gallery: true, delayStorage: 200 });
+    await page.getByRole("link", { name: "Boligbilder", exact: true }).click();
+    await expect(page.getByText("6 av 12 bilder")).toBeVisible();
+    await expect.poll(() => requests.filter((entry) => entry.path.includes("/property-images/")).length).toBe(6);
+    expect(stats.maxPropertyImages).toBeLessThanOrEqual(4);
+    expect(stats.maxPropertyImages).toBeGreaterThan(1);
+  });
+
   test("premium gate when the account has no entitlement", async ({ page }) => {
     await openPortal(page, { premium: false });
     await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();

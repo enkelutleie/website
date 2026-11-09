@@ -121,6 +121,19 @@ const calendarItem = {
   tenant_response: null,
 };
 
+const GALLERY_COLLECTION = "abababab-abab-4aba-8aba-abababababab";
+
+function galleryImageRows() {
+  return Array.from({ length: 6 }, (_, i) => ({
+    id: `b0b0b0b0-b0b0-40b0-80b0-00000000000${i}`,
+    collection_id: GALLERY_COLLECTION,
+    property_id: PROPERTY_ID,
+    storage_path: `gallery/${i}.jpg`,
+    status: "ready",
+    created_at: `2026-01-0${i + 1}T00:00:00Z`,
+  }));
+}
+
 const conversation = {
   conversation_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   property_id: PROPERTY_ID,
@@ -255,8 +268,14 @@ function respond(url, req, body, options) {
     }
     if (req.method() === "PATCH" || req.method() === "DELETE") return { status: 204, body: "" };
     if (req.method() === "POST") return json(201, Array.isArray(body) ? body : [body]);
-    const known = Object.prototype.hasOwnProperty.call(tables, table);
-    let rows = known ? tables[table].filter((row) => matches(row, url)) : [];
+    const supplied = options.gallery && (table === "image_collections" || table === "property_images");
+    const known = Object.prototype.hasOwnProperty.call(tables, table) || supplied;
+    let source = known && tables[table] ? tables[table] : [];
+    if (options.gallery && table === "image_collections") {
+      source = [{ id: GALLERY_COLLECTION, property_id: PROPERTY_ID, kind: "general", status: "active" }];
+    }
+    if (options.gallery && table === "property_images") source = galleryImageRows();
+    let rows = source.filter((row) => matches(row, url));
     if (options.premium === false && table === "subscription_entitlements") rows = [];
     const wantsObject = (req.headers().accept || "").includes("vnd.pgrst.object");
     if (wantsObject) {
@@ -296,7 +315,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery,
     });
     if (options.requests) options.requests.push({ method: req.method(), path: url.pathname });
     if (result.abort) {
@@ -307,8 +326,14 @@ export async function installSupabase(page, options = {}) {
       seen.add(result.unmocked);
       console.log(`UNMOCKED ${result.unmocked}`);
     }
-    const delay = options.delayRpc?.[decodeURIComponent(url.pathname.split("/").pop())];
+    const galleryFile = url.pathname.includes("/storage/v1/object/property-images/");
+    if (galleryFile && options.stats) {
+      options.stats.inflight = (options.stats.inflight ?? 0) + 1;
+      options.stats.maxPropertyImages = Math.max(options.stats.maxPropertyImages ?? 0, options.stats.inflight);
+    }
+    const delay = options.delayRpc?.[decodeURIComponent(url.pathname.split("/").pop())] ?? (galleryFile ? options.delayStorage : 0);
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (galleryFile && options.stats) options.stats.inflight -= 1;
     await route.fulfill({
       status: result.status,
       contentType: "application/json",
