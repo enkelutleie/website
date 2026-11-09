@@ -3472,6 +3472,11 @@ const hoOverview = async (p, t, d) => {
   }
   const info = card("Dokumenter boligens tilstand", "info");
   info.append(h("p", "pt-muted", "Sjekklister ved inn- og utflytting gir en trygg oversikt og kan brukes som dokumentasjon ved depositumsoppgjør."));
+  if (manager) {
+    const opt = h("div", "pt-handover-optional");
+    opt.append(icon("info", "pt-handover-optional-icon"), h("strong", null, "Innflytting og utflytting er valgfritt."));
+    info.append(opt);
+  }
   const tiles = h("section", "pt-tiles");
   [["innflytting", "Innflytting", "checklist", "is-success", "Sjekkliste og dokumentasjon", hoMoveInStatus(d.moveIn, manager)],
     ["utflytting", "Utflytting", "handover", "is-warning", "Sjekkliste og sammenligning med innflytting", hoMoveOutStatus(d)],
