@@ -2,10 +2,7 @@ import { expect, test } from "@playwright/test";
 import { installSupabase } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
-// Production, and "Ny bolig" / Finn import is never opened.
-//
-// Tests marked test.fail() after their setup are known bugs. Setup failures
-// still fail the run; only the final assertion is an expected failure.
+// Production. The suite asserts the corrected behaviour, including "Ny bolig".
 
 const PAGES = [
   ["Oversikt", "Oversikt"],
@@ -40,7 +37,7 @@ async function openPortal(page, options = {}) {
 }
 
 async function portalReady(page) {
-  await expect(page.getByText("Testveien 1").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Testveien 1/ })).toBeVisible();
   await expect(page.getByText("Noe gikk galt")).toHaveCount(0);
 }
 
@@ -280,7 +277,10 @@ test.describe("portal", () => {
     await page.evaluate(() => sessionStorage.setItem("pt-property", "should-not-survive"));
     await page.getByRole("button", { name: "Logg ut" }).click();
     await expect(page).toHaveURL(/\/logg-inn\/?/);
-    expect(await page.evaluate(() => sessionStorage.getItem("pt-property"))).toBeNull();
+    await expect.poll(async () => {
+      try { return await page.evaluate(() => sessionStorage.getItem("pt-property")); }
+      catch { return "pending"; }
+    }).toBeNull();
 
     const unexpected = errors.filter((error) => !/websocket|WebSocket/i.test(String(error)));
     expect(unexpected).toEqual([]);
@@ -290,7 +290,7 @@ test.describe("portal", () => {
     const { writes, errors } = await openPortal(page);
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("button", { name: "Ny inntekt" }).click();
-    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
+    const dialog = page.getByRole("dialog", { name: "Ny inntekt" });
     const category = dialog.getByRole("button", { name: /Kategori/ });
     await category.focus();
     await page.keyboard.press("ArrowDown");
@@ -315,7 +315,7 @@ test.describe("portal", () => {
     await page.getByRole("button", { name: "Ny inntekt" }).click();
     const income = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
     await income.getByRole("button", { name: "Lagre", exact: true }).click();
-    await expect(income.getByText("Velg kategori")).toBeVisible();
+    await expect(income.getByRole("alert")).toHaveText("Velg kategori");
     await income.getByRole("button", { name: "Avbryt" }).click();
 
     await page.getByRole("link", { name: "Oversikt", exact: true }).click();
@@ -419,9 +419,9 @@ test.describe("portal", () => {
     const category = dialog.getByRole("button", { name: /Kategori/ });
     await expect(category).toHaveAttribute("aria-controls", /pt-choice-/);
     await category.click();
-    await dialog.getByRole("option", { name: "Husleie", exact: true }).click();
+    await dialog.getByRole("option", { name: "Annen inntekt", exact: true }).click();
     await dialog.getByLabel("Beløp").fill("1500");
-    await dialog.getByLabel("Hva gjelder inntekten?").fill("Husleie");
+    await dialog.getByLabel("Hva gjelder inntekten?").fill("Annet");
     await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
     await expect(dialog.getByText("Det gikk ikke. Prøv igjen om litt.")).toBeVisible();
     await expect(dialog.getByText(/property_handbook_sections_pkey/)).toHaveCount(0);
@@ -436,7 +436,7 @@ test.describe("portal", () => {
     await dialog.getByLabel("Dato").fill("2026-11-15");
     await dialog.getByRole("button", { name: /Hele dagen/ }).click();
     await dialog.getByRole("option", { name: "Ja", exact: true }).click();
-    await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
+    await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
     await expect.poll(() => writes.find((entry) => entry.path.includes("create_calendar_item"))).toBeTruthy();
     const saved = writes.find((entry) => entry.path.includes("create_calendar_item"));
     expect(saved.body.requested_starts_at).toBe("2026-11-14T23:00:00Z");

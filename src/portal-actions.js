@@ -187,9 +187,11 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
 // the modal never clips it; on a page (`floating`) it opens as an overlay.
 const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg>';
-const VALUE_PROP = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-const DISABLED_PROP = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "disabled");
+let VALUE_PROP;
+let DISABLED_PROP;
 export function customSelect({ label, options = [], value, floating = false, cls = "", input = h("input") }) {
+  VALUE_PROP ??= Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  DISABLED_PROP ??= Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "disabled");
   input.type = "hidden";
   const labelOf = (v) => options.find(([o]) => o === v)?.[1];
   const wrap = h("div", `pt-choice${floating ? " is-floating" : ""}${cls ? ` ${cls}` : ""}`);
