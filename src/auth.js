@@ -61,13 +61,18 @@ if (root) {
     button.addEventListener("click", async () => {
       say("");
       button.disabled = true;
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: button.dataset.provider,
-        options: { redirectTo },
-      });
-      if (error) {
+      try {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: button.dataset.provider,
+          options: { redirectTo },
+        });
+        if (error) {
+          button.disabled = false;
+          say(norwegian(error));
+        }
+      } catch {
         button.disabled = false;
-        say(norwegian(error));
+        say("Innloggingen kunne ikke fullføres. Prøv igjen.");
       }
     });
   });
@@ -80,13 +85,18 @@ if (root) {
     const password = String(data.get("password") ?? "");
     const submit = form.querySelector("button[type=submit]");
     if (submit) submit.disabled = true;
-    const { data: result, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (submit) submit.disabled = false;
-    if (error || !result.session) {
-      say(norwegian(error));
-      return;
+    try {
+      const { data: result, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (submit) submit.disabled = false;
+      if (error || !result.session) {
+        say(norwegian(error));
+        return;
+      }
+      goToPortal();
+    } catch {
+      if (submit) submit.disabled = false;
+      say("Innloggingen kunne ikke fullføres. Prøv igjen.");
     }
-    goToPortal();
   });
 
   // Return from Apple/Google: read ?code= / ?error= (and #error=), then clean the URL.
@@ -104,12 +114,17 @@ if (root) {
     showForm();
     say(norwegian({ message: returnError }));
   } else if (code) {
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error || !data.session) {
+    try {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error || !data.session) {
+        showForm();
+        say(norwegian(error));
+      } else {
+        goToPortal();
+      }
+    } catch {
       showForm();
-      say(norwegian(error));
-    } else {
-      goToPortal();
+      say("Innloggingen kunne ikke fullføres. Prøv igjen.");
     }
   }
 

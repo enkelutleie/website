@@ -1,4 +1,6 @@
 import { supabase } from "./supabase.js";
+import { osloWallToUtcIso } from "./oslo-time.js";
+import { collectPages } from "./paged.js";
 import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
 import { historyRowForEndedManual, manualOccupantsFor, mergeTenancyHistory } from "./tenancy-listing.js";
 
@@ -19,7 +21,7 @@ export const explain = (error) => {
   if (/jwt|auth|401/i.test(msg)) return "Økten er utløpt. Logg inn på nytt.";
   if (/permission|not_authorized|unauthorized|42501|403/i.test(msg)) return "Du har ikke tilgang til å gjøre dette.";
   if (/conflict|stale|expected_updated_at|revision/i.test(msg)) return "Noen har endret dette i mellomtiden. Last siden på nytt og prøv igjen.";
-  return msg ? `Det gikk ikke: ${msg}` : "Det gikk ikke. Prøv igjen om litt.";
+  return "Det gikk ikke. Prøv igjen om litt.";
 };
 
 export const minorOf = (text) => {
@@ -44,7 +46,11 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const form = h("form", "pt-modal-card");
     form.noValidate = true;
     const head = h("div", "pt-card-head");
-    head.append(h("h2", null, title));
+    const titleId = `pt-modal-title-${Math.random().toString(36).slice(2, 8)}`;
+    const heading = h("h2", null, title);
+    heading.id = titleId;
+    head.append(heading);
+    dialog.setAttribute("aria-labelledby", titleId);
     form.append(head);
     if (intro) form.append(h("p", "pt-muted", intro));
     form.append(...sections);
@@ -141,7 +147,9 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         if (f.required && !hidden && !values[f.name]) {
           status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
           status.hidden = false;
-          (choice ? input.closest(".pt-field").querySelector(".pt-choice-button") : input).focus();
+          const isChoice = f.type === "choice" || f.type === "select";
+          const target = isChoice ? input.closest(".pt-field")?.querySelector(".pt-choice-button") : input;
+          target?.focus();
           return;
         }
       }
@@ -179,9 +187,11 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
 // the modal never clips it; on a page (`floating`) it opens as an overlay.
 const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg>';
-const VALUE_PROP = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-const DISABLED_PROP = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "disabled");
+let VALUE_PROP;
+let DISABLED_PROP;
 export function customSelect({ label, options = [], value, floating = false, cls = "", input = h("input") }) {
+  VALUE_PROP ??= Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  DISABLED_PROP ??= Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "disabled");
   input.type = "hidden";
   const labelOf = (v) => options.find(([o]) => o === v)?.[1];
   const wrap = h("div", `pt-choice${floating ? " is-floating" : ""}${cls ? ` ${cls}` : ""}`);
@@ -193,12 +203,14 @@ export function customSelect({ label, options = [], value, floating = false, cls
   const chevron = h("span", "pt-choice-chevron");
   chevron.innerHTML = CHEVRON_SVG;
   btn.append(current, chevron);
+  const uid = `pt-choice-${Math.random().toString(36).slice(2, 8)}`;
   const list = h("ul", "pt-choice-list");
+  list.id = `${uid}-list`;
   list.setAttribute("role", "listbox");
   list.setAttribute("aria-label", label);
+  btn.setAttribute("aria-controls", list.id);
   list.tabIndex = -1;
   list.hidden = true;
-  const uid = `pt-choice-${Math.random().toString(36).slice(2, 8)}`;
   const items = options.map(([, text], i) => {
     const li = h("li", "pt-choice-option");
     li.id = `${uid}-${i}`;
@@ -489,8 +501,6 @@ export const updateProperty = (p, v) =>
     rental_profile: profileOf(v.use, p.rental_profile),
     finn_code: finnOf(v.finn),
     payment_account_override: (v.account ?? "").replace(/\D/g, "") || null,
-    municipality_number: null,
-    municipality_name: null,
   }).eq("id", p.id);
 
 /* ---------- Arkiver bolig (LifecycleB1Controller.swift) ---------- */
@@ -1114,7 +1124,11 @@ export const CALENDAR_CATEGORIES = [
   ["other", "Annet"], ["maintenance", "Vedlikehold"], ["inspection", "Befaring"],
   ["tenancy", "Leieforhold"], ["payment", "Betaling"], ["document", "Dokument"],
 ];
-const iso = (local) => new Date(local).toISOString().replace(/\.\d{3}Z$/, "Z");
+// Calendar fields are Norway wall time, including an all-day event at 00:00.
+const iso = (local) => {
+  const [date, time = "00:00"] = String(local).split("T");
+  return osloWallToUtcIso(date.slice(0, 10), (time.slice(0, 5) || "00:00"));
+};
 const calendarFields = (v) => {
   const when = v.allDay === "true" ? `${v.date}T00:00` : `${v.date}T${v.time || "09:00"}`;
   return {
@@ -1151,7 +1165,7 @@ export const completeCalendarItem = (id) => supabase.rpc("complete_calendar_item
 /* ---------- Boligperm (PropertyHandbookController.swift) ---------- */
 export const saveHandbookSection = (propertyId, key, body, enabled = true) =>
   supabase.from("property_handbook_sections").upsert(
-    { property_id: propertyId, section_key: key, is_enabled: enabled, body, link_url: null },
+    { property_id: propertyId, section_key: key, is_enabled: enabled, body },
     { onConflict: "property_id,section_key" },
   );
 
@@ -1324,8 +1338,21 @@ export const chatTenantMembers = (tenancyIds) =>
   supabase.from("tenancy_members").select("tenancy_id, user_id").in("tenancy_id", tenancyIds).eq("role", "tenant").eq("invitation_status", "accepted");
 export const linkedContacts = (userIds) => supabase.rpc("list_linked_profile_contacts", { requested_user_ids: userIds });
 // Rows without counterpart_avatars (v1 server) get one list_chat_counterpart_avatars call each.
-export const chatCounterpartAvatars = (conversationId) =>
-  supabase.rpc("list_chat_counterpart_avatars", { requested_conversation_id: conversationId });
+// The result is kept for the session, and a second ask for the same conversation shares that call.
+const counterpartAvatars = new Map();
+export function chatCounterpartAvatars(conversationId) {
+  let pending = counterpartAvatars.get(conversationId);
+  if (pending) return pending;
+  pending = supabase.rpc("list_chat_counterpart_avatars", { requested_conversation_id: conversationId }).then((res) => {
+    if (res.error) counterpartAvatars.delete(conversationId);
+    return res;
+  }, (error) => {
+    counterpartAvatars.delete(conversationId);
+    throw error;
+  });
+  counterpartAvatars.set(conversationId, pending);
+  return pending;
+}
 // Profile photo from the private "profile-avatars" bucket ({user_id}/avatar.jpg), as a data: URL (CSP).
 const avatarUrls = new Map();
 export function avatarDataUrl(userId, revision) {
@@ -1601,7 +1628,7 @@ export const scheduleMaintenanceVisit = (request, startsAt) =>
   });
 // Reschedule keeps the item and its duration; the server resets the tenant's answer.
 export function rescheduleMaintenanceVisit(item, startsAt) {
-  const start = new Date(startsAt);
+  const start = new Date(iso(startsAt));
   const ends = item.ends_at && item.starts_at ? new Date(start.getTime() + (new Date(item.ends_at) - new Date(item.starts_at))) : null;
   return supabase.rpc("update_calendar_item", {
     requested_calendar_item_id: item.id, requested_title: item.title, requested_description: item.description,
@@ -2301,16 +2328,12 @@ export const isMileageExpense = (row) => mileageFields(row) !== null;
 
 // SupabaseMileageRemote.list: pages of 200 until an empty page. End date is exclusive.
 export async function listMileageTrips(propertyId, startDate, endDate) {
-  const rows = [];
-  for (;;) {
-    const { data, error } = await supabase.rpc("list_mileage_trips", {
-      requested_property_id: propertyId, requested_start_date: startDate, requested_end_date: endDate,
-      requested_offset: rows.length, requested_page_size: 200,
-    });
-    if (error) return { error };
-    if (!data?.length) return { data: rows.filter((t) => !t.voided_at) };
-    rows.push(...data);
-  }
+  const res = await collectPages((offset) => supabase.rpc("list_mileage_trips", {
+    requested_property_id: propertyId, requested_start_date: startDate, requested_end_date: endDate,
+    requested_offset: offset, requested_page_size: 200,
+  }));
+  if (res.error) return res;
+  return { data: res.data.filter((t) => !t.voided_at) };
 }
 const tripPayload = (v) => ({
   requested_trip_date: v.date,

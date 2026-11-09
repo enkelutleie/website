@@ -4,10 +4,8 @@ import { exportBlocks } from "../src/portal-privacy.js";
 
 const bytes = (value) => new TextEncoder().encode(JSON.stringify(value));
 
-// Current renderer behavior. personnummer is not collected in the portal UI;
-// this locks the fact that an unrecognized national-id key in the export JSON
-// is still printed. Update the assertion when those keys are omitted.
-test("privacy PDF text prints unrecognized national-id keys and hides *_id", () => {
+// The portal never collects a national id. If an export still contains one, the PDF text omits it.
+test("privacy PDF text hides national-id keys and *_id", () => {
   const blocks = exportBlocks([
     {
       path: "manifest.json",
@@ -26,7 +24,9 @@ test("privacy PDF text prints unrecognized national-id keys and hides *_id", () 
           personnummer: "01010112345",
           fodselsnummer: "02020212345",
           fødselsnummer: "04040412345",
+          foedselsnummer: "05050512345",
           national_id: "03030312345",
+          birth_number: "06060612345",
         },
       }),
     },
@@ -34,9 +34,10 @@ test("privacy PDF text prints unrecognized national-id keys and hides *_id", () 
   const text = blocks.map((block) => block.text ?? "").join("\n");
   assert.match(text, /Kari Utleier/);
   assert.doesNotMatch(text, /secret-user-id/);
-  // national_id is omitted only because the key ends with _id, not because it is an identity number.
+  assert.doesNotMatch(text, /01010112345/);
+  assert.doesNotMatch(text, /02020212345/);
   assert.doesNotMatch(text, /03030312345/);
-  assert.match(text, /01010112345/);
-  assert.match(text, /02020212345/);
-  assert.match(text, /04040412345/);
+  assert.doesNotMatch(text, /04040412345/);
+  assert.doesNotMatch(text, /05050512345/);
+  assert.doesNotMatch(text, /06060612345/);
 });

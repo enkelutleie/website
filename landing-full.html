@@ -45,7 +45,12 @@
           <a class="btn btn-header btn-login" href="/logg-inn" data-when="out">Logg inn</a>
           <button class="btn-header-link" type="button" data-when="in" data-sign-out>Logg ut</button>
           <a class="btn btn-header btn-login" href="/portal/" data-when="in">Min side</a>
+          <button class="menu-toggle" type="button" data-menu-toggle aria-expanded="false" aria-controls="mobile-nav">Meny</button>
         </div>
+        <nav class="mobile-nav" id="mobile-nav" data-mobile-nav hidden aria-label="Hovedmeny">
+          <a href="#slik">Slik fungerer det</a>
+          <a href="#funksjoner">Funksjoner</a>
+        </nav>
       </div>
     </header>
     <main id="innhold">
@@ -213,7 +218,9 @@
         <button class="video-modal-close" type="button" data-video-close aria-label="Lukk">
           <span aria-hidden="true">&times;</span>
         </button>
-        <video class="video-modal-player" controls playsinline preload="metadata" src="/brand/slik-fungerer-det.mp4"></video>
+        <div class="video-modal-player video-modal-empty">
+          <p>Video kommer snart</p>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>

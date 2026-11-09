@@ -121,6 +121,19 @@ const calendarItem = {
   tenant_response: null,
 };
 
+const GALLERY_COLLECTION = "abababab-abab-4aba-8aba-abababababab";
+
+function galleryImageRows() {
+  return Array.from({ length: 6 }, (_, i) => ({
+    id: `b0b0b0b0-b0b0-40b0-80b0-00000000000${i}`,
+    collection_id: GALLERY_COLLECTION,
+    property_id: PROPERTY_ID,
+    storage_path: `gallery/${i}.jpg`,
+    status: "ready",
+    created_at: `2026-01-0${i + 1}T00:00:00Z`,
+  }));
+}
+
 const conversation = {
   conversation_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   property_id: PROPERTY_ID,
@@ -162,7 +175,8 @@ function matches(row, url) {
   return true;
 }
 
-function rpcPayload(name, body, premium) {
+function rpcPayload(name, body, options = {}) {
+  const premium = options.premium;
   const offset = Number(body?.requested_offset ?? 0);
   if (offset > 0) return [];
   const pid = body?.requested_property_id;
@@ -174,12 +188,31 @@ function rpcPayload(name, body, premium) {
     case "list_calendar_items_for_property":
       return pid === PROPERTY_ID ? [calendarItem] : [];
     case "list_my_property_rental_agreements":
-      return pid === PROPERTY_ID ? [agreement] : [];
+      return pid === PROPERTY_ID ? [{ ...agreement, agreement_status: options.signedAgreement ? "signed" : agreement.agreement_status }] : [];
+    case "list_rental_agreement_changes":
+      return options.signedAgreement ? [{
+        id: "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1",
+        agreement_id: agreement.agreement_id,
+        request_kind: "revision",
+        status: "completed",
+        replacement_agreement_id: null,
+        can_respond: false,
+      }] : [];
     case "list_tenancy_history":
       return pid === PROPERTY_ID ? [historyEntry] : [];
     case "list_my_chat_conversations_v2":
-    case "list_my_chat_conversations":
-      return [conversation];
+    case "list_my_chat_conversations": {
+      const second = { ...conversation, conversation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
+      const rows = options.omitAvatars ? [conversation, second] : [conversation];
+      if (!options.omitAvatars) return rows;
+      return rows.map((row) => {
+        const copy = { ...row };
+        delete copy.counterpart_avatars;
+        return copy;
+      });
+    }
+    case "list_chat_counterpart_avatars":
+      return [{ user_id: TENANT_ID, avatar_revision: 1 }];
     case "send_chat_message":
       return [{
         id: "99999999-9999-4999-8999-999999999999",
@@ -206,6 +239,9 @@ function respond(url, req, body, options) {
   const errorOn = options.errorOn ?? new Set();
   if (url.pathname.startsWith("/auth/v1/")) {
     if (url.pathname.endsWith("/logout")) return { status: 204, body: "" };
+    if (url.pathname.endsWith("/token") && url.searchParams.get("grant_type") === "password" && options.abortPassword) {
+      return { abort: true };
+    }
     if (url.pathname.endsWith("/token") && url.searchParams.get("grant_type") === "password" && options.invalidPassword) {
       return json(400, { error: "invalid_grant", error_description: "Invalid login credentials", msg: "Invalid login credentials", message: "Invalid login credentials" });
     }
@@ -222,7 +258,7 @@ function respond(url, req, body, options) {
     if (fail.has(name) || errorOn.has(name)) {
       return json(400, { message: "duplicate key value violates unique constraint \"property_handbook_sections_pkey\"", code: "23505" });
     }
-    return json(200, rpcPayload(name, body, options.premium));
+    return json(200, rpcPayload(name, body, options));
   }
   if (url.pathname.startsWith("/rest/v1/")) {
     const table = decodeURIComponent(url.pathname.slice("/rest/v1/".length));
@@ -232,8 +268,14 @@ function respond(url, req, body, options) {
     }
     if (req.method() === "PATCH" || req.method() === "DELETE") return { status: 204, body: "" };
     if (req.method() === "POST") return json(201, Array.isArray(body) ? body : [body]);
-    const known = Object.prototype.hasOwnProperty.call(tables, table);
-    let rows = known ? tables[table].filter((row) => matches(row, url)) : [];
+    const supplied = options.gallery && (table === "image_collections" || table === "property_images");
+    const known = Object.prototype.hasOwnProperty.call(tables, table) || supplied;
+    let source = known && tables[table] ? tables[table] : [];
+    if (options.gallery && table === "image_collections") {
+      source = [{ id: GALLERY_COLLECTION, property_id: PROPERTY_ID, kind: "general", status: "active" }];
+    }
+    if (options.gallery && table === "property_images") source = galleryImageRows();
+    let rows = source.filter((row) => matches(row, url));
     if (options.premium === false && table === "subscription_entitlements") rows = [];
     const wantsObject = (req.headers().accept || "").includes("vnd.pgrst.object");
     if (wantsObject) {
@@ -271,11 +313,27 @@ export async function installSupabase(page, options = {}) {
       try { body = JSON.parse(raw); } catch { body = raw; }
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
-    const result = respond(url, req, body, { fail, errorOn, invalidPassword: options.invalidPassword, premium: options.premium });
+    const result = respond(url, req, body, {
+      fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery,
+    });
+    if (options.requests) options.requests.push({ method: req.method(), path: url.pathname });
+    if (result.abort) {
+      await route.abort("failed");
+      return;
+    }
     if (result.unmocked && !seen.has(result.unmocked)) {
       seen.add(result.unmocked);
       console.log(`UNMOCKED ${result.unmocked}`);
     }
+    const galleryFile = url.pathname.includes("/storage/v1/object/property-images/");
+    if (galleryFile && options.stats) {
+      options.stats.inflight = (options.stats.inflight ?? 0) + 1;
+      options.stats.maxPropertyImages = Math.max(options.stats.maxPropertyImages ?? 0, options.stats.inflight);
+    }
+    const delay = options.delayRpc?.[decodeURIComponent(url.pathname.split("/").pop())] ?? (galleryFile ? options.delayStorage : 0);
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (galleryFile && options.stats) options.stats.inflight -= 1;
     await route.fulfill({
       status: result.status,
       contentType: "application/json",

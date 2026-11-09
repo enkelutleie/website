@@ -2,10 +2,7 @@ import { expect, test } from "@playwright/test";
 import { installSupabase } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
-// Production, and "Ny bolig" / Finn import is never opened.
-//
-// Tests marked test.fail() after their setup are known bugs. Setup failures
-// still fail the run; only the final assertion is an expected failure.
+// Production. The suite asserts the corrected behaviour, including "Ny bolig".
 
 const PAGES = [
   ["Oversikt", "Oversikt"],
@@ -40,7 +37,7 @@ async function openPortal(page, options = {}) {
 }
 
 async function portalReady(page) {
-  await expect(page.getByText("Testveien 1").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Testveien 1/ })).toBeVisible();
   await expect(page.getByText("Noe gikk galt")).toHaveCount(0);
 }
 
@@ -60,6 +57,8 @@ test.describe("public pages", () => {
     await expect(page.getByRole("heading", { name: "Personvern" })).toBeVisible();
     await page.goto("/slett-konto/");
     await expect(page.getByRole("heading", { name: "Slett kontoen din" })).toBeVisible();
+    await page.goto("/support/");
+    await expect(page.getByRole("heading", { name: "Support" })).toBeVisible();
     await page.goto("/om-oss/");
     await expect(page.getByRole("heading", { name: "Historien bak Enkel Utleie" })).toBeVisible();
     await page.goto("/nope-not-a-page");
@@ -91,24 +90,35 @@ test.describe("public pages", () => {
     await expect(dialog).toBeHidden();
   });
 
-  test("known bug: demo video file is missing from the build", async ({ request }) => {
-    const response = await request.get("/brand/slik-fungerer-det.mp4");
-    test.fail(true, "public/brand has no slik-fungerer-det.mp4");
-    expect(response.status()).toBe(200);
+  test("demo modal shows a coming-soon state and does not request a video", async ({ page }) => {
+    const videos = [];
+    page.on("request", (request) => {
+      if (request.url().includes(".mp4")) videos.push(request.url());
+    });
+    await page.goto("/landing-full.html");
+    await page.getByRole("button", { name: "Se hvordan det fungerer" }).click();
+    await expect(page.getByRole("dialog", { name: "Se hvordan det fungerer" }).getByText("Video kommer snart")).toBeVisible();
+    expect(videos).toEqual([]);
   });
 
-  test("known bug: vite preview does not serve /forhandsvisning", async ({ page }) => {
+  test("vite preview serves the landing at /forhandsvisning", async ({ page }) => {
     await page.goto("/forhandsvisning");
-    test.fail(true, "previewNotFound does not know the landing preview path");
     await expect(page).toHaveTitle(/utleie, helt enkelt/);
+    await expect(page.getByRole("button", { name: "Se hvordan det fungerer" })).toBeVisible();
   });
 
-  test("known bug: phone header hides the landing menu", async ({ page }) => {
+  test("phone header opens the landing menu", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto("/landing-full.html");
     await expect(page.getByRole("button", { name: "Se hvordan det fungerer" })).toBeVisible();
-    test.fail(true, ".nav is display:none below 640px and there is no menu button");
-    await expect(page.getByRole("navigation", { name: "Hovedmeny" })).toBeVisible();
+    const menu = page.getByRole("button", { name: "Meny" });
+    await expect(menu).toBeVisible();
+    await menu.click();
+    const nav = page.getByRole("navigation", { name: "Hovedmeny" });
+    await expect(nav).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Slik fungerer det" })).toBeVisible();
+    await nav.getByRole("link", { name: "Funksjoner" }).click();
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
   });
 
   test("video modal scroll lock under the production CSP", async ({ page }) => {
@@ -168,6 +178,18 @@ test.describe("login", () => {
     await expect(page).toHaveURL(/\/portal\/?/);
     await expect(page.locator("[data-portal]")).toHaveAttribute("aria-busy", "false");
     await portalReady(page);
+  });
+
+  test("a dropped login request can be tried again", async ({ page }) => {
+    await installSupabase(page, { session: false, abortPassword: true });
+    await page.goto("/logg-inn/");
+    await page.getByLabel("E-post").fill("kari@example.com");
+    await page.getByLabel("Passord").fill("hemmelig");
+    const submit = page.getByRole("button", { name: "Logg inn", exact: true });
+    await submit.click();
+    await expect(page.getByText("Innloggingen kunne ikke fullføres. Prøv igjen.")).toBeVisible();
+    await expect(submit).toBeEnabled();
+    await expect(page).toHaveURL(/\/logg-inn\/?$/);
   });
 
   test("logged-out portal returns to login", async ({ page }) => {
@@ -266,8 +288,13 @@ test.describe("portal", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Varsler" })).toHaveAttribute("aria-expanded", "false");
 
+    await page.evaluate(() => sessionStorage.setItem("pt-property", "should-not-survive"));
     await page.getByRole("button", { name: "Logg ut" }).click();
     await expect(page).toHaveURL(/\/logg-inn\/?/);
+    await expect.poll(async () => {
+      try { return await page.evaluate(() => sessionStorage.getItem("pt-property")); }
+      catch { return "pending"; }
+    }).toBeNull();
 
     const unexpected = errors.filter((error) => !/websocket|WebSocket/i.test(String(error)));
     expect(unexpected).toEqual([]);
@@ -277,7 +304,7 @@ test.describe("portal", () => {
     const { writes, errors } = await openPortal(page);
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("button", { name: "Ny inntekt" }).click();
-    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
+    const dialog = page.getByRole("dialog", { name: "Ny inntekt" });
     const category = dialog.getByRole("button", { name: /Kategori/ });
     await category.focus();
     await page.keyboard.press("ArrowDown");
@@ -294,94 +321,233 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  test("known bug: empty required field throws choice is not defined", async ({ page }) => {
+  test("empty required field shows a message and does not throw", async ({ page }) => {
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await openPortal(page);
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("button", { name: "Ny inntekt" }).click();
-    await page.getByRole("button", { name: "Lagre", exact: true }).click();
-    await expect.poll(() => errors.join("\n")).toContain("choice is not defined");
-    await page.screenshot({ path: "/opt/cursor/artifacts/portal-empty-form.png" });
-    test.fail(true, "openForm submit references choice outside the field loop");
-    expect(errors.join("\n")).not.toContain("choice is not defined");
+    const income = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
+    await income.getByRole("button", { name: "Lagre", exact: true }).click();
+    await expect(income.getByRole("alert")).toHaveText("Velg kategori");
+    await income.getByRole("button", { name: "Avbryt" }).click();
+
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await page.getByRole("button", { name: "Ny bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create.getByText("Fyll ut «Adresse».")).toBeVisible();
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create).toBeHidden();
+    expect(errors).toEqual([]);
   });
 
-  test("known bug: editing a property clears municipality", async ({ page }) => {
+  test("editing a property keeps the stored municipality", async ({ page }) => {
     const { writes } = await openPortal(page);
     await page.getByRole("link", { name: "Om boligen", exact: true }).click();
     await page.getByRole("button", { name: "Rediger informasjon" }).click();
     await page.getByRole("button", { name: "Lagre endringer" }).click();
     await expect.poll(() => writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"))).toBeTruthy();
     const saved = writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"));
-    test.fail(true, "updateProperty sends municipality_number and municipality_name as null");
-    expect(saved.body.municipality_number).not.toBeNull();
-    expect(saved.body.municipality_name).not.toBeNull();
+    expect(saved.body).not.toHaveProperty("municipality_number");
+    expect(saved.body).not.toHaveProperty("municipality_name");
+    expect(saved.body.address_line1).toBeTruthy();
   });
 
-  test("known bug: handbook save nulls link_url and shows database text", async ({ page }) => {
-    const { writes } = await openPortal(page, { errorOn: ["property_handbook_sections"] });
+  test("a failed handbook read does not offer an empty editor", async ({ page }) => {
+    await openPortal(page, { errorOn: ["property_handbook_sections"] });
+    await page.getByRole("link", { name: "Boligperm", exact: true }).click();
+    await expect(page.getByText("Boligpermen kunne ikke hentes akkurat nå.")).toBeVisible();
+    const missing = page.locator(".pt-tile", { hasText: "Kunne ikke hentes" });
+    await expect(missing.first()).toBeVisible();
+    await expect(missing.getByRole("button", { name: "Rediger" })).toHaveCount(0);
+  });
+
+  test("saving a handbook section does not clear link_url", async ({ page }) => {
+    const { writes } = await openPortal(page);
     await page.getByRole("link", { name: "Boligperm", exact: true }).click();
     await page.getByRole("button", { name: "Rediger" }).first().click();
     await page.getByLabel("Innhold").fill("Ring vaktmester.");
     await page.getByRole("button", { name: "Lagre", exact: true }).click();
     await expect.poll(() => writes.find((entry) => String(entry.path).includes("property_handbook_sections"))).toBeTruthy();
     const saved = writes.find((entry) => String(entry.path).includes("property_handbook_sections"));
-    await expect(page.getByText(/property_handbook_sections_pkey/)).toBeVisible();
-    test.fail(true, "saveHandbookSection sets link_url null and explain() appends the raw error");
-    expect(saved.body.link_url).not.toBeNull();
-    await expect(page.getByText(/property_handbook_sections_pkey/)).toHaveCount(0);
+    expect(saved.body).not.toHaveProperty("link_url");
+    expect(saved.body.body).toBe("Ring vaktmester.");
   });
 
-  test("known bug: a failed membership read looks like no properties", async ({ page }) => {
+  test("a failed membership read says the overview could not be loaded", async ({ page }) => {
     await openPortal(page, { fail: ["property_members"] });
-    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Ny bolig" })).toBeVisible();
-    test.fail(true, "property_members errors are not treated as a failed load");
-    await expect(page.getByText("Vi fikk ikke hentet oversikten")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Vi fikk ikke hentet oversikten" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ny bolig" })).toHaveCount(0);
   });
 
-  test("known bug: a failed tenancy read looks like no tenancy", async ({ page }) => {
+  test("a failed tenancy read says the overview could not be loaded", async ({ page }) => {
     await openPortal(page, { fail: ["tenancies"] });
-    await portalReady(page);
-    await expect(page.getByRole("button", { name: "Inviter leietaker" }).first()).toBeVisible();
-    test.fail(true, "tenancies errors are ignored and the list becomes empty");
-    await expect(page.getByText("Vi fikk ikke hentet oversikten")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Vi fikk ikke hentet oversikten" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inviter leietaker" })).toHaveCount(0);
   });
 
-  test("known bug: an unknown hash stays in the address bar", async ({ page }) => {
+  test("a late chat response does not replace the page you moved to", async ({ page }) => {
+    await openPortal(page, {
+      delayRpc: {
+        provision_my_chat_conversations: 600,
+        list_my_chat_conversations_v2: 600,
+        list_my_property_chat_conversations_v2: 600,
+      },
+    });
+    await page.getByRole("link", { name: "Meldinger", exact: true }).click();
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
+    await page.waitForTimeout(900);
+    await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
+    await expect(page.locator(".pt-chat")).toHaveCount(0);
+  });
+
+  test("an unknown hash is replaced with oversikt", async ({ page }) => {
     await openPortal(page);
     await page.evaluate(() => { location.hash = "#finnes-ikke"; });
     await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
-    test.fail(true, "render falls back to oversikt without replacing the hash");
     await expect(page).toHaveURL(/#oversikt$/);
   });
 
-  test("known bug: the portal does not stack on a phone", async ({ page }) => {
+  test("the portal stacks into a menu on a phone", async ({ page }) => {
+    test.setTimeout(120_000);
     await page.setViewportSize({ width: 375, height: 812 });
     await openPortal(page);
     await portalReady(page);
     await page.screenshot({ path: "/opt/cursor/artifacts/portal-mobile.png" });
     const box = await page.locator(".pt-content").boundingBox();
-    test.fail(true, ".pt-app keeps a 220px sidebar at 860px and never stacks");
     expect(box.width).toBeGreaterThan(300);
+    const menu = page.getByRole("button", { name: "Meny" });
+    await expect(menu).toBeVisible();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeHidden();
+    await menu.click();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    await expect(page.locator("[data-page-title]")).toHaveText("Økonomi");
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+
+    for (const [label, title] of PAGES) {
+      await menu.click();
+      await page.getByRole("link", { name: label, exact: true }).click();
+      await expect(page.locator("[data-page-title]")).toHaveText(title);
+      await expect(page.getByText("Noe gikk galt")).toHaveCount(0);
+      await expect(menu).toHaveAttribute("aria-expanded", "false");
+      const overflow = await page.evaluate(() => {
+        const vw = document.documentElement.clientWidth;
+        const clipped = (el) => {
+          for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+            const s = getComputedStyle(n).overflowX;
+            if (s === "auto" || s === "scroll" || s === "hidden" || s === "clip") return true;
+          }
+          return false;
+        };
+        let worst = null;
+        for (const el of document.querySelectorAll("body *")) {
+          if (clipped(el)) continue;
+          const r = el.getBoundingClientRect();
+          const over = Math.ceil(r.right) - vw;
+          if (over > 1 && (!worst || over > worst.over)) worst = { over, tag: el.tagName, cls: String(el.className).slice(0, 80), text: (el.innerText || "").slice(0, 60) };
+        }
+        return { scroll: document.documentElement.scrollWidth - vw, worst };
+      });
+      expect(overflow.scroll, `${title} ${JSON.stringify(overflow.worst)}`).toBeLessThanOrEqual(1);
+    }
   });
 
-  test("known bug: clicking the bell icon closes the panel on the same click", async ({ page }) => {
+  test("public pages fit a phone", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    const paths = ["/", "/personvern", "/support/", "/slett-konto/", "/logg-inn/", "/landing-full.html", "/forhandsvisning", "/sporsmal-svar/", "/om-oss/", "/nope-not-a-page"];
+    for (const path of paths) {
+      await page.goto(path);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow, path).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test("clicking the bell icon opens the panel and moves focus inside", async ({ page }) => {
     await openPortal(page);
     await page.getByRole("button", { name: "Varsler" }).click();
-    test.fail(true, "drawBell replaces the SVG during click, so the outside-click listener sees a detached target");
-    await expect(page.getByRole("dialog", { name: "Varsler" })).toBeVisible({ timeout: 1000 });
+    const dialog = page.getByRole("dialog", { name: "Varsler" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("Ingen varsler ennå")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[role=dialog]") != null)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Varsler" })).toHaveAttribute("aria-expanded", "false");
   });
 
-  test("known bug: the notification panel does not take focus", async ({ page }) => {
-    await openPortal(page);
-    const bell = page.getByRole("button", { name: "Varsler" });
-    await bell.evaluate((el) => el.click());
-    await expect(page.getByRole("dialog", { name: "Varsler" })).toBeVisible();
-    test.fail(true, "opening the bell dialog leaves focus on the button");
-    const inside = await page.evaluate(() => document.activeElement?.closest("[role=dialog]") != null);
-    expect(inside).toBe(true);
+  test("a failed save does not reveal the database message", async ({ page }) => {
+    await openPortal(page, { errorOn: ["create_financial_transaction"] });
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    await page.getByRole("button", { name: "Ny inntekt" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
+    const category = dialog.getByRole("button", { name: /Kategori/ });
+    await expect(category).toHaveAttribute("aria-controls", /pt-choice-/);
+    await category.click();
+    await dialog.getByRole("option", { name: "Annen inntekt", exact: true }).click();
+    await dialog.getByLabel("Beløp").fill("1500");
+    await dialog.getByLabel("Hva gjelder inntekten?").fill("Annet");
+    await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
+    await expect(dialog.getByText("Det gikk ikke. Prøv igjen om litt.")).toBeVisible();
+    await expect(dialog.getByText(/property_handbook_sections_pkey/)).toHaveCount(0);
+  });
+
+  test("a new all-day event is stored as midnight in Norway", async ({ page }) => {
+    const { writes, errors } = await openPortal(page);
+    await page.getByRole("link", { name: "Kalender", exact: true }).click();
+    await page.getByRole("button", { name: "+ Ny hendelse" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny hendelse" }) });
+    await dialog.getByLabel("Tittel").fill("Visning");
+    await dialog.getByLabel("Dato").fill("2026-11-15");
+    await dialog.getByRole("button", { name: /Hele dagen/ }).click();
+    await dialog.getByRole("option", { name: "Ja", exact: true }).click();
+    await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
+    await expect.poll(() => writes.find((entry) => entry.path.includes("create_calendar_item"))).toBeTruthy();
+    const saved = writes.find((entry) => entry.path.includes("create_calendar_item"));
+    expect(saved.body.requested_starts_at).toBe("2026-11-14T23:00:00Z");
+    expect(saved.body.requested_all_day).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test("a signed contract reads its change list once", async ({ page }) => {
+    const requests = [];
+    await openPortal(page, { requests, signedAgreement: true });
+    await page.getByRole("link", { name: "Leiekontrakt", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Foreslå endringer" })).toBeVisible();
+    await expect(page.getByText("Endring av kontrakten")).toBeVisible();
+    const calls = requests.filter((entry) => entry.path.includes("list_rental_agreement_changes"));
+    expect(calls).toHaveLength(1);
+  });
+
+  test("chat avatar lookups are reused for the session", async ({ page }) => {
+    const requests = [];
+    await openPortal(page, { requests, omitAvatars: true });
+    const openChat = async () => {
+      await page.getByRole("link", { name: "Meldinger", exact: true }).click();
+      await expect(page.getByLabel("Melding")).toBeVisible();
+    };
+    await openChat();
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
+    await openChat();
+    const lookups = requests.filter((entry) => entry.path.includes("list_chat_counterpart_avatars"));
+    const files = requests.filter((entry) => entry.path.includes("profile-avatars"));
+    expect(lookups).toHaveLength(2);
+    expect(files).toHaveLength(1);
+  });
+
+  test("gallery images download at most four at a time", async ({ page }) => {
+    const requests = [];
+    const stats = { inflight: 0, maxPropertyImages: 0 };
+    await openPortal(page, { requests, stats, gallery: true, delayStorage: 200 });
+    await page.getByRole("link", { name: "Boligbilder", exact: true }).click();
+    await expect(page.getByText("6 av 12 bilder")).toBeVisible();
+    await expect.poll(() => requests.filter((entry) => entry.path.includes("/property-images/")).length).toBe(6);
+    expect(stats.maxPropertyImages).toBeLessThanOrEqual(4);
+    expect(stats.maxPropertyImages).toBeGreaterThan(1);
   });
 
   test("premium gate when the account has no entitlement", async ({ page }) => {
