@@ -82,9 +82,11 @@ const isObj = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 const sortedKeys = (o) => Object.keys(o).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 const AMOUNT_KEYS = ["rent_amount_minor", "deposit_amount_minor", "security_amount_minor"];
 const isAmountKey = (k) => AMOUNT_KEYS.includes(k);
+const NATIONAL_ID = /personnummer|fodselsnummer|fødselsnummer|foedselsnummer|national[_-]?id|birth[_-]?number|\bnin\b|\bssn\b|d-?number|dnummer/;
 const isHidden = (k) => {
   if (k === "id" || k.endsWith("_id") || k.endsWith("_sha256")) return true;
   const l = k.toLowerCase();
+  if (NATIONAL_ID.test(l)) return true;
   return ["storage", "queue", "package", "receipt", "token", "url", "path"].some((t) => l.includes(t));
 };
 const integer = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null);
