@@ -5410,15 +5410,17 @@ const load = async (session, isRefresh = false) => {
     supabase.from("maintenance_requests").select("property_id").in("status", OPEN_TASK_STATUSES),
   ]);
   state.name = firstNameOf(profileRes.data, user);
-  state.roles = new Map((propertyRolesRes.data ?? []).map((r) => [r.property_id, r.role]));
+  const overviewFailed = Boolean(propertiesRes.error || propertyRolesRes.error || tenanciesRes.error);
+  state.roles = new Map(overviewFailed ? [] : (propertyRolesRes.data ?? []).map((r) => [r.property_id, r.role]));
   // The web portal is always the landlord view. RLS also returns properties and tenancies where
   // you are only the tenant; those stay in the app and are never shown here.
   const manages = (pid) => ["owner", "co_landlord"].includes(state.roles.get(pid));
-  state.properties = (propertiesRes.data ?? []).filter((p) => manages(p.id));
+  state.properties = overviewFailed ? [] : (propertiesRes.data ?? []).filter((p) => manages(p.id));
   // Refresh drops a tenancy that was just ended. Ended rows are not loaded into this list.
-  state.tenancies = overviewTenancies((tenanciesRes.data ?? []).filter((t) => manages(t.property_id)));
-  state.manualOccupants = occupantsRes.error ? [] : (occupantsRes.data ?? []).filter((o) => manages(o.property_id));
-  if (!tasksRes.error) {
+  state.tenancies = overviewFailed ? [] : overviewTenancies((tenanciesRes.data ?? []).filter((t) => manages(t.property_id)));
+  state.manualOccupants = occupantsRes.error || overviewFailed ? [] : (occupantsRes.data ?? []).filter((o) => manages(o.property_id));
+  if (tasksRes.error || overviewFailed) state.openTasks.clear();
+  else {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
   }
@@ -5442,7 +5444,7 @@ const load = async (session, isRefresh = false) => {
   if (!isRefresh) startBell();
   root.setAttribute("aria-busy", "false");
   renderSelect();
-  if (propertiesRes.error && !state.properties.length) {
+  if (overviewFailed) {
     renderNav("oversikt");
     content.replaceChildren(emptyPage("info", "Vi fikk ikke hentet oversikten", "Prøv å laste siden på nytt om litt. Alt er tilgjengelig i appen i mellomtiden."));
     return;

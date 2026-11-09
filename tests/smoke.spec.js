@@ -356,20 +356,16 @@ test.describe("portal", () => {
     expect(saved.body.body).toBe("Ring vaktmester.");
   });
 
-  test("known bug: a failed membership read looks like no properties", async ({ page }) => {
+  test("a failed membership read says the overview could not be loaded", async ({ page }) => {
     await openPortal(page, { fail: ["property_members"] });
-    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Ny bolig" })).toBeVisible();
-    test.fail(true, "property_members errors are not treated as a failed load");
-    await expect(page.getByText("Vi fikk ikke hentet oversikten")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Vi fikk ikke hentet oversikten" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ny bolig" })).toHaveCount(0);
   });
 
-  test("known bug: a failed tenancy read looks like no tenancy", async ({ page }) => {
+  test("a failed tenancy read says the overview could not be loaded", async ({ page }) => {
     await openPortal(page, { fail: ["tenancies"] });
-    await portalReady(page);
-    await expect(page.getByRole("button", { name: "Inviter leietaker" }).first()).toBeVisible();
-    test.fail(true, "tenancies errors are ignored and the list becomes empty");
-    await expect(page.getByText("Vi fikk ikke hentet oversikten")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Vi fikk ikke hentet oversikten" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inviter leietaker" })).toHaveCount(0);
   });
 
   test("known bug: an unknown hash stays in the address bar", async ({ page }) => {
