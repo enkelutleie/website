@@ -188,8 +188,18 @@ function rpcPayload(name, body, options = {}) {
     case "list_tenancy_history":
       return pid === PROPERTY_ID ? [historyEntry] : [];
     case "list_my_chat_conversations_v2":
-    case "list_my_chat_conversations":
-      return [conversation];
+    case "list_my_chat_conversations": {
+      const second = { ...conversation, conversation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
+      const rows = options.omitAvatars ? [conversation, second] : [conversation];
+      if (!options.omitAvatars) return rows;
+      return rows.map((row) => {
+        const copy = { ...row };
+        delete copy.counterpart_avatars;
+        return copy;
+      });
+    }
+    case "list_chat_counterpart_avatars":
+      return [{ user_id: TENANT_ID, avatar_revision: 1 }];
     case "send_chat_message":
       return [{
         id: "99999999-9999-4999-8999-999999999999",
@@ -286,7 +296,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars,
     });
     if (options.requests) options.requests.push({ method: req.method(), path: url.pathname });
     if (result.abort) {

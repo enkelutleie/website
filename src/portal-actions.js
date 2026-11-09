@@ -1338,8 +1338,21 @@ export const chatTenantMembers = (tenancyIds) =>
   supabase.from("tenancy_members").select("tenancy_id, user_id").in("tenancy_id", tenancyIds).eq("role", "tenant").eq("invitation_status", "accepted");
 export const linkedContacts = (userIds) => supabase.rpc("list_linked_profile_contacts", { requested_user_ids: userIds });
 // Rows without counterpart_avatars (v1 server) get one list_chat_counterpart_avatars call each.
-export const chatCounterpartAvatars = (conversationId) =>
-  supabase.rpc("list_chat_counterpart_avatars", { requested_conversation_id: conversationId });
+// The result is kept for the session, and a second ask for the same conversation shares that call.
+const counterpartAvatars = new Map();
+export function chatCounterpartAvatars(conversationId) {
+  let pending = counterpartAvatars.get(conversationId);
+  if (pending) return pending;
+  pending = supabase.rpc("list_chat_counterpart_avatars", { requested_conversation_id: conversationId }).then((res) => {
+    if (res.error) counterpartAvatars.delete(conversationId);
+    return res;
+  }, (error) => {
+    counterpartAvatars.delete(conversationId);
+    throw error;
+  });
+  counterpartAvatars.set(conversationId, pending);
+  return pending;
+}
 // Profile photo from the private "profile-avatars" bucket ({user_id}/avatar.jpg), as a data: URL (CSP).
 const avatarUrls = new Map();
 export function avatarDataUrl(userId, revision) {

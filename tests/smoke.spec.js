@@ -522,6 +522,23 @@ test.describe("portal", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("chat avatar lookups are reused for the session", async ({ page }) => {
+    const requests = [];
+    await openPortal(page, { requests, omitAvatars: true });
+    const openChat = async () => {
+      await page.getByRole("link", { name: "Meldinger", exact: true }).click();
+      await expect(page.getByLabel("Melding")).toBeVisible();
+    };
+    await openChat();
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await expect(page.locator("[data-page-title]")).toHaveText("Oversikt");
+    await openChat();
+    const lookups = requests.filter((entry) => entry.path.includes("list_chat_counterpart_avatars"));
+    const files = requests.filter((entry) => entry.path.includes("profile-avatars"));
+    expect(lookups).toHaveLength(2);
+    expect(files).toHaveLength(1);
+  });
+
   test("premium gate when the account has no entitlement", async ({ page }) => {
     await openPortal(page, { premium: false });
     await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();

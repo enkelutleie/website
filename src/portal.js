@@ -1858,10 +1858,14 @@ async function chatPage() {
   const convs = p ? all.filter((c) => c.property_id === p.id) : all;
   if (!all.length) return [emptyPage("chat", "Ingen samtaler", "Du har ikke et aktivt leieforhold med noen du kan chatte med ennå.")];
   if (!convs.length) return [emptyPage("chat", "Ingen samtale", "Det finnes ingen samtale for denne boligen ennå. Inviter en leietaker for å starte en samtale, eller oppdater listen hvis leieforholdet allerede er aktivt.")];
-  await Promise.all(convs.filter((c) => !Array.isArray(c.counterpart_avatars)).map(async (c) => {
-    const r = await act.chatCounterpartAvatars(c.conversation_id);
-    c.counterpart_avatars = r.data ?? [];
-  }));
+  const missing = [...new Set(convs.filter((c) => !Array.isArray(c.counterpart_avatars)).map((c) => c.conversation_id))];
+  const loaded = await Promise.all(missing.map(async (id) => [id, (await act.chatCounterpartAvatars(id)).data ?? []]));
+  const avatarsByConversation = new Map(loaded);
+  for (const c of convs) {
+    if (!Array.isArray(c.counterpart_avatars) && avatarsByConversation.has(c.conversation_id)) {
+      c.counterpart_avatars = avatarsByConversation.get(c.conversation_id);
+    }
+  }
   const { labels, tenantPresent } = await chatPeople(convs);
   if (token !== renderToken) return [];
   const titleOf = (c) => (c.is_property_chat ? "Alle i boligen" : labels.get(c.conversation_id) ?? "Leietaker");
