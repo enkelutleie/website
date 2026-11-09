@@ -198,42 +198,60 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     });
     form.addEventListener("input", () => onChange?.(inputs, show));
     onChange?.(inputs, show);
+    // One submit at a time. A second click or Enter while saving is ignored, and the
+    // fields stay locked until onSubmit finishes (including a slow sign call).
+    let saving = false;
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      status.hidden = true;
-      const values = {};
-      for (const f of fields) {
-        const input = inputs[f.name];
-        const hidden = input.closest(".pt-field").hidden;
-        values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null)
-          : f.type === "checkbox" ? (input.checked ? "true" : "") : input.value.trim();
-        if (f.required && !hidden && !values[f.name]) {
-          status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
+      if (saving) return;
+      saving = true;
+      const controls = () => [...form.querySelectorAll("input, textarea, button")].filter((el) => el.type !== "file");
+      let priorDisabled = null;
+      const unlock = () => {
+        form.classList.remove("is-saving");
+        if (!priorDisabled) return;
+        for (const [el, was] of priorDisabled) el.disabled = was;
+        priorDisabled = null;
+      };
+      try {
+        status.hidden = true;
+        const values = {};
+        for (const f of fields) {
+          const input = inputs[f.name];
+          const hidden = input.closest(".pt-field").hidden;
+          values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null)
+            : f.type === "checkbox" ? (input.checked ? "true" : "") : input.value.trim();
+          if (f.required && !hidden && !values[f.name]) {
+            status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
+            status.hidden = false;
+            const isChoice = f.type === "choice" || f.type === "select";
+            const target = isChoice ? input.closest(".pt-field")?.querySelector(".pt-choice-button") : input;
+            target?.focus();
+            return;
+          }
+        }
+        priorDisabled = controls().map((el) => [el, el.disabled]);
+        for (const [el] of priorDisabled) el.disabled = true;
+        form.classList.add("is-saving");
+        submit.textContent = "Lagrer …";
+        let error;
+        try {
+          error = await onSubmit(values, inputs);
+        } catch (err) {
+          error = explain(err);
+        }
+        unlock();
+        submit.textContent = submitLabel;
+        if (error) {
+          status.textContent = error;
           status.hidden = false;
-          const isChoice = f.type === "choice" || f.type === "select";
-          const target = isChoice ? input.closest(".pt-field")?.querySelector(".pt-choice-button") : input;
-          target?.focus();
           return;
         }
+        close(true);
+      } finally {
+        unlock();
+        saving = false;
       }
-      submit.disabled = true;
-      cancel.disabled = true;
-      submit.textContent = "Lagrer …";
-      let error;
-      try {
-        error = await onSubmit(values, inputs);
-      } catch (err) {
-        error = explain(err);
-      }
-      submit.disabled = submitDisabled;
-      cancel.disabled = false;
-      submit.textContent = submitLabel;
-      if (error) {
-        status.textContent = error;
-        status.hidden = false;
-        return;
-      }
-      close(true);
     });
     dialog.showModal();
     // Skip the FINN import field and anything inside a hidden row (the image
@@ -1111,23 +1129,114 @@ const SIGN_OUTCOME_TEXT = {
   unauthenticated: "Økten er utløpt. Logg inn på nytt og prøv igjen.",
   invalid_request: "Tegn signaturen på nytt.",
 };
-const signResult = async ({ data, error }, okOutcomes) => {
+// Statuses past ready_for_review. A lost contract-pdf response can still have moved the agreement here.
+const SIGN_FORWARD = new Set(["awaiting_signatures", "partially_signed", "signed"]);
+// Three reads spread across about ten seconds. The first is immediate.
+// Tests set gapMs to 0; production keeps the spacing below.
+export const signStatusRetry = { attempts: 3, gapMs: 5_000 };
+const signFlights = new Map();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const asRows = (data) => (Array.isArray(data) ? data : data ? [data] : []);
+const partySigned = (parties) => asRows(parties).some((p) => p?.has_signature || p?.signed_at);
+
+const signResult = async ({ data, error }, okOutcomes, confirmLanded) => {
   let body = data;
   if (typeof data === "string") { try { body = JSON.parse(data); } catch { body = null; } }
   const outcome = error ? await fnOutcome(error) : body?.outcome;
   if (okOutcomes.includes(outcome)) return { outcome };
+  // A named rejection answered the call. A timeout or a dropped response did not:
+  // the signature may already be stored, so confirm before showing an error.
+  const rejected = typeof outcome === "string" && Object.prototype.hasOwnProperty.call(SIGN_OUTCOME_TEXT, outcome);
+  if (!rejected && confirmLanded && await confirmLanded()) return { outcome: okOutcomes[0] };
   if (error && !outcome && (error.name === "FunctionsFetchError" || error.name === "FunctionsRelayError")) {
     return { message: "Nettleseren fikk ikke kontakt med signeringstjenesten. Prøv igjen om litt." };
   }
   return { message: SIGN_OUTCOME_TEXT[outcome] ?? "Signaturen ble ikke registrert på kontrakten. Last inn på nytt og prøv igjen." };
 };
 
+const signatureRecorded = (lease) => !!lease?.data?.both_parties_signed_confirmed
+  || Number(lease?.data?.recorded_signature_count) > 0
+  || partySigned(lease?.parties);
+
+// Same reads the portal already uses for an agreement: the property list (agreement_status),
+// the lease row and its parties (has_signature), then the agreement payload.
+async function readSignState(a) {
+  const [list, lease] = await Promise.all([
+    a.property_id ? listAgreements(a.property_id) : Promise.resolve(null),
+    agreementLease(a.agreement_id),
+  ]);
+  let status = null;
+  let signatureRegistered = false;
+  let conclusive = false;
+  if (list && !list.error) {
+    const row = asRows(list.data).find((r) => r.agreement_id === a.agreement_id);
+    if (row?.agreement_status) {
+      status = row.agreement_status;
+      conclusive = true;
+    }
+  }
+  if (lease && !lease.error) {
+    if (!status && lease.data?.agreement_status) {
+      status = lease.data.agreement_status;
+      conclusive = true;
+    }
+    if (signatureRecorded(lease)) {
+      signatureRegistered = true;
+      conclusive = true;
+    }
+  }
+  if (!conclusive) {
+    const detail = await getAgreement(a.agreement_id);
+    if (!detail.error && detail.data) {
+      const agreement = detail.data.agreement ?? {};
+      status = status || agreement.agreement_status || agreement.status || null;
+      if (partySigned(detail.data.parties) || partySigned(agreement.parties)) signatureRegistered = true;
+    }
+  }
+  return { status, signatureRegistered };
+}
+
+const signingLanded = (before, state) => {
+  if (!state) return false;
+  if (state.signatureRegistered) return true;
+  return !!state.status && state.status !== before && SIGN_FORWARD.has(state.status);
+};
+
+async function confirmSignatureLanded(a) {
+  const before = a?.agreement_status ?? null;
+  for (let attempt = 0; attempt < signStatusRetry.attempts; attempt += 1) {
+    if (attempt > 0) await sleep(signStatusRetry.gapMs);
+    try {
+      if (signingLanded(before, await readSignState(a))) return true;
+    } catch { /* the next attempt reads again */ }
+  }
+  return false;
+}
+
 // signApprovedContract: contract-pdf intent "deliver" with landlord_ink, only from ready_for_review.
-export async function signAsLandlord(a, ink) {
-  const res = await supabase.functions.invoke("contract-pdf", {
-    body: { agreement_id: a.agreement_id, version_id: a.current_version_id, revision: Number(a.draft_revision), intent: "deliver", landlord_ink: ink },
+// A replacement draft from «Foreslå endringer» is signed through the same call.
+// Overlapping submits for one agreement share one request.
+export function signAsLandlord(a, ink) {
+  const key = a?.agreement_id ? String(a.agreement_id) : "";
+  if (key && signFlights.has(key)) return signFlights.get(key);
+  const job = deliverLandlordSignature(a, ink).finally(() => {
+    if (key && signFlights.get(key) === job) signFlights.delete(key);
   });
-  return signResult(res, ["ready"]);
+  if (key) signFlights.set(key, job);
+  return job;
+}
+
+async function deliverLandlordSignature(a, ink) {
+  let res;
+  try {
+    res = await supabase.functions.invoke("contract-pdf", {
+      body: { agreement_id: a.agreement_id, version_id: a.current_version_id, revision: Number(a.draft_revision), intent: "deliver", landlord_ink: ink },
+    });
+  } catch (error) {
+    res = { data: null, error };
+  }
+  return signResult(res, ["ready"], () => confirmSignatureLanded(a));
 }
 
 export async function agreementLease(agreementId) {
@@ -1219,14 +1328,16 @@ export function signatureForm({ title, intro, name, submitLabel, onSubmit }) {
     const r = canvas.getBoundingClientRect();
     return [(e.clientX - r.left) * (canvas.width / r.width), (e.clientY - r.top) * (canvas.height / r.height)];
   };
+  const padLocked = () => !!canvas.closest(".is-saving");
   canvas.addEventListener("pointerdown", (e) => {
+    if (padLocked()) return;
     drawing = true;
     canvas.setPointerCapture(e.pointerId);
     ctx.beginPath();
     ctx.moveTo(...at(e));
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (!drawing) return;
+    if (!drawing || padLocked()) return;
     ctx.lineTo(...at(e));
     ctx.stroke();
     points += 1;
@@ -1236,7 +1347,7 @@ export function signatureForm({ title, intro, name, submitLabel, onSubmit }) {
   canvas.addEventListener("pointercancel", stop);
   const clear = h("button", "pt-btn pt-btn-secondary pt-btn-small", "Tøm");
   clear.type = "button";
-  clear.addEventListener("click", () => { blank(); points = 0; });
+  clear.addEventListener("click", () => { if (padLocked()) return; blank(); points = 0; });
   pad.append(h("span", "pt-field-label", "Signatur"), canvas, clear);
   const today = new Date();
   const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
