@@ -73,8 +73,8 @@ describe("contract signing after a lost response", { concurrency: 1 }, () => {
   });
 
   test("a timeout followed by status signed is success", async () => {
-    assert.equal(ATTEMPTS, 3);
-    assert.equal(GAP_MS * (ATTEMPTS - 1), 10_000);
+    assert.equal(ATTEMPTS, 19);
+    assert.equal(GAP_MS * (ATTEMPTS - 1), 90_000);
     const calls = installSupabase({
       invoke: async () => ({ data: null, error: { name: "FunctionsFetchError", message: "Failed to fetch" } }),
       listStatus: (n) => (n >= 2 ? "signed" : "ready_for_review"),
@@ -97,7 +97,7 @@ describe("contract signing after a lost response", { concurrency: 1 }, () => {
     assert.equal(res.message, NETWORK);
     assert.equal(res.outcome, undefined);
     assert.equal(calls.invoke, 1);
-    assert.equal(calls.list, 3);
+    assert.equal(calls.list, ATTEMPTS);
     assert.equal(calls.rpc.filter((name) => name === "get_rental_agreement").length, 0);
   });
 

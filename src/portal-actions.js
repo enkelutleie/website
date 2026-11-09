@@ -1131,9 +1131,9 @@ const SIGN_OUTCOME_TEXT = {
 };
 // Statuses past ready_for_review. A lost contract-pdf response can still have moved the agreement here.
 const SIGN_FORWARD = new Set(["awaiting_signatures", "partially_signed", "signed"]);
-// Three reads spread across about ten seconds. The first is immediate.
+// Reads every five seconds for 90 seconds, like iOS. The first is immediate.
 // Tests set gapMs to 0; production keeps the spacing below.
-export const signStatusRetry = { attempts: 3, gapMs: 5_000 };
+export const signStatusRetry = { attempts: 19, gapMs: 5_000 };
 const signFlights = new Map();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
