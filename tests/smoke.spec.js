@@ -390,21 +390,15 @@ test.describe("portal", () => {
     await expect(menu).toHaveAttribute("aria-expanded", "false");
   });
 
-  test("known bug: clicking the bell icon closes the panel on the same click", async ({ page }) => {
+  test("clicking the bell icon opens the panel and moves focus inside", async ({ page }) => {
     await openPortal(page);
     await page.getByRole("button", { name: "Varsler" }).click();
-    test.fail(true, "drawBell replaces the SVG during click, so the outside-click listener sees a detached target");
-    await expect(page.getByRole("dialog", { name: "Varsler" })).toBeVisible({ timeout: 1000 });
-  });
-
-  test("known bug: the notification panel does not take focus", async ({ page }) => {
-    await openPortal(page);
-    const bell = page.getByRole("button", { name: "Varsler" });
-    await bell.evaluate((el) => el.click());
-    await expect(page.getByRole("dialog", { name: "Varsler" })).toBeVisible();
-    test.fail(true, "opening the bell dialog leaves focus on the button");
-    const inside = await page.evaluate(() => document.activeElement?.closest("[role=dialog]") != null);
-    expect(inside).toBe(true);
+    const dialog = page.getByRole("dialog", { name: "Varsler" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("Ingen varsler ennå")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[role=dialog]") != null)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Varsler" })).toHaveAttribute("aria-expanded", "false");
   });
 
   test("premium gate when the account has no entitlement", async ({ page }) => {

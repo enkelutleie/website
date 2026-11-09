@@ -5093,6 +5093,7 @@ const drawBell = () => {
   const panel = h("section", "pt-notif");
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", "Varsler");
+  panel.tabIndex = -1;
   const head = h("div", "pt-notif-head");
   head.append(h("h2", null, "Varsler"));
   const all = button("Merk alle som lest", "pt-btn-soft pt-btn-small", markAllBell);
@@ -5149,10 +5150,13 @@ const closeBell = () => {
 const startBell = () => {
   const { wrap, btn } = bellEls();
   if (!btn) return;
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
     bell.open = !bell.open;
     drawBell();
-    if (bell.open) loadBell({ quiet: true });
+    if (!bell.open) return;
+    loadBell({ quiet: true });
+    wrap.querySelector(".pt-notif")?.focus();
   });
   document.addEventListener("click", (e) => { if (bell.open && !wrap.contains(e.target)) closeBell(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && bell.open) { closeBell(); btn.focus(); } });
