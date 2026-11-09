@@ -24,6 +24,13 @@ function prettyPersonvern() {
     if (req.url === "/sporsmal-svar") {
       req.url = "/sporsmal-svar/";
     }
+    const path = (req.url ?? "").split("?")[0];
+    let decoded = path;
+    try { decoded = decodeURIComponent(path); } catch { /* keep the raw path */ }
+    if (path === "/forhandsvisning" || decoded === "/forhandsvisning" || decoded === "/forhåndsvisning") {
+      const query = (req.url ?? "").includes("?") ? `?${req.url.split("?").slice(1).join("?")}` : "";
+      req.url = `/landing-full.html${query}`;
+    }
     next();
   };
 

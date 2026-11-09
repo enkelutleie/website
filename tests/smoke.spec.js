@@ -102,18 +102,24 @@ test.describe("public pages", () => {
     expect(videos).toEqual([]);
   });
 
-  test("known bug: vite preview does not serve /forhandsvisning", async ({ page }) => {
+  test("vite preview serves the landing at /forhandsvisning", async ({ page }) => {
     await page.goto("/forhandsvisning");
-    test.fail(true, "previewNotFound does not know the landing preview path");
     await expect(page).toHaveTitle(/utleie, helt enkelt/);
+    await expect(page.getByRole("button", { name: "Se hvordan det fungerer" })).toBeVisible();
   });
 
-  test("known bug: phone header hides the landing menu", async ({ page }) => {
+  test("phone header opens the landing menu", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto("/landing-full.html");
     await expect(page.getByRole("button", { name: "Se hvordan det fungerer" })).toBeVisible();
-    test.fail(true, ".nav is display:none below 640px and there is no menu button");
-    await expect(page.getByRole("navigation", { name: "Hovedmeny" })).toBeVisible();
+    const menu = page.getByRole("button", { name: "Meny" });
+    await expect(menu).toBeVisible();
+    await menu.click();
+    const nav = page.getByRole("navigation", { name: "Hovedmeny" });
+    await expect(nav).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Slik fungerer det" })).toBeVisible();
+    await nav.getByRole("link", { name: "Funksjoner" }).click();
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
   });
 
   test("video modal scroll lock under the production CSP", async ({ page }) => {
