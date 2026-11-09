@@ -4176,27 +4176,6 @@ const assetForm = async (pid, data, asset = null) => {
   });
 };
 
-const disposeForm = (asset) => {
-  act.openForm({
-    title: "Salg eller utrangering",
-    intro: "Salgsprisen reduserer det som står igjen. Skriv 0 hvis gjenstanden kastes uten salg.",
-    fields: [
-      { name: "date", label: "Dato", type: "date", value: todayISO(), required: true },
-      { name: "proceeds", label: "Salgssum, 0 hvis den kastes", type: "money", value: "", placeholder: "0", required: true },
-    ],
-    submitLabel: "Registrer salget",
-    onSubmit: async (v) => {
-      const proceeds = act.minorOf(v.proceeds);
-      if (proceeds == null) return "Skriv inn salgssum, eller 0 hvis den kastes.";
-      if (v.date < asset.purchase_date) return "Datoen kan ikke være før kjøpsdatoen.";
-      const res = await inv.disposeAsset(asset.id, v.date, proceeds);
-      if (res.error) return "Kunne ikke registrere salget.";
-      refresh("Salg eller utrangering er registrert.");
-      return null;
-    },
-  });
-};
-
 const metric = (title, caption, amount, ic, tone) => {
   const k = h("section", "pt-card pt-kpi");
   const top = h("div", "pt-kpi-top");
@@ -4233,7 +4212,6 @@ const saldoCard = (outlook, data) => {
     dl.append(d);
     c.append(dl);
   }
-  if (s.missingProceeds) c.append(inline("En solgt gjenstand mangler salgssum. Saldoen er ikke redusert for den."));
   if (s.canTakeRemainder && !chosen?.take_remainder) {
     c.append(actionsRow(button("Trekk fra resten nå", "pt-btn-soft pt-btn-small", async () => {
       const res = await inv.saveElection(s.taxYear, chosen?.rate_bps ?? s.rateBps, true, outlook.scope.key);
@@ -4248,7 +4226,7 @@ const assetRow = (item, row, alloc, data, showProperty) => {
   const li = h("li", "pt-row pt-row-stack");
   const top = h("div", "pt-row-line");
   const main = h("div", "pt-row-main");
-  main.append(h("strong", null, item.name), h("span", null, [`Kjøpt ${dateText(item.purchaseDate)}`, showProperty ? item.propertyName : null, item.disposalDate ? "Solgt eller utrangert" : null].filter(Boolean).join(" · ")));
+  main.append(h("strong", null, item.name), h("span", null, [`Kjøpt ${dateText(item.purchaseDate)}`, showProperty ? item.propertyName : null].filter(Boolean).join(" · ")));
   const d = inv.decision(item);
   const [badge, tone] = inv.BADGE[d];
   const amount = row.isPurchase ? item.purchaseAmountMinor : row.closingMinor ?? row.openingMinor ?? item.purchaseAmountMinor;
@@ -4280,7 +4258,6 @@ const assetRow = (item, row, alloc, data, showProperty) => {
   const asset = data.assets[item.id];
   detail.append(actionsRow(
     manager ? button("Rediger", "pt-btn-soft pt-btn-small", () => assetForm(item.propertyId, data, asset)) : null,
-    manager && !item.disposalDate ? button("Selg eller utranger", "pt-btn-soft pt-btn-small", () => disposeForm(asset)) : null,
   ));
   li.append(actionsRow(toggle), detail);
   return li;
