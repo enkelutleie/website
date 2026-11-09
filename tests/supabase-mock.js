@@ -120,6 +120,7 @@ const calendarItem = {
   maintenance_request_id: null,
   tenant_response: null,
 };
+tables.property_calendar_items = [calendarItem];
 
 const GALLERY_COLLECTION = "abababab-abab-4aba-8aba-abababababab";
 
@@ -317,7 +318,7 @@ export async function installSupabase(page, options = {}) {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
       premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery,
     });
-    if (options.requests) options.requests.push({ method: req.method(), path: url.pathname });
+    if (options.requests) options.requests.push({ method: req.method(), path: url.pathname, select: url.searchParams.get("select") });
     if (result.abort) {
       await route.abort("failed");
       return;
