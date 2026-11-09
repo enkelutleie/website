@@ -318,16 +318,16 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  test("known bug: editing a property clears municipality", async ({ page }) => {
+  test("editing a property keeps the stored municipality", async ({ page }) => {
     const { writes } = await openPortal(page);
     await page.getByRole("link", { name: "Om boligen", exact: true }).click();
     await page.getByRole("button", { name: "Rediger informasjon" }).click();
     await page.getByRole("button", { name: "Lagre endringer" }).click();
     await expect.poll(() => writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"))).toBeTruthy();
     const saved = writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"));
-    test.fail(true, "updateProperty sends municipality_number and municipality_name as null");
-    expect(saved.body.municipality_number).not.toBeNull();
-    expect(saved.body.municipality_name).not.toBeNull();
+    expect(saved.body).not.toHaveProperty("municipality_number");
+    expect(saved.body).not.toHaveProperty("municipality_name");
+    expect(saved.body.address_line1).toBeTruthy();
   });
 
   test("known bug: handbook save nulls link_url and shows database text", async ({ page }) => {

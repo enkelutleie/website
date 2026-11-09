@@ -491,8 +491,6 @@ export const updateProperty = (p, v) =>
     rental_profile: profileOf(v.use, p.rental_profile),
     finn_code: finnOf(v.finn),
     payment_account_override: (v.account ?? "").replace(/\D/g, "") || null,
-    municipality_number: null,
-    municipality_name: null,
   }).eq("id", p.id);
 
 /* ---------- Arkiver bolig (LifecycleB1Controller.swift) ---------- */
