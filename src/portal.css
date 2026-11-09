@@ -595,3 +595,6 @@ svg { flex: none; }
 .pt-gallery-modal .pt-modal-card { width: min(920px, 94vw); }
 .pt-gallery-full { display: block; width: 100%; height: min(70vh, 640px); object-fit: contain; background: var(--brand-wash); border-radius: var(--radius-sm); }
 .pt-gallery-page { text-align: center; margin: var(--space-s) 0 0; }
+
+.pt-handover-optional { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px; border-radius: 14px; background: var(--brand-soft); color: var(--ink); }
+.pt-handover-optional-icon { flex: none; color: var(--brand); }
