@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/tenancy-listing.test.js src/finn-import.test.js",
+    "test": "node --test src/tenancy-listing.test.js src/finn-import.test.js tests/privacy-export.test.js",
+    "test:smoke": "playwright test",
     "preview": "vite preview",
     "og": "python3 scripts/generate-og-image.py"
   },
@@ -16,6 +17,7 @@
   },
   "packageManager": "pnpm@10.33.3",
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "vite": "^7.1.5"
   },
   "dependencies": {
