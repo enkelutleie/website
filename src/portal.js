@@ -16,11 +16,16 @@ import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time
 
 const root = document.querySelector("[data-portal]");
 const content = root?.querySelector("[data-content]");
-let leaving = false;
+let loginQueued = false;
 const toLogin = () => {
-  if (leaving) return;
-  leaving = true;
-  location.replace("/logg-inn/");
+  if (loginQueued || location.pathname.startsWith("/logg-inn")) return;
+  loginQueued = true;
+  // One navigation, after the sign-out request has settled. A second call in the
+  // same turn used to abort the first and leave the landlord on the portal.
+  setTimeout(() => {
+    loginQueued = false;
+    if (!location.pathname.startsWith("/logg-inn")) location.replace("/logg-inn/");
+  }, 0);
 };
 
 const OPEN_TASK_STATUSES = ["reported", "in_progress", "waiting"];
