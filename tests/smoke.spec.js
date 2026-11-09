@@ -57,6 +57,8 @@ test.describe("public pages", () => {
     await expect(page.getByRole("heading", { name: "Personvern" })).toBeVisible();
     await page.goto("/slett-konto/");
     await expect(page.getByRole("heading", { name: "Slett kontoen din" })).toBeVisible();
+    await page.goto("/support/");
+    await expect(page.getByRole("heading", { name: "Support" })).toBeVisible();
     await page.goto("/om-oss/");
     await expect(page.getByRole("heading", { name: "Historien bak Enkel Utleie" })).toBeVisible();
     await page.goto("/nope-not-a-page");
@@ -384,6 +386,7 @@ test.describe("portal", () => {
   });
 
   test("the portal stacks into a menu on a phone", async ({ page }) => {
+    test.setTimeout(120_000);
     await page.setViewportSize({ width: 375, height: 812 });
     await openPortal(page);
     await portalReady(page);
@@ -398,6 +401,43 @@ test.describe("portal", () => {
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await expect(page.locator("[data-page-title]")).toHaveText("Økonomi");
     await expect(menu).toHaveAttribute("aria-expanded", "false");
+
+    for (const [label, title] of PAGES) {
+      await menu.click();
+      await page.getByRole("link", { name: label, exact: true }).click();
+      await expect(page.locator("[data-page-title]")).toHaveText(title);
+      await expect(page.getByText("Noe gikk galt")).toHaveCount(0);
+      await expect(menu).toHaveAttribute("aria-expanded", "false");
+      const overflow = await page.evaluate(() => {
+        const vw = document.documentElement.clientWidth;
+        const clipped = (el) => {
+          for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+            const s = getComputedStyle(n).overflowX;
+            if (s === "auto" || s === "scroll" || s === "hidden" || s === "clip") return true;
+          }
+          return false;
+        };
+        let worst = null;
+        for (const el of document.querySelectorAll("body *")) {
+          if (clipped(el)) continue;
+          const r = el.getBoundingClientRect();
+          const over = Math.ceil(r.right) - vw;
+          if (over > 1 && (!worst || over > worst.over)) worst = { over, tag: el.tagName, cls: String(el.className).slice(0, 80), text: (el.innerText || "").slice(0, 60) };
+        }
+        return { scroll: document.documentElement.scrollWidth - vw, worst };
+      });
+      expect(overflow.scroll, `${title} ${JSON.stringify(overflow.worst)}`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test("public pages fit a phone", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    const paths = ["/", "/personvern", "/support/", "/slett-konto/", "/logg-inn/", "/landing-full.html", "/forhandsvisning", "/sporsmal-svar/", "/om-oss/", "/nope-not-a-page"];
+    for (const path of paths) {
+      await page.goto(path);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow, path).toBeLessThanOrEqual(1);
+    }
   });
 
   test("clicking the bell icon opens the panel and moves focus inside", async ({ page }) => {
