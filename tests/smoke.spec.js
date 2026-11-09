@@ -335,18 +335,25 @@ test.describe("portal", () => {
     expect(saved.body.address_line1).toBeTruthy();
   });
 
-  test("known bug: handbook save nulls link_url and shows database text", async ({ page }) => {
-    const { writes } = await openPortal(page, { errorOn: ["property_handbook_sections"] });
+  test("a failed handbook read does not offer an empty editor", async ({ page }) => {
+    await openPortal(page, { errorOn: ["property_handbook_sections"] });
+    await page.getByRole("link", { name: "Boligperm", exact: true }).click();
+    await expect(page.getByText("Boligpermen kunne ikke hentes akkurat nå.")).toBeVisible();
+    const missing = page.locator(".pt-tile", { hasText: "Kunne ikke hentes" });
+    await expect(missing.first()).toBeVisible();
+    await expect(missing.getByRole("button", { name: "Rediger" })).toHaveCount(0);
+  });
+
+  test("saving a handbook section does not clear link_url", async ({ page }) => {
+    const { writes } = await openPortal(page);
     await page.getByRole("link", { name: "Boligperm", exact: true }).click();
     await page.getByRole("button", { name: "Rediger" }).first().click();
     await page.getByLabel("Innhold").fill("Ring vaktmester.");
     await page.getByRole("button", { name: "Lagre", exact: true }).click();
     await expect.poll(() => writes.find((entry) => String(entry.path).includes("property_handbook_sections"))).toBeTruthy();
     const saved = writes.find((entry) => String(entry.path).includes("property_handbook_sections"));
-    await expect(page.getByText(/property_handbook_sections_pkey/)).toBeVisible();
-    test.fail(true, "saveHandbookSection sets link_url null and explain() appends the raw error");
-    expect(saved.body.link_url).not.toBeNull();
-    await expect(page.getByText(/property_handbook_sections_pkey/)).toHaveCount(0);
+    expect(saved.body).not.toHaveProperty("link_url");
+    expect(saved.body.body).toBe("Ring vaktmester.");
   });
 
   test("known bug: a failed membership read looks like no properties", async ({ page }) => {

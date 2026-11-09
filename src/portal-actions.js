@@ -1151,7 +1151,7 @@ export const completeCalendarItem = (id) => supabase.rpc("complete_calendar_item
 /* ---------- Boligperm (PropertyHandbookController.swift) ---------- */
 export const saveHandbookSection = (propertyId, key, body, enabled = true) =>
   supabase.from("property_handbook_sections").upsert(
-    { property_id: propertyId, section_key: key, is_enabled: enabled, body, link_url: null },
+    { property_id: propertyId, section_key: key, is_enabled: enabled, body },
     { onConflict: "property_id,section_key" },
   );
 

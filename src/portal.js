@@ -4671,13 +4671,13 @@ const PAGES = {
     const [res, el] = await Promise.all([handbook(p.id), handbookElectricity(p.id)]);
     const bodies = new Map((res.data ?? []).filter((s) => s.body?.trim()).map((s) => [s.section_key, s.body.trim()]));
     const intro = h("section", "pt-card");
-    intro.append(h("p", "pt-muted", "Boligpermen samler praktisk informasjon om boligen for leietakeren. Trykk Rediger på et kort for å fylle det ut."));
-    if (res.error) intro.append(inline("Boligpermen kunne ikke hentes akkurat nå."));
+    if (res.error) intro.append(inline("Boligpermen kunne ikke hentes akkurat nå. Prøv igjen før du endrer noe."));
+    else intro.append(h("p", "pt-muted", "Boligpermen samler praktisk informasjon om boligen for leietakeren. Trykk Rediger på et kort for å fylle det ut."));
     const tiles = h("section", "pt-tiles");
     for (const [key, label, ic, tone] of HANDBOOK_TILES) {
       const t = h("article", "pt-tile");
-      t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), h("p", null, bodies.get(key) ?? "Ikke fylt ut"));
-      if (isManager(p.id)) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(p.id, key, label, bodies.get(key)))));
+      t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), h("p", null, res.error ? "Kunne ikke hentes" : bodies.get(key) ?? "Ikke fylt ut"));
+      if (isManager(p.id) && !res.error) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(p.id, key, label, bodies.get(key)))));
       tiles.append(t);
       if (key === "fuse_box") tiles.append(electricityTile(p.id, el));
     }
