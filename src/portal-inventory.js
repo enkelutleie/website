@@ -1,6 +1,10 @@
 // Møbler og inventar: port of iOS Features/Assets (AssetController, InventorySaldo,
 // InventoryYearRow, InventoryItemAllocations). The saldo is computed on the client, as in
 // the app; the server stores the items (property_assets) and the yearly rate elections.
+// Sale and disposal are not part of the calculation (iOS #1555). Rows may still carry
+// disposal_date, disposed_at and disposal_proceeds_minor; decoding accepts them, and the
+// saldo, year rows and annual report treat every such row as an ordinary active item.
+// Basis is the opening balance plus this year's purchases.
 import { supabase } from "./supabase.js";
 import { collectPages } from "./paged.js";
 
@@ -35,18 +39,37 @@ export function itemInput(asset, propertyName, scope) {
   const kind = asset.item_kind || (asset.category === "improvement" ? "fixed_fitting" : "loose_inventory");
   const life = asset.life_under_three_years ?? (asset.useful_life_years != null ? asset.useful_life_years < 3 : false);
   const treatment = kind === "fixed_fitting" ? asset.fixed_treatment || "improvement" : null;
-  const disposalDate = asset.disposal_date || (asset.disposed_at ? osloDate(asset.disposed_at) : null);
+  const disposalDate = disposalDateOf(asset);
+  const disposalProceedsMinor = finiteMinor(asset.disposal_proceeds_minor);
   return {
     id: asset.id, propertyId: asset.property_id, propertyName: propertyName ?? "", name: asset.name, kind,
     purchaseDate: asset.purchase_date, purchaseAmountMinor: Number(asset.purchase_amount_minor),
     lifeUnderThreeYears: Boolean(life), fixedTreatment: treatment,
     countsForTaxableRental: asset.counts_for_taxable_rental ?? true,
-    disposalDate, disposalProceedsMinor: asset.disposal_proceeds_minor == null ? null : Number(asset.disposal_proceeds_minor),
-    disposalProceedsKnown: !disposalDate || asset.disposal_proceeds_minor != null,
+    disposalDate, disposalProceedsMinor,
+    disposalProceedsKnown: !disposalDate || disposalProceedsMinor != null,
     scope: scope ?? PRIVATE_SCOPE, notes: asset.notes ?? "", sourceTransactionId: asset.source_transaction_id ?? null,
   };
 }
-const osloDate = (ts) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Oslo" }).format(new Date(ts));
+const finiteMinor = (value) => {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+// Stored rows can still carry a disposal timestamp. Invalid values decode as null.
+const osloDate = (ts) => {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Oslo" }).format(d);
+  } catch {
+    return null;
+  }
+};
+const disposalDateOf = (asset) => {
+  if (typeof asset.disposal_date === "string" && asset.disposal_date) return asset.disposal_date;
+  return asset.disposed_at ? osloDate(asset.disposed_at) : null;
+};
 
 export function decision(item) {
   if (!item.countsForTaxableRental) return "taxFree";
@@ -76,23 +99,17 @@ const minimumIncome = (magnitude, rate) => (magnitude > 0 && rate > 0 ? Math.min
 function yearRow(items, taxYear, opening, election) {
   const rate = clampRate(election?.rate_bps ?? GROUP_D_MAX_RATE_BPS);
   const takeRemainder = election?.take_remainder ?? false;
-  let additions = 0, proceeds = 0, missingProceeds = false, direct = 0, maintenance = 0, directSale = 0;
+  let additions = 0, direct = 0, maintenance = 0;
   for (const item of items) {
     const d = decision(item);
     const py = yearOf(item.purchaseDate);
-    const dy = item.disposalDate ? yearOf(item.disposalDate) : null;
     if (d === "groupD" && py === taxYear) additions += item.purchaseAmountMinor;
-    if (d === "groupD" && dy === taxYear) {
-      if (item.disposalProceedsKnown) proceeds += item.disposalProceedsMinor ?? 0;
-      else missingProceeds = true;
-    }
     if (py === taxYear) {
       if (d === "directCost" || d === "directLife") direct += item.purchaseAmountMinor;
       else if (d === "maintenance") maintenance += item.purchaseAmountMinor;
     }
-    if (dy === taxYear && (d === "directCost" || d === "directLife") && item.disposalProceedsKnown) directSale += item.disposalProceedsMinor ?? 0;
   }
-  const basis = opening + additions - proceeds;
+  const basis = opening + additions;
   const threshold = thresholdMinor(taxYear);
   let dep = 0, income = 0, canTakeRemainder = false, negative = false;
   if (basis < 0) {
@@ -105,10 +122,10 @@ function yearRow(items, taxYear, opening, election) {
     dep = depreciation(basis, rate);
   }
   return {
-    taxYear, openingMinor: opening, additionsMinor: additions, proceedsMinor: proceeds, basisMinor: basis,
+    taxYear, openingMinor: opening, additionsMinor: additions, proceedsMinor: 0, basisMinor: basis,
     depreciationMinor: dep, incomeRecognitionMinor: income, closingMinor: basis - dep + income,
-    directDeductionMinor: direct, maintenanceDeductionMinor: maintenance, directSaleIncomeMinor: directSale,
-    canTakeRemainder, negativeBalanceIsIncome: negative, missingProceeds, rateBps: rate,
+    directDeductionMinor: direct, maintenanceDeductionMinor: maintenance, directSaleIncomeMinor: 0,
+    canTakeRemainder, negativeBalanceIsIncome: negative, missingProceeds: false, rateBps: rate,
   };
 }
 
@@ -151,12 +168,9 @@ export function allocate(items, rows) {
   let closing = {};
   let result = {};
   for (const row of rows) {
-    if (row.missingProceeds) return {};
     const active = group.filter((i) => {
       const py = yearOf(i.purchaseDate);
-      if (py == null || py > row.taxYear) return false;
-      const dy = i.disposalDate ? yearOf(i.disposalDate) : null;
-      return dy == null || dy > row.taxYear;
+      return py != null && py <= row.taxYear;
     });
     const carried = Object.fromEntries(active.map((i) => [i.id, closing[i.id] ?? 0]));
     let weights = active.map((i) => ({ id: i.id, amount: carried[i.id] + (yearOf(i.purchaseDate) === row.taxYear ? i.purchaseAmountMinor : 0) }));
@@ -178,25 +192,17 @@ export function allocate(items, rows) {
 }
 
 // InventoryYearRow.make: whether (and how) an item shows in a year.
-function makeRow(item, alloc, year, rate, carriedOpening, uncertain) {
+function makeRow(item, alloc, year, rate) {
   const py = yearOf(item.purchaseDate);
   if (py == null || py > year) return null;
-  const dy = item.disposalDate ? yearOf(item.disposalDate) : null;
-  if (dy != null && dy < year) return null;
   const d = decision(item);
   const isPurchase = py === year;
-  const isDisposal = dy === year;
   const row = (purchase, counted, opening, dep, closing, rateBps, takesRemainder) =>
-    ({ id: item.id, purchaseYear: py, isPurchase: purchase, isDisposal, countedPurchaseMinor: counted, openingMinor: opening, depreciationMinor: dep, closingMinor: closing, rateBps, takesRemainder });
+    ({ id: item.id, purchaseYear: py, isPurchase: purchase, isDisposal: false, countedPurchaseMinor: counted, openingMinor: opening, depreciationMinor: dep, closingMinor: closing, rateBps, takesRemainder });
   if (d === "directCost" || d === "directLife" || d === "maintenance") return isPurchase ? row(true, item.purchaseAmountMinor, null, item.purchaseAmountMinor, 0, 0, false) : null;
   if (d === "improvement" || d === "taxFree") return isPurchase ? row(true, item.purchaseAmountMinor, null, null, null, rate, false) : null;
-  if (uncertain) return row(isPurchase, isPurchase ? item.purchaseAmountMinor : 0, null, null, null, rate, false);
-  if (alloc) {
-    if (!(alloc.basisMinor > 0 || alloc.depreciationMinor > 0) && !isDisposal) return null;
-    return row(isPurchase, isPurchase ? item.purchaseAmountMinor : 0, isPurchase ? null : alloc.openingMinor, alloc.depreciationMinor, alloc.closingMinor, alloc.rateBps, alloc.takesRemainder);
-  }
-  if (!isDisposal) return null;
-  return row(isPurchase, isPurchase ? item.purchaseAmountMinor : 0, isPurchase ? null : carriedOpening ?? null, null, 0, rate, false);
+  if (!alloc || !(alloc.basisMinor > 0 || alloc.depreciationMinor > 0)) return null;
+  return row(isPurchase, isPurchase ? item.purchaseAmountMinor : 0, isPurchase ? null : alloc.openingMinor, alloc.depreciationMinor, alloc.closingMinor, alloc.rateBps, alloc.takesRemainder);
 }
 
 const groupByScope = (items) => {
@@ -221,12 +227,9 @@ export function yearView(items, year, electionsAll) {
     const hist = history(subset, year, el);
     const alloc = allocate(subset, hist);
     Object.assign(allocations, alloc);
-    const uncertain = hist.some((r) => r.missingProceeds);
-    const needsOpening = !uncertain && subset.some((i) => decision(i) === "groupD" && i.disposalDate && yearOf(i.disposalDate) === year && !alloc[i.id]);
-    const previous = needsOpening ? allocate(subset, history(subset, year - 1, el)) : {};
     const rate = el[year]?.rate_bps ?? GROUP_D_MAX_RATE_BPS;
     for (const i of subset) {
-      const r = makeRow(i, alloc[i.id], year, rate, previous[i.id]?.closingMinor, uncertain && decision(i) === "groupD");
+      const r = makeRow(i, alloc[i.id], year, rate);
       if (r) rows[i.id] = r;
     }
     outlooks.push({ scope, statement: hist.at(-1) ?? yearRow(subset, year, 0, el[year]), election: el[year] ?? null });
@@ -270,5 +273,3 @@ export function updateAsset(assetId, v) {
     requested_counts_for_taxable_rental: v.countsForTaxableRental,
   });
 }
-export const disposeAsset = (assetId, date, proceedsMinor) =>
-  supabase.rpc("dispose_property_asset", { requested_asset_id: assetId, requested_disposal_date: date, requested_proceeds_minor: proceedsMinor });

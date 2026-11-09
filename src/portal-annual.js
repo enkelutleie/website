@@ -76,7 +76,7 @@ export function furnitureLines(items, year, electionsAll, furnitureExpenses) {
   }
   return sortFurniture(lines);
 }
-export const furnitureName = (l, year) => `${l.name}${l.purchaseYear !== year ? ` · kjøpt ${l.purchaseYear}` : ""}${l.isDisposal ? " · avhendet" : ""}`;
+export const furnitureName = (l, year) => `${l.name}${l.purchaseYear !== year ? ` · kjøpt ${l.purchaseYear}` : ""}`;
 
 const isFurnishing = (t) => t.category === "furnishings_equipment" || t.legacy_category === "furnishings_equipment";
 

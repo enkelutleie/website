@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/tenancy-listing.test.js src/finn-import.test.js src/oslo-time.test.js src/paged.test.js tests/privacy-export.test.js tests/explain.test.js src/portal-load.test.js src/portal-cache.test.js src/lease-term.test.js src/portal-sign.test.js",
+    "test": "node --test src/tenancy-listing.test.js src/finn-import.test.js src/oslo-time.test.js src/paged.test.js tests/privacy-export.test.js tests/explain.test.js src/portal-load.test.js src/portal-cache.test.js src/lease-term.test.js src/portal-sign.test.js src/portal-inventory.test.js",
     "test:smoke": "playwright test",
     "preview": "vite preview",
     "og": "python3 scripts/generate-og-image.py"

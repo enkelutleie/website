@@ -225,6 +225,11 @@ test.describe("portal", () => {
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("link", { name: /Møbler og inventar/ }).click();
     await expect(page.getByRole("heading", { name: "Møbler og inventar" })).toBeVisible();
+    await expect(page.getByText("Selg eller utranger")).toHaveCount(0);
+    await expect(page.getByText("Salg eller utrangering")).toHaveCount(0);
+    await expect(page.getByText("Solgt eller utrangert")).toHaveCount(0);
+    await expect(page.getByText("Møbelhistorikk")).toHaveCount(0);
+    await expect(page.getByText("avhendet")).toHaveCount(0);
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("link", { name: /Årsoppgave/ }).click();
     await expect(page.getByRole("heading", { name: "Årsoppgave" })).toBeVisible();
