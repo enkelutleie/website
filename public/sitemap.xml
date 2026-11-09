@@ -11,6 +11,11 @@
     <priority>0.3</priority>
   </url>
   <url>
+    <loc>https://enkelutleie.com/vilkar/</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
     <loc>https://enkelutleie.com/support/</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>

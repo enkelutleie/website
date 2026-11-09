@@ -66,6 +66,15 @@ test.describe("public pages", () => {
     expect(hits).toEqual([]);
   });
 
+  test("terms of use page", async ({ page }) => {
+    await page.goto("/vilkar/");
+    await expect(page.getByRole("heading", { name: "Vilkår for bruk av Enkel Utleie" })).toBeVisible();
+    await expect(page.locator("main")).toContainText("Sist oppdatert: 6. oktober 2026");
+    await expect(page.locator("footer").getByRole("link", { name: "Vilkår", exact: true })).toHaveAttribute("href", "/vilkar/");
+    await page.goto("/vilkar");
+    await expect(page.getByRole("heading", { name: "Vilkår for bruk av Enkel Utleie" })).toBeVisible();
+  });
+
   test("FAQ accordion and landing preview", async ({ page }) => {
     await page.goto("/landing-full.html");
     await expect(page).toHaveTitle(/utleie, helt enkelt/);
@@ -465,7 +474,7 @@ test.describe("portal", () => {
 
   test("public pages fit a phone", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
-    const paths = ["/", "/personvern", "/support/", "/slett-konto/", "/logg-inn/", "/landing-full.html", "/forhandsvisning", "/sporsmal-svar/", "/om-oss/", "/nope-not-a-page"];
+    const paths = ["/", "/personvern", "/vilkar/", "/vilkar", "/support/", "/slett-konto/", "/logg-inn/", "/landing-full.html", "/forhandsvisning", "/sporsmal-svar/", "/om-oss/", "/nope-not-a-page"];
     for (const path of paths) {
       await page.goto(path);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

@@ -317,7 +317,9 @@ button.btn {
 .legal { padding: 1.5rem 0 4rem; max-width: 40rem; }
 .legal h1 { font-size: 2rem; }
 .legal h2 { margin: 1.8rem 0 0.4rem; font-size: 1.1rem; }
-.legal p, .legal-lead { color: var(--muted); }
+.legal p, .legal-lead, .legal li { color: var(--muted); }
+.legal ul { margin: 0.4rem 0 0.9rem; padding-left: 1.2rem; }
+.legal li { margin: 0.35rem 0; }
 
 .faq { display: grid; gap: 0.65rem; margin: 1.4rem 0 0; }
 .faq-item {
