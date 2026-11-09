@@ -294,17 +294,28 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  test("known bug: empty required field throws choice is not defined", async ({ page }) => {
+  test("empty required field shows a message and does not throw", async ({ page }) => {
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await openPortal(page);
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("button", { name: "Ny inntekt" }).click();
-    await page.getByRole("button", { name: "Lagre", exact: true }).click();
-    await expect.poll(() => errors.join("\n")).toContain("choice is not defined");
-    await page.screenshot({ path: "/opt/cursor/artifacts/portal-empty-form.png" });
-    test.fail(true, "openForm submit references choice outside the field loop");
-    expect(errors.join("\n")).not.toContain("choice is not defined");
+    const income = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
+    await income.getByRole("button", { name: "Lagre", exact: true }).click();
+    await expect(income.getByText("Velg kategori")).toBeVisible();
+    await income.getByRole("button", { name: "Avbryt" }).click();
+
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await page.getByRole("button", { name: "Ny bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create.getByText("Fyll ut «Adresse».")).toBeVisible();
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create).toBeHidden();
+    expect(errors).toEqual([]);
   });
 
   test("known bug: editing a property clears municipality", async ({ page }) => {

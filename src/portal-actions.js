@@ -141,7 +141,9 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         if (f.required && !hidden && !values[f.name]) {
           status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
           status.hidden = false;
-          (choice ? input.closest(".pt-field").querySelector(".pt-choice-button") : input).focus();
+          const isChoice = f.type === "choice" || f.type === "select";
+          const target = isChoice ? input.closest(".pt-field")?.querySelector(".pt-choice-button") : input;
+          target?.focus();
           return;
         }
       }
