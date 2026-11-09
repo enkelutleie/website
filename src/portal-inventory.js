@@ -2,6 +2,7 @@
 // InventoryYearRow, InventoryItemAllocations). The saldo is computed on the client, as in
 // the app; the server stores the items (property_assets) and the yearly rate elections.
 import { supabase } from "./supabase.js";
+import { collectPages } from "./paged.js";
 
 export const GROUP_D_MAX_RATE_BPS = 2000;
 export const thresholdMinor = (taxYear) => (taxYear >= 2024 ? 3_000_000 : 1_500_000);
@@ -235,13 +236,9 @@ export function yearView(items, year, electionsAll) {
 
 // RPCs, exactly as SupabaseAssetRemote.
 export async function listAssets(propertyId) {
-  const out = [];
-  for (;;) {
-    const { data, error } = await supabase.rpc("list_property_assets", { requested_property_id: propertyId, requested_offset: out.length, requested_page_size: 200 });
-    if (error) return { error };
-    if (!data?.length) return { data: out };
-    out.push(...data);
-  }
+  return collectPages((offset) => supabase.rpc("list_property_assets", {
+    requested_property_id: propertyId, requested_offset: offset, requested_page_size: 200,
+  }));
 }
 export const listElections = () => supabase.rpc("list_inventory_saldo_elections");
 export const saveElection = (taxYear, rateBps, takeRemainder, scopeKey) =>

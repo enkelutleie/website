@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { osloWallToUtcIso } from "./oslo-time.js";
+import { collectPages } from "./paged.js";
 import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
 import { historyRowForEndedManual, manualOccupantsFor, mergeTenancyHistory } from "./tenancy-listing.js";
 
@@ -45,7 +46,11 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const form = h("form", "pt-modal-card");
     form.noValidate = true;
     const head = h("div", "pt-card-head");
-    head.append(h("h2", null, title));
+    const titleId = `pt-modal-title-${Math.random().toString(36).slice(2, 8)}`;
+    const heading = h("h2", null, title);
+    heading.id = titleId;
+    head.append(heading);
+    dialog.setAttribute("aria-labelledby", titleId);
     form.append(head);
     if (intro) form.append(h("p", "pt-muted", intro));
     form.append(...sections);
@@ -196,12 +201,14 @@ export function customSelect({ label, options = [], value, floating = false, cls
   const chevron = h("span", "pt-choice-chevron");
   chevron.innerHTML = CHEVRON_SVG;
   btn.append(current, chevron);
+  const uid = `pt-choice-${Math.random().toString(36).slice(2, 8)}`;
   const list = h("ul", "pt-choice-list");
+  list.id = `${uid}-list`;
   list.setAttribute("role", "listbox");
   list.setAttribute("aria-label", label);
+  btn.setAttribute("aria-controls", list.id);
   list.tabIndex = -1;
   list.hidden = true;
-  const uid = `pt-choice-${Math.random().toString(36).slice(2, 8)}`;
   const items = options.map(([, text], i) => {
     const li = h("li", "pt-choice-option");
     li.id = `${uid}-${i}`;
@@ -2306,16 +2313,12 @@ export const isMileageExpense = (row) => mileageFields(row) !== null;
 
 // SupabaseMileageRemote.list: pages of 200 until an empty page. End date is exclusive.
 export async function listMileageTrips(propertyId, startDate, endDate) {
-  const rows = [];
-  for (;;) {
-    const { data, error } = await supabase.rpc("list_mileage_trips", {
-      requested_property_id: propertyId, requested_start_date: startDate, requested_end_date: endDate,
-      requested_offset: rows.length, requested_page_size: 200,
-    });
-    if (error) return { error };
-    if (!data?.length) return { data: rows.filter((t) => !t.voided_at) };
-    rows.push(...data);
-  }
+  const res = await collectPages((offset) => supabase.rpc("list_mileage_trips", {
+    requested_property_id: propertyId, requested_start_date: startDate, requested_end_date: endDate,
+    requested_offset: offset, requested_page_size: 200,
+  }));
+  if (res.error) return res;
+  return { data: res.data.filter((t) => !t.voided_at) };
 }
 const tripPayload = (v) => ({
   requested_trip_date: v.date,

@@ -3,6 +3,7 @@
 // expenses, furniture, mileage and receipts. Every amount is the full property amount; there is
 // no ownership share, no split between landlords and no tax calculation.
 import { supabase } from "./supabase.js";
+import { collectPages } from "./paged.js";
 import * as inv from "./portal-inventory.js";
 
 export const FURNITURE_NOTE = "Fradrag føres via saldo/direkte fradrag";
@@ -200,15 +201,7 @@ export function reportBlocks(r) {
 }
 
 /* ---------- Loading, as SupabaseAccountingYearRemote ---------- */
-const paged = async (fn, params) => {
-  const out = [];
-  for (;;) {
-    const { data, error } = await supabase.rpc(fn, { ...params, requested_offset: out.length, requested_page_size: 200 });
-    if (error) return { error };
-    if (!data?.length) return { data: out };
-    out.push(...data);
-  }
-};
+const paged = (fn, params) => collectPages((offset) => supabase.rpc(fn, { ...params, requested_offset: offset, requested_page_size: 200 }));
 export const listTransactions = (pid, start, end) => paged("list_accounting_transactions", { requested_property_id: pid, requested_start_date: start, requested_end_date: end });
 export const listLinks = (pid, start, end) => paged("list_accounting_document_links", { requested_property_id: pid, requested_start_date: start, requested_end_date: end });
 export const ownershipShares = (pid, year) => supabase.rpc("list_property_ownership_shares", { requested_property_id: pid, requested_tax_year: year });

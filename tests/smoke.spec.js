@@ -416,7 +416,9 @@ test.describe("portal", () => {
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("button", { name: "Ny inntekt" }).click();
     const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
-    await dialog.getByRole("button", { name: /Kategori/ }).click();
+    const category = dialog.getByRole("button", { name: /Kategori/ });
+    await expect(category).toHaveAttribute("aria-controls", /pt-choice-/);
+    await category.click();
     await dialog.getByRole("option", { name: "Husleie", exact: true }).click();
     await dialog.getByLabel("Beløp").fill("1500");
     await dialog.getByLabel("Hva gjelder inntekten?").fill("Husleie");
