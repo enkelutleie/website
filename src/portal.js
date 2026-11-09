@@ -5050,7 +5050,9 @@ const loadBell = async ({ quiet = false } = {}) => {
     bell.rows = res.data ?? [];
     bell.more = bell.rows.length >= act.NOTIFICATION_PAGE_SIZE;
   }
+  const keepFocus = document.activeElement?.closest?.(".pt-notif");
   drawBell();
+  if (keepFocus && bell.open) bellEls().wrap?.querySelector(".pt-notif")?.focus();
 };
 const loadMoreBell = async () => {
   if (bell.loadingMore || !bell.rows.length) return;
