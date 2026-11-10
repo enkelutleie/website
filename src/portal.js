@@ -4574,24 +4574,37 @@ const incomingCoLandlordCard = async () => {
       h("span", null, [i.property_location, `Fra ${i.inviter_display_name}`].filter(Boolean).join(" · ")),
       h("span", null, `Sendt til ${i.email}. Du får først tilgang når du godtar.`));
     const actions = h("div", "pt-row-actions");
-    actions.append(
-      button("Godta som med-utleier", "pt-btn-primary pt-btn-small", async (e) => {
-        e.currentTarget.disabled = true;
-        const r = await act.acceptCoLandlordInvitation(i.invitation_id);
-        if (r.error) return done({ text: "Kunne ikke godta invitasjonen. Prøv igjen." });
-        const outcome = r.result?.outcome;
-        if (outcome === "accepted") return done({ ok: true, text: `Du er nå med-utleier for ${r.result.property_display_name || i.property_display_name}.` });
-        if (outcome === "email_unconfirmed") return done({ text: "E-postadressen må være bekreftet før du kan godta invitasjonen." });
-        if (outcome === "expired") return done({ text: "Invitasjonen er utløpt. Be utleieren sende en ny." });
-        return done({ text: "Invitasjonen er ikke lenger aktiv." });
-      }),
-      button("Avslå invitasjon", "pt-btn-quiet-destructive pt-btn-small", async () => {
-        if (!(await act.confirmAction({ title: "Avslå invitasjonen som med-utleier?", text: "Invitasjonen fjernes, og e-postlenken blir ugyldig.", confirmLabel: "Avslå invitasjon" }))) return;
-        const r = await act.declineCoLandlordInvitation(i.invitation_id);
-        if (r.error || r.data !== "declined") return done({ text: "Kunne ikke avslå invitasjonen. Prøv igjen." });
-        return done({ ok: true, text: "Invitasjonen som med-utleier er avslått." });
-      }),
-    );
+    const accepting = (on) => {
+      acceptBtn.disabled = on;
+      declineBtn.disabled = on;
+      acceptBtn.textContent = on ? "Godtar …" : "Godta som med-utleier";
+    };
+    // Én felles godta per invitasjon (iOS #1587): et nytt trykk eller en ny tegning venter på samme kall.
+    const acceptBtn = button("Godta som med-utleier", "pt-btn-primary pt-btn-small", async () => {
+      accepting(true);
+      const r = await act.coInviteAcceptGate.accept(i.invitation_id, i.property_id);
+      const outcome = r.result?.outcome;
+      if (!r.error && outcome === "accepted") {
+        // Fjern kortet med en gang, før oversikten lastes på nytt.
+        li.remove();
+        if (!list.children.length) c.remove();
+        state.cache.delete(`coinv:${i.property_id}`);
+        return done({ ok: true, text: `Du er nå med-utleier for ${r.result.property_display_name || i.property_display_name}.` });
+      }
+      if (r.error) return done({ text: "Kunne ikke godta invitasjonen. Prøv igjen." });
+      if (outcome === "email_unconfirmed") return done({ text: "E-postadressen må være bekreftet før du kan godta invitasjonen." });
+      if (outcome === "expired") return done({ text: "Invitasjonen er utløpt. Be utleieren sende en ny." });
+      return done({ text: "Invitasjonen er ikke lenger aktiv." });
+    });
+    const declineBtn = button("Avslå invitasjon", "pt-btn-quiet-destructive pt-btn-small", async () => {
+      if (act.coInviteAcceptGate.isPending(i.invitation_id)) return;
+      if (!(await act.confirmAction({ title: "Avslå invitasjonen som med-utleier?", text: "Invitasjonen fjernes, og e-postlenken blir ugyldig.", confirmLabel: "Avslå invitasjon" }))) return;
+      const r = await act.declineCoLandlordInvitation(i.invitation_id);
+      if (r.error || r.data !== "declined") return done({ text: "Kunne ikke avslå invitasjonen. Prøv igjen." });
+      return done({ ok: true, text: "Invitasjonen som med-utleier er avslått." });
+    });
+    if (act.coInviteAcceptGate.isPending(i.invitation_id)) accepting(true);
+    actions.append(acceptBtn, declineBtn);
     li.append(main, actions);
     list.append(li);
   }

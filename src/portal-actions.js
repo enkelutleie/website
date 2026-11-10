@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { createStuckFinalizer } from "./portal-sign-refresh.js";
+import { createCoInviteAcceptGate } from "./portal-co-invite-accept.js";
 import { domainChangeHandler } from "./portal-calendar-live.js";
 import { osloWallToUtcIso } from "./oslo-time.js";
 import { collectPages } from "./paged.js";
@@ -2806,10 +2807,29 @@ export async function myCoLandlordInvitations() {
 }
 
 export async function acceptCoLandlordInvitation(invitationId) {
-  const { data, error } = await supabase.rpc("accept_property_co_landlord_invitation_by_id", { requested_invitation_id: invitationId });
-  if (error) return { error };
+  const { data, error, status } = await supabase.rpc("accept_property_co_landlord_invitation_by_id", { requested_invitation_id: invitationId });
+  if (error) return { error, status };
   return { result: first(data) ?? null };
 }
+
+// Etter en feilet godta: er du nå utleier eller med-utleier på boligen (samme lesing som oversikten)?
+export async function managesProperty(propertyId, userId) {
+  const { data, error } = await supabase.from("property_members").select("role")
+    .eq("property_id", propertyId).eq("user_id", userId).is("valid_until", null);
+  if (error) return { error };
+  return { ok: (data ?? []).some((m) => m.role === "owner" || m.role === "co_landlord") };
+}
+
+export const coInviteAcceptGate = createCoInviteAcceptGate({
+  accept: (invitationId) => acceptCoLandlordInvitation(invitationId),
+  listMine: () => myCoLandlordInvitations(),
+  managesProperty: async (propertyId) => {
+    const { data } = await supabase.auth.getSession();
+    const uid = data?.session?.user?.id;
+    return uid ? managesProperty(propertyId, uid) : { error: new Error("no session") };
+  },
+  isOffline: () => typeof navigator !== "undefined" && navigator.onLine === false,
+});
 
 export async function declineCoLandlordInvitation(invitationId) {
   return supabase.rpc("decline_property_co_landlord_invitation", { requested_invitation_id: invitationId });
