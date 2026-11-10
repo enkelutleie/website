@@ -12,9 +12,10 @@ import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
 import { createBellWaker } from "./portal-bell-wake.js";
+import { postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
-import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
+import { manualOccupantsFor, OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
@@ -801,6 +802,90 @@ const tenancyCard = async (pid) => {
     c.append(actionsRow(button("Inviter leietaker", "pt-btn-secondary pt-btn-small", () => inviteForm(pid))));
   }
   return c;
+};
+
+// «Klar til å avslutte leieforholdet» (iOS #1597): one card per ready tenancy, at the top of
+// Oversikt (with «Gjør det senere») and Om boligen (without). Reads stay cached until a change.
+const readyPostponed = (tenancyId) => {
+  try { return localStorage.getItem(postponeKey(tenancyId)) === "true"; } catch { return false; }
+};
+const readyToEndLines = async (pid, allowsPostpone) => {
+  if (!isManager(pid)) return [];
+  const own = state.tenancies.filter((t) => t.property_id === pid && t.status === "active");
+  if (!own.length) return [];
+  const procs = await cachedOk(`rte-proc:${pid}`, () => act.listMoveOutProcesses(own.map((t) => t.id)));
+  if (procs.error) return [];
+  const processes = procs.data ?? [];
+  const candidates = own.filter((t) => processes.some((p) => p.tenancy_id === t.id && (p.state === "approved" || p.state === "deposit")));
+  if (!candidates.length) return [];
+  const [people, units] = await Promise.all([
+    tenancyPeople(pid),
+    candidates.some((t) => t.unit_id) ? act.propertyUnitRows(pid) : Promise.resolve({ data: [] }),
+  ]);
+  const current = (people.data ?? []).filter((m) => m.role === "tenant" && m.invitation_status === "accepted" && !m.valid_until);
+  const members = new Map();
+  for (const m of current) if (m.id) members.set(m.tenancy_id, [...(members.get(m.tenancy_id) ?? []), m.id]);
+  const settlements = new Map();
+  await Promise.all(candidates.map(async (t) => {
+    const r = await cachedOk(`rte-dep:${t.id}`, () => act.depositPointer(t.id)).catch(() => ({ error: true }));
+    if (!r.error) settlements.set(t.id, r.data?.status ?? "absent");
+  }));
+  const unitLabel = new Map((units.data ?? []).map((u) => [u.id, u.display_label]));
+  return readyLines({
+    tenancies: own,
+    processes,
+    settlements,
+    members: people.error ? new Map() : members,
+    housingKind: state.properties.find((x) => x.id === pid)?.housing_kind ?? null,
+    roomOf: (t) => unitLabel.get(t.unit_id) ?? null,
+    namesOf: (t) => [
+      ...current.filter((m) => m.tenancy_id === t.id).map((m) => m.name ?? ""),
+      ...manualOccupantsFor(state.manualOccupants, t.id).map((o) => o.display_name ?? ""),
+    ],
+    postponed: allowsPostpone ? readyPostponed : () => false,
+  });
+};
+let readyFinishing = false;
+const readyToEndCards = async (pid, allowsPostpone = false) => {
+  const lines = await readyToEndLines(pid, allowsPostpone);
+  return lines.map((line) => {
+    const uuid = String(line.tenancyId).toUpperCase();
+    const c = h("section", "pt-card pt-ready-card");
+    c.dataset.testid = `tenancy.readyToEnd.${uuid}`;
+    c.append(h("h2", "pt-ready-title", READY_TITLE));
+    if (line.subject) {
+      const subject = h("p", "pt-ready-subject", line.subject);
+      subject.dataset.testid = `tenancy.readyToEnd.subject.${uuid}`;
+      c.append(subject);
+    }
+    c.append(h("p", "pt-ready-body", line.body));
+    const end = button(READY_BUTTON, "pt-btn-success pt-ready-button", async () => {
+      if (readyFinishing) return;
+      const ok = await act.confirmAction({ title: "Er du sikker?", text: "Dette kan ikke angres.", confirmLabel: "Avslutt" });
+      if (!ok) return;
+      readyFinishing = true;
+      document.querySelectorAll(".pt-ready-button").forEach((b) => { b.disabled = true; });
+      end.setAttribute("aria-busy", "true");
+      const res = await act.completeMoveOut(line.processId);
+      readyFinishing = false;
+      end.removeAttribute("aria-busy");
+      document.querySelectorAll(".pt-ready-button").forEach((b) => { b.disabled = false; });
+      const err = act.moveOutError(res);
+      if (err) return act.toast(err);
+      await refresh("Leieforholdet er avsluttet.");
+    });
+    end.dataset.testid = `tenancy.readyToEnd.button.${uuid}`;
+    c.append(end);
+    if (allowsPostpone) {
+      const later = button(READY_LATER, "pt-ready-later", () => {
+        try { localStorage.setItem(postponeKey(line.tenancyId), "true"); } catch { /* private mode: hide for this view */ }
+        c.remove();
+      });
+      later.dataset.testid = `tenancy.readyToEnd.later.${uuid}`;
+      c.append(later);
+    }
+    return c;
+  });
 };
 
 const propertiesTable = () => {
@@ -2963,7 +3048,7 @@ const hoDepositStatus = (d) => {
 };
 const hoReloadPage = async (message) => {
   for (const key of [...state.cache.keys()]) {
-    if (key.startsWith("ho:") || key.startsWith("ho-items:") || key.startsWith("ho-comments:") || key.startsWith("ho-photos:")) state.cache.delete(key);
+    if (key.startsWith("ho:") || key.startsWith("rte-") || key.startsWith("ho-items:") || key.startsWith("ho-comments:") || key.startsWith("ho-photos:")) state.cache.delete(key);
   }
   await render();
   if (message) act.toast(message);
@@ -3390,7 +3475,7 @@ const hoMoveOutPage = async (p, t, d) => {
     if (ready) {
       head.append(h("p", "pt-ho-status", "Klar til å avslutte leieforholdet"));
       buttons.push(button("Avslutt leieforholdet", "pt-btn-primary", async () => {
-        const ok = await act.confirmAction({ title: "Er du sikker?", text: "Leieforholdet avsluttes. Dette kan ikke angres.", confirmLabel: "Avslutt leieforholdet" });
+        const ok = await act.confirmAction({ title: "Er du sikker?", text: "Dette kan ikke angres.", confirmLabel: "Avslutt" });
         if (ok) hoRun(await act.completeMoveOut(proc.id), act.moveOutError, "Leieforholdet er avsluttet.");
       }));
     } else {
@@ -4917,6 +5002,7 @@ const PAGES = {
       out.push(propertiesTable());
       return out;
     }
+    out.push(...(await readyToEndCards(p.id, true)));
     const ob = await onboarding();
     if (ob) out.push(ob);
     out.push(await kpis(p.id));
@@ -4947,7 +5033,7 @@ const PAGES = {
     });
     // Boligperm, Dokumenter og maler, Vedlikeholdshistorikk and Boligbilder live in the sidebar.
     c.append(dl);
-    const out = [band()];
+    const out = [band(), ...(await readyToEndCards(p.id))];
     const listed = await propertyGallery(p.id);
     const coverPath = listed.data?.[0]?.storage_path;
     const photo = coverPath ? (await storedImage(coverPath).catch(() => null))?.data ?? null : null;

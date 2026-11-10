@@ -17,9 +17,11 @@ export const isManualOccupant = (occupant) =>
 export const manualOccupantsFor = (occupants, tenancyId) =>
   (occupants ?? []).filter((o) => o.tenancy_id === tenancyId && isManualOccupant(o));
 
+// An 11-digit string (spaces and hyphens allowed) is the national identity number shape: never shown.
+const NATIONAL_ID = /^(?=(?:\D*\d){11}\D*$)[\d -]+$/;
 const personName = (value, fallback) => {
   const name = typeof value === "string" ? value.trim() : "";
-  return name || fallback;
+  return name && !NATIONAL_ID.test(name) ? name : fallback;
 };
 
 // Rows for Oversikt > Leieforhold. Null when the tenancy is not a current one,

@@ -30,7 +30,7 @@ export function invalidatePortalReads() {
   clearedReviews.clear();
 }
 
-const MEMBER_COLUMNS = "tenancy_id, user_id, role, invitation_status, valid_until";
+const MEMBER_COLUMNS = "id, tenancy_id, user_id, role, invitation_status, valid_until";
 const PROFILE_COLUMNS = "first_name, display_name, phone_number, tax_residence_tiltakssone";
 const UNIT_COLUMNS = "id, property_id, kind, display_label, operational_status";
 

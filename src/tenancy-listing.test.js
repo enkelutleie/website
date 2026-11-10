@@ -176,3 +176,15 @@ describe("refresh after termination", () => {
     assert.equal(history[0].end_date, "2027-01-15");
   });
 });
+
+describe("national identity numbers", () => {
+  it("never shows an 11-digit string as a tenant name", () => {
+    const tenancy = { id: "t", status: "active" };
+    const view = overviewTenancyPresentation(tenancy, { members: [
+      { tenancy_id: "t", role: "tenant", name: "12345678901" },
+      { tenancy_id: "t", role: "tenant", name: "010190 12345" },
+      { tenancy_id: "t", role: "tenant", name: "Kari 2" },
+    ] });
+    assert.deepEqual(view.people.map((p) => p.name), ["Leietaker", "Leietaker", "Kari 2"]);
+  });
+});
