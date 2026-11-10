@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, READY_PROCESS_A, readyToEndTables } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -369,6 +369,54 @@ test.describe("portal", () => {
     expect(saved.body).not.toHaveProperty("municipality_number");
     expect(saved.body).not.toHaveProperty("municipality_name");
     expect(saved.body.address_line1).toBeTruthy();
+  });
+
+  // iOS #1597: one «Klar til å avslutte» card per ready tenancy.
+  const readyCard = (page, id) => page.getByTestId(`tenancy.readyToEnd.${id.toUpperCase()}`);
+  test("bofellesskap shows one ready card per room and ends only that tenancy (iOS #1597)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: readyToEndTables() });
+    const a = readyCard(page, READY_A);
+    const b = readyCard(page, READY_B);
+    await expect(a).toBeVisible();
+    await expect(b).toBeVisible();
+    await expect(readyCard(page, READY_C)).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Klar til å avslutte leieforholdet" })).toHaveCount(2);
+    await expect(a.getByTestId(`tenancy.readyToEnd.subject.${READY_A.toUpperCase()}`)).toHaveText("Rom 1 – Kari Nordmann, Ola Nordmann");
+    await expect(b.getByTestId(`tenancy.readyToEnd.subject.${READY_B.toUpperCase()}`)).toHaveText("Rom 2");
+    await expect(page.getByText("12345678901")).toHaveCount(0);
+    await expect(a.getByText("Utflyttingen og depositumsoppgjøret er godkjent av begge parter. Når du avslutter, flyttes dette leieforholdet til Tidligere leieforhold, og rommet blir ledig for en ny leietaker.")).toBeVisible();
+    await expect(b.getByText(/depositumsoppgjøret ble hoppet over\. Når du avslutter, flyttes dette leieforholdet .* rommet blir ledig for en ny leietaker\./)).toBeVisible();
+    await expect(a.getByRole("button", { name: "Gjør det senere" })).toBeVisible();
+    await a.getByRole("button", { name: "Avslutt leieforholdet" }).click();
+    const confirm = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Er du sikker?" }) });
+    await expect(confirm.getByText("Dette kan ikke angres.")).toBeVisible();
+    await confirm.getByRole("button", { name: "Avslutt", exact: true }).click();
+    await expect.poll(() => writes.filter((w) => w.path.endsWith("/rpc/complete_move_out")).length).toBe(1);
+    expect(writes.filter((w) => w.path.endsWith("/rpc/complete_move_out")).map((w) => w.body)).toEqual([{ p_process_id: READY_PROCESS_A }]);
+    expect(errors).toEqual([]);
+  });
+
+  test("«Gjør det senere» hides only that card on Oversikt; Om boligen still shows it (iOS #1597)", async ({ page }) => {
+    const { errors } = await openPortal(page, { handover: readyToEndTables() });
+    await readyCard(page, READY_A).getByRole("button", { name: "Gjør det senere" }).click();
+    await expect(readyCard(page, READY_A)).toHaveCount(0);
+    await expect(readyCard(page, READY_B)).toBeVisible();
+    expect(await page.evaluate((k) => localStorage.getItem(k), `tenancy.readyToEnd.postponed.${READY_A.toUpperCase()}`)).toBe("true");
+    await page.reload();
+    await expect(readyCard(page, READY_B)).toBeVisible();
+    await expect(readyCard(page, READY_A)).toHaveCount(0);
+    await page.getByRole("link", { name: "Om boligen", exact: true }).click();
+    await expect(readyCard(page, READY_A)).toBeVisible();
+    await expect(readyCard(page, READY_A).getByRole("button", { name: "Gjør det senere" })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test("a regular home shows the name only and the home copy (iOS #1597)", async ({ page }) => {
+    const { errors } = await openPortal(page, { handover: readyToEndTables({ housingKind: "standard", count: 1 }) });
+    const a = readyCard(page, READY_A);
+    await expect(a.getByTestId(`tenancy.readyToEnd.subject.${READY_A.toUpperCase()}`)).toHaveText("Kari Nordmann, Ola Nordmann");
+    await expect(a.getByText(/og boligen blir ledig for nye leietakere\./)).toBeVisible();
+    expect(errors).toEqual([]);
   });
 
   // iOS #1595: every ready checklist photo in the move-in/move-out collections, landlord and tenant alike.

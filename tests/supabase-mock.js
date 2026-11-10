@@ -84,6 +84,7 @@ const tables = {
   property_handbook_sections: [],
   property_handbook_settings: [],
   property_images: [],
+  property_units: [],
   documents: [],
 };
 
@@ -185,6 +186,43 @@ export function handoverTables(options = {}) {
     ],
   };
 }
+// «Klar til å avslutte» (iOS #1597): ready tenancies on one property, shared or regular.
+export const READY_A = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1";
+export const READY_B = "a2a2a2a2-a2a2-42a2-82a2-a2a2a2a2a2a2";
+export const READY_C = "a3a3a3a3-a3a3-43a3-83a3-a3a3a3a3a3a3";
+export const READY_PROCESS_A = "b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1";
+export const READY_PROCESS_B = "b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2";
+export function readyToEndTables({ housingKind = "shared", count = 3 } = {}) {
+  const ids = [READY_A, READY_B, READY_C].slice(0, count);
+  const tenancy = (id, n) => ({ id, property_id: PROPERTY_ID, unit_id: `c${n}c${n}c${n}c${n}-c${n}c${n}-4c${n}c-8c${n}c-c${n}c${n}c${n}c${n}c${n}c${n}`, status: "active", start_date: "2025-01-01", end_date: null, archived_at: null });
+  const tenancies = ids.map((id, i) => tenancy(id, i + 1));
+  const member = (n, tenancyId, userId) => ({ id: `d${n}d${n}d${n}d${n}-0000-4000-8000-00000000000${n}`, tenancy_id: tenancyId, user_id: userId, role: "tenant", invitation_status: "accepted", valid_until: null });
+  const process = (id, tenancyId, state) => ({ id, tenancy_id: tenancyId, property_id: PROPERTY_ID, scope: housingKind === "shared" ? "one_room" : "whole_tenancy", subject_member_id: null, move_out_on: "2026-10-01", notice_party: "tenant", state, inspection_id: null, notice_given_at: "2026-08-01T10:00:00Z" });
+  return {
+    properties: properties.map((p) => (p.id === PROPERTY_ID ? { ...p, housing_kind: housingKind } : p)),
+    tenancies,
+    property_units: tenancies.map((t, i) => ({ id: t.unit_id, property_id: PROPERTY_ID, kind: "room", display_label: `Rom ${i + 1}`, operational_status: "active" })),
+    tenancy_members: [
+      member(1, READY_A, "e1e1e1e1-0000-4000-8000-000000000001"),
+      member(2, READY_A, "e1e1e1e1-0000-4000-8000-000000000002"),
+      member(3, READY_B, "e1e1e1e1-0000-4000-8000-000000000003"),
+    ].filter((m) => ids.includes(m.tenancy_id)),
+    move_out_processes: [
+      process(READY_PROCESS_A, READY_A, "deposit"),
+      process(READY_PROCESS_B, READY_B, "approved"),
+      process("b3b3b3b3-b3b3-43b3-83b3-b3b3b3b3b3b3", READY_C, "notice_given"),
+    ].filter((p) => ids.includes(p.tenancy_id)),
+    deposit_settlements: [{ id: "f1f1f1f1-f1f1-41f1-81f1-f1f1f1f1f1f1", status: "accepted", tenancy_id: READY_A, move_out_inspection_id: null, created_at: "2026-10-02T10:00:00Z" }],
+    rpc: {
+      list_linked_profile_contacts: [
+        { user_id: "e1e1e1e1-0000-4000-8000-000000000001", display_name: "Kari Nordmann", email: "kari.n@example.com" },
+        { user_id: "e1e1e1e1-0000-4000-8000-000000000002", display_name: "Ola Nordmann", email: "ola.n@example.com" },
+        // A national identity number stored as a name is never shown.
+        { user_id: "e1e1e1e1-0000-4000-8000-000000000003", display_name: "12345678901", email: null },
+      ],
+    },
+  };
+}
 // A 1×1 PNG; each path gets its own trailing bytes so the data URLs differ.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 export const handoverImageBytes = (path) => Buffer.concat([PNG, Buffer.from(path)]);
@@ -231,6 +269,7 @@ function matches(row, url) {
 }
 
 function rpcPayload(name, body, options = {}) {
+  if (options.handover?.rpc && Object.prototype.hasOwnProperty.call(options.handover.rpc, name)) return options.handover.rpc[name];
   const premium = options.premium;
   const offset = Number(body?.requested_offset ?? 0);
   if (offset > 0) return [];

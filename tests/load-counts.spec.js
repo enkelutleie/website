@@ -209,7 +209,8 @@ test("portal pages reuse the session and realtime bursts reload once", async ({ 
   expect(count(chatBurst, "POST rpc/list_chat_messages_before")).toBe(1);
   expect(count(chatBurst, "POST rpc/list_chat_peer_read_cursors")).toBe(1);
   expect(inspectionSelect).toBe(INSPECTION_COLUMNS.replaceAll(" ", ""));
-  expect(oversikt).toHaveLength(17);
+  // +1 move_out_processes for «Klar til å avslutte» (iOS #1597); nothing more without a ready process.
+  expect(oversikt).toHaveLength(18);
   expect(bolig).toHaveLength(5);
   expect(kontrakt).toHaveLength(1);
   expect(meldinger).toHaveLength(5);

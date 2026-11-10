@@ -608,3 +608,15 @@ svg { flex: none; }
 
 .pt-handover-optional { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px; border-radius: 14px; background: var(--brand-soft); color: var(--ink); }
 .pt-handover-optional-icon { flex: none; color: var(--brand); }
+
+/* Klar til å avslutte leieforholdet (iOS #1597) */
+.pt-ready-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 14px; border-radius: 24px; border: 1px solid var(--brand-border); background: var(--brand-soft); }
+.pt-ready-card + .pt-ready-card { margin-top: 0; }
+.pt-ready-title { margin: 0; font-size: var(--fs-headline, 1.0625rem); font-weight: 700; color: var(--ink); }
+.pt-ready-subject { margin: 0; font-size: var(--fs-subheadline); font-weight: 600; color: var(--secondary-ink); overflow-wrap: anywhere; }
+.pt-ready-body { margin: 0; font-size: var(--fs-subheadline); color: var(--ink); }
+.pt-btn-success { background: var(--success); color: #fff; }
+.pt-ready-button { width: 100%; min-height: 54px; font-size: var(--fs-headline, 1.0625rem); }
+.pt-ready-button:disabled { opacity: .6; cursor: default; }
+.pt-btn.pt-ready-later { width: 100%; min-height: 44px; background: none; border: 0; color: var(--secondary-ink); padding: 0 24px; }
+.pt-btn.pt-ready-later:hover { text-decoration: underline; }
