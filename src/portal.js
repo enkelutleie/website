@@ -1431,6 +1431,14 @@ const agreementRow = async (pid, a, replacementIds, knownChanges = null) => {
       actions.append(pdfButton(st === "signed" ? "Last ned signert PDF" : "Åpne PDF", "pt-btn-secondary pt-btn-small", () => act.documentPdf(lease.data.document_id)));
     }
     if (lease.parties?.length) extra.push(signaturesList(lease.parties));
+    // iOS #1583: every party has signed but finalizing timed out. Ask contract-pdf to finish
+    // it in the background, then reload so the row shows «Signert» and the signed PDF.
+    if (st === "partially_signed" && !lease.error) {
+      act.finalizeStuckAgreement(a, lease).then((res) => {
+        if (res.ok && state.propertyId === pid) return refresh();
+        return null;
+      }).catch(() => {});
+    }
   }
   if (st === "signed") {
     const changes = knownChanges ?? (await act.listChanges(a.agreement_id)).data ?? [];
