@@ -9,6 +9,7 @@ import * as privacy from "./portal-privacy.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
 import { createFinnImport } from "./portal-finn.js";
 import { createCalendarLive } from "./portal-calendar-live.js";
+import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 
@@ -4543,6 +4544,17 @@ const landlordsCard = async (pid) => {
   return c;
 };
 
+// NotificationsController.acknowledgeAnsweredCoLandlordInvitation (iOS #1588): the bell row
+// co_landlord_invitation:received:<id> leaves the loaded bell at once; an unread one is also marked read.
+const acknowledgeCoInviteInBell = (invitationId) => {
+  const hits = bell.rows.filter((n) => isCoInviteReceivedRow(n, invitationId));
+  if (!hits.length) return;
+  bell.rows = bell.rows.filter((n) => !hits.includes(n));
+  drawBell();
+  const scope = bell.scope;
+  for (const n of hits) if (n.is_unread && scope) act.markNotificationRead(scope, n.notification_id).catch(() => {});
+};
+
 // IncomingCoLandlordInvitationsCard: shown on the overview while someone has invited you.
 let incomingCoNotice = null;
 const incomingCoLandlordCard = async () => {
@@ -4589,6 +4601,7 @@ const incomingCoLandlordCard = async () => {
         li.remove();
         if (!list.children.length) c.remove();
         state.cache.delete(`coinv:${i.property_id}`);
+        acknowledgeCoInviteInBell(i.invitation_id);
         return done({ ok: true, text: `Du er nå med-utleier for ${r.result.property_display_name || i.property_display_name}.` });
       }
       if (r.error) return done({ text: "Kunne ikke godta invitasjonen. Prøv igjen." });

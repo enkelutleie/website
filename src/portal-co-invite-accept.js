@@ -1,12 +1,13 @@
-// Godta invitasjon som med-utleier (lik iOS #1587, TENANCY_INVITATION_SHARED_ACCEPT_ANDROID_PARITY).
+// Godta invitasjon som med-utleier (lik iOS #1587/#1588, CO_LANDLORD_INVITATION_SHARED_ACCEPT_ANDROID_PARITY).
 // Under Prod-last kan accept_property_co_landlord_invitation_by_id få statement timeout (57014),
 // og da rulles hele kallet tilbake. Derfor:
 // 1. Én pågående godta per invitasjon i hele portalen. Et nytt trykk eller en ny tegning av kortet
 //    venter på samme kall og får samme svar.
 // 2. Ved forbigående feil (57014, 40001, 40P01, 55P03, HTTP 5xx, brutt forbindelse) prøves det én
 //    gang til etter ca. 1,2 s. Ikke når nettleseren er uten nett.
-// 3. Før en feil vises, sjekkes det om invitasjonen faktisk ble godtatt: den er ikke lenger ventende
-//    i list_my_property_co_landlord_invitations, og du er utleier eller med-utleier på boligen.
+// 3. Etter hver feil, og ved inactive/invalid/already_used, sjekkes det først om godta faktisk gikk
+//    gjennom: invitasjonen er ikke lenger ventende i list_my_property_co_landlord_invitations, og du
+//    er utleier eller med-utleier på boligen. Da er den godtatt (lik iOS #1588).
 //    En lesing som feiler beviser ingenting, og da vises den vanlige feilen.
 
 export const RETRY_DELAY_MS = 1200;
@@ -23,8 +24,16 @@ export const isTransientFailure = (error, status) => {
   return NETWORK_TEXT.test(`${error.name ?? ""} ${error.message ?? ""} ${error.details ?? ""}`);
 };
 
-// Outcomes that mean the invitation was used before; check whether it was by us.
-const VERIFY_OUTCOMES = new Set(["inactive", "already_used", "already_accepted", "not_pending"]);
+// Outcomes that can mean an earlier call already committed (iOS #1588: inactive, invalid, already_used).
+// email_unconfirmed, expired and account errors are never read as success.
+export const RECOVER_OUTCOMES = new Set(["inactive", "invalid", "already_used"]);
+
+// Bell row for the invitation (NotificationInvitationRouting.receivedCoLandlordNotificationID).
+export const coInviteReceivedNotificationId = (invitationId) => `co_landlord_invitation:received:${String(invitationId).toLowerCase()}`;
+export const isCoInviteReceivedRow = (n, invitationId) =>
+  String(n?.notification_id ?? "").toLowerCase() === coInviteReceivedNotificationId(invitationId)
+  || (n?.notification_type === "co_landlord_invitation_received"
+    && String(n?.source_id ?? "").toLowerCase() === String(invitationId).toLowerCase());
 
 /**
  * deps:
@@ -58,20 +67,20 @@ export const createCoInviteAcceptGate = ({
     try { return await accept(invitationId); } catch (error) { return { error, status: 0 }; }
   };
 
+  // Lik iOS #1588: etter hver feil sjekkes det først om godta allerede gikk gjennom; bare hvis ikke,
+  // og feilen er forbigående, prøves det én gang til.
   const run = async (invitationId, propertyId) => {
-    let res = await attempt(invitationId);
-    if (res.error && !isOffline() && isTransientFailure(res.error, res.status)) {
-      await sleep(retryDelay);
-      res = await attempt(invitationId);
-    }
-    const outcome = res.result?.outcome;
-    if (!res.error && outcome === "accepted") return res;
-    if (res.error || VERIFY_OUTCOMES.has(outcome) || !outcome) {
-      if (await verify(invitationId, propertyId)) {
-        return { result: { outcome: "accepted", property_id: propertyId, verified: true } };
+    const accepted = () => ({ result: { outcome: "accepted", property_id: propertyId, verified: true } });
+    for (let attemptNo = 1; ; attemptNo += 1) {
+      const res = await attempt(invitationId);
+      if (!res.error) {
+        if (RECOVER_OUTCOMES.has(res.result?.outcome) && await verify(invitationId, propertyId)) return accepted();
+        return res;
       }
+      if (await verify(invitationId, propertyId)) return accepted();
+      if (attemptNo >= 2 || isOffline() || !isTransientFailure(res.error, res.status)) return res;
+      await sleep(retryDelay);
     }
-    return res;
   };
 
   return {

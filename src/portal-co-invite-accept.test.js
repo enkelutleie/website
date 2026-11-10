@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCoInviteAcceptGate, isTransientFailure, RETRY_DELAY_MS } from "./portal-co-invite-accept.js";
+import {
+  coInviteReceivedNotificationId, createCoInviteAcceptGate, isCoInviteReceivedRow, isTransientFailure, RETRY_DELAY_MS,
+} from "./portal-co-invite-accept.js";
 
 const INV = "inv-1";
 const PID = "prop-1";
@@ -58,7 +60,7 @@ test("retries only once: two timeouts and no proof give the error", async () => 
   const r = await gate.accept(INV, PID);
   assert.ok(r.error);
   assert.equal(calls.accept, 2);
-  assert.equal(calls.verify, 1);
+  assert.equal(calls.verify, 2);
 });
 
 test("no retry when the browser is offline", async () => {
@@ -129,4 +131,38 @@ test("lock is per invitation and released after an error", async () => {
   assert.equal(a.result.outcome, "accepted");
   assert.equal(b.result.outcome, "accepted");
   assert.equal(calls.accept, 3);
+});
+
+test("iOS #1588: a timeout that already committed is accepted without a second call", async () => {
+  const { gate, calls } = setup({ answers: [timeout, accepted], mine: { data: [] }, member: { ok: true } });
+  const r = await gate.accept(INV, PID);
+  assert.equal(r.result.outcome, "accepted");
+  assert.equal(r.result.verified, true);
+  assert.equal(calls.accept, 1);
+  assert.deepEqual(calls.sleeps, []);
+});
+
+test("iOS #1588: 'invalid' and 'already_used' are recovered when the membership exists", async () => {
+  for (const outcome of ["invalid", "already_used"]) {
+    const { gate } = setup({ answers: [{ result: { outcome } }], mine: { data: [] }, member: { ok: true } });
+    assert.equal((await gate.accept(INV, PID)).result.outcome, "accepted");
+    const still = setup({ answers: [{ result: { outcome } }], mine: { data: [] }, member: { ok: false } });
+    assert.equal((await still.gate.accept(INV, PID)).result.outcome, outcome);
+  }
+});
+
+test("email_unconfirmed is never read as success", async () => {
+  const { gate, calls } = setup({ answers: [{ result: { outcome: "email_unconfirmed" } }], mine: { data: [] }, member: { ok: true } });
+  assert.equal((await gate.accept(INV, PID)).result.outcome, "email_unconfirmed");
+  assert.equal(calls.verify, 0);
+});
+
+test("bell row: matches co_landlord_invitation:received:<id> or the typed row with source_id", () => {
+  const id = "AB12CD34-0000-4000-8000-000000000001";
+  assert.equal(coInviteReceivedNotificationId(id), "co_landlord_invitation:received:ab12cd34-0000-4000-8000-000000000001");
+  assert.equal(isCoInviteReceivedRow({ notification_id: "co_landlord_invitation:received:ab12cd34-0000-4000-8000-000000000001" }, id), true);
+  assert.equal(isCoInviteReceivedRow({ notification_id: "n-9", notification_type: "co_landlord_invitation_received", source_id: id.toLowerCase() }, id), true);
+  assert.equal(isCoInviteReceivedRow({ notification_id: "n-9", notification_type: "tenancy_invitation_received", source_id: id }, id), false);
+  assert.equal(isCoInviteReceivedRow({ notification_id: "co_landlord_invitation:received:other" }, id), false);
+  assert.equal(isCoInviteReceivedRow(null, id), false);
 });
