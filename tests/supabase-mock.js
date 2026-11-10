@@ -186,6 +186,8 @@ function rpcPayload(name, body, options = {}) {
       return false;
     case "get_property_home_guide_completed":
       return true;
+    case "list_managed_property_rental_tax_facts":
+      return (options.taxFacts ?? []).filter((f) => (body?.requested_property_ids ?? []).includes(f.property_id));
     case "list_calendar_items_for_property":
       return pid === PROPERTY_ID ? [calendarItem] : [];
     case "list_my_property_rental_agreements":
@@ -316,7 +318,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installSupabase } from "./supabase-mock.js";
+import { installSupabase, PROPERTY_ID } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -369,6 +369,42 @@ test.describe("portal", () => {
     expect(saved.body).not.toHaveProperty("municipality_number");
     expect(saved.body).not.toHaveProperty("municipality_name");
     expect(saved.body.address_line1).toBeTruthy();
+  });
+
+  test("own home asks whether you use at least half and sends uses_at_least_half (iOS #1591)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, {
+      taxFacts: [{ property_id: PROPERTY_ID, home_use: "own_home", rental_duration: "short_term", uses_at_least_half: null }],
+    });
+    await page.getByRole("link", { name: "Om boligen", exact: true }).click();
+    await page.getByRole("button", { name: "Rediger informasjon" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger informasjon" }) });
+    const question = dialog.getByRole("button", { name: /Bruker du minst halvparten av boligen selv\?/ });
+    await expect(question).toBeVisible();
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect(dialog.getByText("Velg om du bruker minst halvparten av boligen selv.")).toBeVisible();
+    expect(writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"))).toBeFalsy();
+    await question.click();
+    await dialog.getByRole("option", { name: "Ja", exact: true }).click();
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"))).toBeTruthy();
+    const saved = writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"));
+    expect(saved.body.rental_profile.home_use).toBe("own_home");
+    expect(saved.body.rental_profile.rental_duration).toBe("short_term");
+    expect(saved.body.rental_profile.uses_at_least_half).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  test("the half-use question is hidden for other property types", async ({ page }) => {
+    const { writes } = await openPortal(page);
+    await page.getByRole("link", { name: "Om boligen", exact: true }).click();
+    await page.getByRole("button", { name: "Rediger informasjon" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger informasjon" }) });
+    await expect(dialog.getByText("Bruker du minst halvparten av boligen selv?")).toBeHidden();
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"))).toBeTruthy();
+    const saved = writes.find((entry) => entry.method === "PATCH" && entry.path.includes("/properties"));
+    expect(saved.body.rental_profile.home_use).toBe("other_home");
+    expect(saved.body.rental_profile.uses_at_least_half).toBeNull();
   });
 
   test("a failed handbook read does not offer an empty editor", async ({ page }) => {
