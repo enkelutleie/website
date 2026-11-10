@@ -2,9 +2,9 @@
 // The portal user is always the landlord. Writes go only through the v2 RPCs; a missing RPC falls
 // back to the old ones and the old behaviour.
 
-// «Gjelder» room picker. Off until iOS closes the list_history_h1 gap; a later PR flips this.
-// Off: events are created for the whole home, exactly as before.
-export const CALENDAR_ROOM_PICKER_ENABLED = false;
+// «Gjelder» room picker. On since iOS #1601 closed the list_history_h1 gap.
+// Off: events are created for the whole home, as before the room audience.
+export const CALENDAR_ROOM_PICKER_ENABLED = true;
 
 export const ROOM_TEXT = {
   appliesTo: "Gjelder",
