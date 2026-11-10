@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, ROOM_EVENT_ID, roomCalendarTables, READY_B, READY_C, READY_PROCESS_A, readyToEndTables } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -386,9 +386,9 @@ test.describe("portal", () => {
     const toggle = dialog.getByRole("switch", { name: /Krever svar fra leietaker/ });
     await expect(toggle).toBeChecked();
     await expect(dialog.getByText("Leietakeren får svarknapper. Slå av for en ren informasjonshendelse.")).toBeVisible();
-    // The room picker ships hidden (CALENDAR_ROOM_PICKER_ENABLED off), even in a bofellesskap with rooms.
-    await expect(dialog.getByText("Gjelder", { exact: true })).toHaveCount(0);
-    await expect(dialog.getByText("Alle rom")).toHaveCount(0);
+    // Bofellesskap with three named rooms: «Gjelder» shows, «Alle rom» is the default.
+    await expect(dialog.getByText("Gjelder", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("checkbox", { name: "Alle rom" })).toBeChecked();
     await expect(page.locator("select")).toHaveCount(0);
     await toggle.click();
     await expect(toggle).not.toBeChecked();
@@ -473,6 +473,99 @@ test.describe("portal", () => {
       requested_calendar_item_id: ROOM_EVENT_ID, requested_audience_tenancy_ids: [], requested_requires_response: true,
     });
     expect(writes.find((w) => w.path.endsWith("/rpc/update_calendar_item")).body.requested_title).toBe("Felles vask");
+    expect(errors).toEqual([]);
+  });
+
+  // iOS #1601: «Gjelder» is on.
+  const roomPicker = (dialog) => ({
+    all: dialog.getByRole("checkbox", { name: "Alle rom" }),
+    room: (n) => dialog.getByRole("checkbox", { name: `Rom ${n}`, exact: true }),
+  });
+  test("«Gjelder» defaults to «Alle rom» and sends the chosen rooms to create_calendar_item_v2 (iOS #1601)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: readyToEndTables() });
+    const dialog = await newEventDialog(page);
+    await expect(dialog.getByText("Velg hvilke rom som ser hendelsen. Alle rom gjelder også rom du legger til senere.")).toBeVisible();
+    const pick = roomPicker(dialog);
+    await expect(pick.all).toBeChecked();
+    await expect(pick.room(1)).toBeHidden();
+    await pick.all.click();
+    await expect(pick.room(1)).toBeVisible();
+    await expect(pick.room(2)).toBeVisible();
+    await expect(pick.room(3)).toBeVisible();
+    await pick.room(3).click();
+    await pick.room(1).click();
+    await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))).toBeTruthy();
+    const body = writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2")).body;
+    expect(body.requested_audience_tenancy_ids).toEqual([READY_A, READY_C].sort());
+    expect(body.requested_requires_response).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  for (const [name, options] of [["a regular home", {}], ["a bofellesskap with one named room", { handover: readyToEndTables({ count: 1 }) }]]) {
+    test(`«Gjelder» is hidden for ${name} (iOS #1601)`, async ({ page }) => {
+      const { writes } = await openPortal(page, options);
+      const dialog = await newEventDialog(page);
+      await expect(dialog.getByRole("switch", { name: /Krever svar/ })).toBeVisible();
+      await expect(dialog.getByText("Gjelder", { exact: true })).toHaveCount(0);
+      await expect(dialog.getByRole("checkbox", { name: "Alle rom" })).toHaveCount(0);
+      await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
+      await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))).toBeTruthy();
+      expect(writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2")).body.requested_audience_tenancy_ids).toBeNull();
+    });
+  }
+
+  // A saved two-room event in the shared fixture: rows on READY_A and READY_B.
+  const savedRoomEvent = () => {
+    const shared = readyToEndTables();
+    const cal = roomCalendarTables();
+    const ids = [READY_A, READY_B];
+    const rows = cal.rpc.list_calendar_item_responses_v2.slice(0, 2).map((r, i) => ({
+      ...r, tenancy_id: ids[i], unit_label: `Rom ${i + 1}`, decision: null, comment: null,
+      accepted_count: 0, declined_count: 0, unanswered_count: 2, recipient_count: 2, audience_restricted: true,
+    }));
+    return { ...shared, property_calendar_items: cal.property_calendar_items, rpc: { ...shared.rpc, ...cal.rpc, list_calendar_item_responses_v2: rows } };
+  };
+  const openEdit = async (page) => {
+    await page.goto(`/portal/#kalender/${ROOM_EVENT_ID}`);
+    await page.getByRole("button", { name: "Rediger", exact: true }).click();
+    return page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Endre hendelse" }) });
+  };
+  test("Endre hendelse keeps saved rooms and sends a room change through update_calendar_item_audience (iOS #1601)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: savedRoomEvent() });
+    let dialog = await openEdit(page);
+    let pick = roomPicker(dialog);
+    await expect(pick.all).not.toBeChecked();
+    await expect(pick.room(1)).toBeChecked();
+    await expect(pick.room(2)).toBeChecked();
+    await expect(pick.room(3)).not.toBeChecked();
+    // A title change alone keeps the rooms: no audience call.
+    await dialog.getByLabel("Tittel").fill("Felles vask og rydding");
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item"))).toBeTruthy();
+    await expect(dialog).toHaveCount(0);
+    expect(writes.some((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBe(false);
+    dialog = await openEdit(page);
+    pick = roomPicker(dialog);
+    await pick.room(3).click();
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBeTruthy();
+    expect(writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience")).body).toEqual({
+      requested_calendar_item_id: ROOM_EVENT_ID, requested_audience_tenancy_ids: [READY_A, READY_B, READY_C].sort(), requested_requires_response: true,
+    });
+    expect(writes.some((w) => /\/rest\/v1\/calendar_item_(audience|room_responses)/.test(w.path))).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  test("a missing update_calendar_item_audience still saves the edit (iOS #1600 fallback)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: savedRoomEvent(), missingRpc: ["update_calendar_item_audience"] });
+    const dialog = await openEdit(page);
+    await roomPicker(dialog).all.click();
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBeTruthy();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("Hendelsen er oppdatert.")).toBeVisible();
+    await expect(page.getByText(/PGRST202|schema cache/)).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 

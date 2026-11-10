@@ -5,8 +5,8 @@ import {
   roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle,
 } from "./portal-calendar-rooms.js";
 
-test("the room picker flag ships off", () => {
-  assert.equal(CALENDAR_ROOM_PICKER_ENABLED, false);
+test("the room picker flag is on (iOS #1601)", () => {
+  assert.equal(CALENDAR_ROOM_PICKER_ENABLED, true);
 });
 
 test("missing RPC: PGRST202, 42883 or a not-found message; other errors are real", () => {
@@ -27,7 +27,8 @@ test("room choices: active tenancies with a public room name, natural order", ()
 test("picker: shared with two named rooms, never a regular home or maintenance; flag gates it", () => {
   const two = [{ tenancyId: "a", label: "Rom 1" }, { tenancyId: "b", label: "Rom 2" }];
   assert.equal(showsPicker("shared", two, false, true), true);
-  assert.equal(showsPicker("shared", two, false), false);
+  assert.equal(showsPicker("shared", two, false, false), false);
+  assert.equal(showsPicker("shared", two, false), true);
   assert.equal(showsPicker("shared", two.slice(0, 1), false, true), false);
   assert.equal(showsPicker("standard", two, false, true), false);
   assert.equal(showsPicker("rental_unit", two, false, true), false);
