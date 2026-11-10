@@ -135,6 +135,60 @@ function galleryImageRows() {
   }));
 }
 
+// Move-in/move-out with checklist photos from both the landlord and the tenant (iOS #1595).
+export const HANDOVER_IN_ID = "d1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1";
+export const HANDOVER_OUT_ID = "d2d2d2d2-d2d2-42d2-82d2-d2d2d2d2d2d2";
+const HO_IN_COLLECTION = "e1e1e1e1-e1e1-41e1-81e1-e1e1e1e1e1e1";
+const HO_OUT_COLLECTION = "e2e2e2e2-e2e2-42e2-82e2-e2e2e2e2e2e2";
+const WALLS_IN = "property.detail.handover.moveIn.item.walls";
+const WALLS_OUT = "property.detail.handover.moveOut.item.walls";
+const hoNote = (data) => `[[eu-handover:${JSON.stringify(data)}]]`;
+const HO_SHARED = {
+  in: [{ k: WALLS_IN, d: true, c: "Liten flekk i stua", p: true }],
+  out: [{ k: WALLS_OUT, d: false, c: "Hull etter bilde", p: true, bd: true, bc: "Liten flekk i stua" }],
+  keys: [],
+  meters: [{ kind: "electricity", in: "12345", out: "15000" }],
+};
+export function handoverTables(options = {}) {
+  const inspection = (id, type, collection) => ({
+    id, tenancy_id: TENANCY_ID, type, image_collection_id: collection, status: "finalized", protocol_mark: null,
+    sent_for_review_at: null, tenant_decision: null, tenant_may_fill: false, tenant_fill_done_at: null,
+    finalized_at: "2026-10-01T10:00:00Z", created_at: type === "move_in" ? "2025-01-01T10:00:00Z" : "2026-10-01T10:00:00Z", updated_at: "2026-10-01T10:00:00Z",
+  });
+  const item = (inspectionId, data) => ({ id: `${inspectionId.slice(0, 8)}-0000-4000-8000-000000000001`, inspection_id: inspectionId, area_code: "other", condition: "ok", note: hoNote(data), sort_order: 0, updated_at: "2026-10-01T10:00:00Z" });
+  const image = (n, collection, caption, uploadedBy, extra = {}) => ({
+    id: `f0f0f0f0-f0f0-40f0-80f0-0000000000${String(n).padStart(2, "0")}`, collection_id: collection, property_id: PROPERTY_ID,
+    caption, storage_path: `handover/${n}.jpg`, status: "ready", uploaded_by: uploadedBy,
+    created_at: `2026-0${Math.min(9, n)}-01T10:00:00Z`, ...extra,
+  });
+  return {
+    inspections: [inspection(HANDOVER_IN_ID, "move_in", HO_IN_COLLECTION), inspection(HANDOVER_OUT_ID, "move_out", HO_OUT_COLLECTION)],
+    move_out_processes: [{ id: "d3d3d3d3-d3d3-43d3-83d3-d3d3d3d3d3d3", tenancy_id: TENANCY_ID, property_id: PROPERTY_ID, scope: "tenancy", subject_member_id: null, move_out_on: "2026-10-01", notice_party: "tenant", state: "deposit", inspection_id: HANDOVER_OUT_ID, notice_given_at: "2026-08-01T10:00:00Z" }],
+    deposit_settlements: [{ id: "d4d4d4d4-d4d4-44d4-84d4-d4d4d4d4d4d4", status: options.status ?? "open", tenancy_id: TENANCY_ID, move_out_inspection_id: HANDOVER_OUT_ID, created_at: "2026-10-02T10:00:00Z" }],
+    inspection_items: [item(HANDOVER_IN_ID, { in: HO_SHARED.in, keys: [], meters: [{ kind: "electricity", in: "12345" }] }), item(HANDOVER_OUT_ID, HO_SHARED)],
+    property_images: [
+      // Newest landlord photo listed first: the page sorts oldest first.
+      image(3, HO_IN_COLLECTION, `eu-checklist:in:${WALLS_IN}`, USER_ID),
+      image(1, HO_IN_COLLECTION, `eu-checklist-photo:in:0a0a0a0a-0a0a-40a0-80a0-0a0a0a0a0a0a:${WALLS_IN}`, TENANT_ID),
+      image(4, HO_OUT_COLLECTION, `eu-checklist-photo:out:0b0b0b0b-0b0b-40b0-80b0-0b0b0b0b0b0b:${WALLS_OUT}`, TENANT_ID),
+      image(5, HO_OUT_COLLECTION, `eu-checklist:out:${WALLS_OUT}`, USER_ID),
+      image(2, HO_IN_COLLECTION, "Strøm (kWh) – Sjekkliste for innflytting", TENANT_ID),
+      image(6, HO_OUT_COLLECTION, "Strøm (kWh) – Sjekkliste for utflytting", USER_ID),
+      // Same storage path again: shown once.
+      image(7, HO_OUT_COLLECTION, `eu-checklist:out:${WALLS_OUT}`, TENANT_ID, { storage_path: "handover/5.jpg" }),
+      // Left out: not ready, unknown key, bad uuid, another collection.
+      image(8, HO_OUT_COLLECTION, `eu-checklist:out:${WALLS_OUT}`, TENANT_ID, { status: "pending" }),
+      image(9, HO_OUT_COLLECTION, `eu-checklist:out:${WALLS_OUT}`, TENANT_ID, { status: "deleted" }),
+      image(10, HO_OUT_COLLECTION, "eu-checklist:out:property.detail.handover.moveOut.item.unknown", TENANT_ID),
+      image(11, HO_OUT_COLLECTION, `eu-checklist-photo:out:not-a-uuid:${WALLS_OUT}`, TENANT_ID),
+      image(12, GALLERY_COLLECTION, `eu-checklist:out:${WALLS_OUT}`, TENANT_ID),
+    ],
+  };
+}
+// A 1×1 PNG; each path gets its own trailing bytes so the data URLs differ.
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+export const handoverImageBytes = (path) => Buffer.concat([PNG, Buffer.from(path)]);
+
 const conversation = {
   conversation_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   property_id: PROPERTY_ID,
@@ -186,6 +240,9 @@ function rpcPayload(name, body, options = {}) {
       return false;
     case "get_property_home_guide_completed":
       return true;
+    case "open_deposit_settlement":
+      if (!options.handover) return [];
+      return { id: options.handover.deposit_settlements[0].id, status: options.handover.deposit_settlements[0].status, deposit_amount_minor: 3_000_000, security_type: "deposit", claims: [] };
     case "list_managed_property_rental_tax_facts":
       return (options.taxFacts ?? []).filter((f) => (body?.requested_property_ids ?? []).includes(f.property_id));
     case "list_calendar_items_for_property":
@@ -255,6 +312,10 @@ function respond(url, req, body, options) {
     return json(200, { pdf_base64: PDF, filename: "utkast.pdf" });
   }
   if (url.pathname.includes("/functions/v1/")) return json(200, { ok: true });
+  if (options.handover && url.pathname.includes("/storage/v1/object/") && url.pathname.includes("/property-images/handover/")) {
+    const path = decodeURIComponent(url.pathname.split("/property-images/")[1]);
+    return { status: 200, contentType: "image/png", body: handoverImageBytes(path) };
+  }
   if (url.pathname.includes("/storage/")) return json(404, { message: "not found", statusCode: "404" });
   if (url.pathname.startsWith("/rest/v1/rpc/")) {
     const name = decodeURIComponent(url.pathname.split("/").pop());
@@ -278,6 +339,7 @@ function respond(url, req, body, options) {
       source = [{ id: GALLERY_COLLECTION, property_id: PROPERTY_ID, kind: "general", status: "active" }];
     }
     if (options.gallery && table === "property_images") source = galleryImageRows();
+    if (options.handover && Object.prototype.hasOwnProperty.call(options.handover, table)) source = options.handover[table];
     let rows = source.filter((row) => matches(row, url));
     if (options.premium === false && table === "subscription_entitlements") rows = [];
     const wantsObject = (req.headers().accept || "").includes("vnd.pgrst.object");
@@ -318,7 +380,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),
@@ -342,7 +404,7 @@ export async function installSupabase(page, options = {}) {
     if (galleryFile && options.stats) options.stats.inflight -= 1;
     await route.fulfill({
       status: result.status,
-      contentType: "application/json",
+      contentType: result.contentType ?? "application/json",
       headers: cors(req),
       body: result.body,
     });

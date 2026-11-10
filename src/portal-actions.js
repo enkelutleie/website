@@ -2154,8 +2154,12 @@ export const INSPECTION_NOTE_LIMIT = 8000;
 const one = (res) => (res.error ? res : { data: Array.isArray(res.data) ? res.data[0] ?? null : res.data });
 
 // Columns the handover screens read. A star select pulls notes and photos the list never shows.
-export const INSPECTION_COLUMNS = "id, tenancy_id, type, status, protocol_mark, sent_for_review_at, tenant_decision, tenant_may_fill, tenant_fill_done_at, finalized_at, created_at, updated_at";
+export const INSPECTION_COLUMNS = "id, tenancy_id, type, image_collection_id, status, protocol_mark, sent_for_review_at, tenant_decision, tenant_may_fill, tenant_fill_done_at, finalized_at, created_at, updated_at";
 export const INSPECTION_ITEM_COLUMNS = "id, inspection_id, area_code, condition, note, sort_order, updated_at";
+// Checklist and meter photos (iOS #1595): ready rows in the move-in/move-out collections, any uploader.
+export const listChecklistImages = (collectionIds) =>
+  supabase.from("property_images").select("id, collection_id, caption, storage_path, status, created_at")
+    .in("collection_id", collectionIds).eq("status", "ready").order("created_at", { ascending: true });
 export const listInspections = (tenancyId) =>
   supabase.from("inspections").select(INSPECTION_COLUMNS).eq("tenancy_id", tenancyId).order("created_at", { ascending: true });
 export const listInspectionItems = (inspectionId) =>

@@ -12,6 +12,7 @@ import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
 import { createBellWaker } from "./portal-bell-wake.js";
+import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
@@ -2876,8 +2877,47 @@ const hoTenancy = (pid) => {
   return list.find((t) => t.id === hoTenancyId) ?? list[0] ?? null;
 };
 const hoLatest = (rows, test) => [...rows].reverse().find(test) ?? null;
+// Checklist photos (iOS #1595): every ready photo in the tenancy's move-in and move-out
+// collections, whoever took it. Downloads are cached as data: URLs, three at a time.
+const hoCollections = (d) => [d?.moveIn?.image_collection_id, d?.moveOut?.image_collection_id].filter(Boolean);
+const hoPhotos = (d, keys) => {
+  const ids = hoCollections(d);
+  if (!ids.length) return Promise.resolve(groupChecklistPhotos([], [], keys));
+  return cachedOk(`ho-photos:${ids.join(",")}`, () => act.listChecklistImages(ids))
+    .then((res) => groupChecklistPhotos(res.error ? [] : res.data ?? [], ids, keys));
+};
+let hoPhotoLimit = null;
+const hoPhotoUrl = (path) => {
+  hoPhotoLimit ??= limitConcurrency(3);
+  return hoPhotoLimit(() => storedImage(path).then((r) => r?.data ?? null).catch(() => null));
+};
+// Thumbnails for one side of a point or meter. Failed downloads are left out, and the same
+// JPEG is shown once. Null when there is nothing to show.
+const hoPhotoStrip = (images, label) => {
+  if (!images?.length) return null;
+  const strip = h("div", "pt-ho-photos");
+  strip.setAttribute("aria-label", label);
+  strip.setAttribute("aria-busy", "true");
+  Promise.all(images.map((i) => hoPhotoUrl(i.storage_path))).then((urls) => {
+    const shown = uniqueUrls(urls);
+    strip.removeAttribute("aria-busy");
+    if (!shown.length) return strip.remove();
+    const viewer = shown.map((url, n) => ({ id: `${label}:${n}`, url }));
+    strip.replaceChildren(...shown.map((url, n) => {
+      const b = h("button", "pt-ho-photo");
+      b.type = "button";
+      b.setAttribute("aria-label", `${label}, bilde ${n + 1} av ${shown.length}`);
+      const img = h("img", "pt-mt-thumb");
+      img.alt = `${label}, bilde ${n + 1}`;
+      img.src = url;
+      b.append(img);
+      b.addEventListener("click", () => photoViewer(viewer, n, label));
+      return b;
+    }));
+  });
+  return strip;
+};
 // Inspections, the move-out and the deposit pointer are read once per tenancy.
-// Photos stay in the app; this page does not fetch property_images.
 const hoSnapshot = (t) => cachedOk(`ho:${t.id}`, async () => {
   const [insp, proc, dep] = await Promise.all([
     act.listInspections(t.id), act.listMoveOutProcesses([t.id]), act.depositPointer(t.id),
@@ -2923,7 +2963,7 @@ const hoDepositStatus = (d) => {
 };
 const hoReloadPage = async (message) => {
   for (const key of [...state.cache.keys()]) {
-    if (key.startsWith("ho:") || key.startsWith("ho-items:") || key.startsWith("ho-comments:")) state.cache.delete(key);
+    if (key.startsWith("ho:") || key.startsWith("ho-items:") || key.startsWith("ho-comments:") || key.startsWith("ho-photos:")) state.cache.delete(key);
   }
   await render();
   if (message) act.toast(message);
@@ -3073,8 +3113,15 @@ const hoChecklist = (items, editable) => {
   c.append(list);
   return c;
 };
+const hoPointTitle = (row) => row.t || HO_POINTS[String(row.k).replace(HO_POINT_PREFIX, "")] || "Sjekkpunkt";
+// Settlement row ids (titleKey, else custom title) from the shared note's lists.
+const hoNoteKeys = (...datas) => datas.flatMap((d) => ["in", "out"].flatMap((k) => (Array.isArray(d?.[k]) ? d[k] : []).map(rowKey))).filter(Boolean);
+const hoNoteOf = (items) => {
+  const other = (items ?? []).find((i) => i.area_code === "other");
+  return other ? act.handoverData(other.note) : null;
+};
 // Shared data the app keeps on the "Annet" note: checklist points, keys and meters.
-const hoShared = (items, phase, editable) => {
+const hoShared = (items, phase, editable, photos) => {
   const other = items.find((i) => i.area_code === "other");
   const data = other ? act.handoverData(other.note) : null;
   if (!data) return null;
@@ -3092,9 +3139,12 @@ const hoShared = (items, phase, editable) => {
       box.type = "checkbox";
       box.checked = row.d === true;
       box.disabled = !editable;
-      label.append(box, h("span", null, row.t || HO_POINTS[String(row.k).replace(HO_POINT_PREFIX, "")] || "Sjekkpunkt"));
+      const title = hoPointTitle(row);
+      label.append(box, h("span", null, title));
       li.append(label);
       if (row.c) li.append(h("p", "pt-ho-note", row.c));
+      const strip = hoPhotoStrip(photos?.checklist.get(rowKey(row))?.[listKey], title);
+      if (strip) li.append(strip);
       box.addEventListener("change", async () => {
         const next = act.withChecklistDone(other.note, listKey, index, box.checked);
         if (!next || next.length > act.INSPECTION_NOTE_LIMIT) {
@@ -3128,7 +3178,13 @@ const hoShared = (items, phase, editable) => {
     }
     c.append(dl);
   }
-  const meters = (Array.isArray(data.meters) ? data.meters : []).filter((m) => HO_METER[m?.kind] && !m.na && (m.in || m.out));
+  // Meter photos sit on the meter row: move-in photos on both cards, move-out on the move-out card.
+  const meterPhotos = (m) => {
+    const side = photos?.meters.get(m.kind);
+    return side ? [...side.in, ...(phase === "move_out" ? side.out : [])] : [];
+  };
+  const meters = (Array.isArray(data.meters) ? data.meters : [])
+    .filter((m) => HO_METER[m?.kind] && !m.na && (m.in || m.out || meterPhotos(m).length));
   if (meters.length) {
     c.append(h("p", "pt-label", "Målerstander"));
     const dl = h("dl", "pt-facts");
@@ -3136,11 +3192,13 @@ const hoShared = (items, phase, editable) => {
       const d = h("div");
       const values = [m.in ? `Ved innflytting ${m.in}` : null, phase === "move_out" && m.out ? `Ved utflytting ${m.out}` : null].filter(Boolean);
       d.append(h("dt", null, HO_METER[m.kind]), h("dd", null, values.join(" · ") || "Ikke registrert"));
+      const strip = hoPhotoStrip(meterPhotos(m), HO_METER[m.kind]);
+      if (strip) d.append(strip);
       dl.append(d);
     }
     c.append(dl);
   }
-  c.append(h("p", "pt-muted", "Nøkler, målerstander og bilder registreres i appen."));
+  c.append(h("p", "pt-muted", "Nøkler og målerstander registreres i appen."));
   return c;
 };
 const hoComments = async (inspection, canComment) => {
@@ -3187,11 +3245,13 @@ const hoComments = async (inspection, canComment) => {
   }
   return c;
 };
-const hoProtocolCards = async (inspection, editable, canComment) => {
+const hoProtocolCards = async (inspection, editable, canComment, d) => {
   const items = await cachedOk(`ho-items:${inspection.id}`, () => act.listInspectionItems(inspection.id));
   if (items.error) return [inline("Sjekklisten kunne ikke hentes akkurat nå.")];
   const rows = items.data ?? [];
-  return [hoChecklist(rows, editable), hoShared(rows, inspection.type, editable), await hoComments(inspection, canComment)].filter(Boolean);
+  const note = hoNoteOf(rows);
+  const photos = note ? await hoPhotos(d ?? { [inspection.type === "move_out" ? "moveOut" : "moveIn"]: inspection }, hoNoteKeys(note)) : null;
+  return [hoChecklist(rows, editable), hoShared(rows, inspection.type, editable, photos), await hoComments(inspection, canComment)].filter(Boolean);
 };
 const hoTenantFillToggle = (i) => {
   const label = h("label", "pt-ho-toggle");
@@ -3263,7 +3323,7 @@ const hoMoveInPage = async (p, t, d) => {
   }
   const editable = draft && (manager || tenantFilling);
   const canComment = draft && (manager || Boolean(i.sent_for_review_at));
-  return [hoBack(), head, ...(await hoProtocolCards(i, editable, canComment))];
+  return [hoBack(), head, ...(await hoProtocolCards(i, editable, canComment, d))];
 };
 
 const hoNoticeForm = async (p, t, manager) => {
@@ -3355,7 +3415,7 @@ const hoMoveOutPage = async (p, t, d) => {
   if (buttons.length) head.append(actionsRow(...buttons));
   if (!i) return [hoBack(), head];
   const tenantFilling = !manager && !finalized && i.tenant_may_fill;
-  return [hoBack(), head, ...(await hoProtocolCards(i, !finalized && (manager || tenantFilling), manager && !finalized))];
+  return [hoBack(), head, ...(await hoProtocolCards(i, !finalized && (manager || tenantFilling), manager && !finalized, d))];
 };
 
 const hoClaimForm = (snap, claim) => act.openForm({
@@ -3503,7 +3563,74 @@ const hoDepositPage = async (p, t, d) => {
   }
   if (claims.length) list.append(ul);
   list.append(h("p", "pt-muted", "Bilder og kvitteringer til kravene legges til i appen."));
-  return [hoBack(), head, list];
+  return [hoBack(), head, list, await hoDepositComparison(d)].filter(Boolean);
+};
+// Move-in against move-out for the settlement, before and after it is sent (iOS
+// DepositHandoverComparison). Checks, notes and readings come from the shared checklist notes;
+// photos are every ready photo in both collections.
+const hoDepositComparison = async (d) => {
+  const read = (i) => (i ? cachedOk(`ho-items:${i.id}`, () => act.listInspectionItems(i.id)) : Promise.resolve({ data: [] }));
+  const [inRes, outRes] = await Promise.all([read(d.moveIn), read(d.moveOut)]);
+  const c = card("Innflytting og utflytting", "key");
+  if (inRes.error || outRes.error) {
+    c.append(inline("Sjekklisten kunne ikke hentes akkurat nå."));
+    return c;
+  }
+  const inNote = hoNoteOf(inRes.data);
+  const outNote = hoNoteOf(outRes.data);
+  const rows = comparisonRows(inNote, outNote);
+  const photos = await hoPhotos(d, hoNoteKeys(inNote, outNote));
+  const meters = comparisonMeters(inNote, outNote)
+    .concat([...photos.meters.keys()].filter((k) => HO_METER[k]).map((kind) => ({ kind, in: "", out: "" })))
+    .filter((m, n, all) => all.findIndex((x) => x.kind === m.kind) === n);
+  if (!rows.length && !meters.length) {
+    c.append(inline("Ingen sjekkpunkter er registrert."));
+    return c;
+  }
+  const side = (label, done, note, images, title) => {
+    const box = h("div", "pt-ho-side");
+    const state = done === null ? "Ikke registrert" : done ? "Utført" : "Ikke utført";
+    box.append(h("p", "pt-label", `${label} · ${state}`));
+    if (note) box.append(h("p", "pt-ho-note", note));
+    const strip = hoPhotoStrip(images, `${title}, ${label.toLowerCase()}`);
+    if (strip) box.append(strip);
+    return box;
+  };
+  if (rows.length) {
+    const ul = h("ul", "pt-ho-items");
+    for (const r of rows) {
+      const title = hoPointTitle(r.row);
+      const pics = photos.checklist.get(r.key) ?? { in: [], out: [] };
+      const li = h("li", "pt-ho-item");
+      const pair = h("div", "pt-ho-compare");
+      pair.append(side("Innflytting", r.inDone, r.inNote, pics.in, title), side("Utflytting", r.outDone, r.outNote, pics.out, title));
+      li.append(h("strong", null, title), pair);
+      ul.append(li);
+    }
+    c.append(ul);
+  }
+  if (meters.length) {
+    c.append(h("p", "pt-label", "Målerstander"));
+    const ul = h("ul", "pt-ho-items");
+    for (const m of meters) {
+      const title = HO_METER[m.kind];
+      const pics = photos.meters.get(m.kind) ?? { in: [], out: [] };
+      const li = h("li", "pt-ho-item");
+      const pair = h("div", "pt-ho-compare");
+      const meterSide = (label, value, images) => {
+        const box = h("div", "pt-ho-side");
+        box.append(h("p", "pt-label", `${label} · ${value || "Ikke registrert"}`));
+        const strip = hoPhotoStrip(images, `${title}, ${label.toLowerCase()}`);
+        if (strip) box.append(strip);
+        return box;
+      };
+      pair.append(meterSide("Innflytting", m.in, pics.in), meterSide("Utflytting", m.out, pics.out));
+      li.append(h("strong", null, title), pair);
+      ul.append(li);
+    }
+    c.append(ul);
+  }
+  return c;
 };
 
 const hoOverview = async (p, t, d) => {
@@ -4649,19 +4776,19 @@ const incomingCoLandlordCard = async () => {
 /* ---------- Boligbilder (PropertyDetailTopCard / PropertyGalleryViewer) ---------- */
 const GALLERY_LIMIT_TEXT = "Du kan ha opptil 12 bilder per bolig. Slett et bilde for å legge til et nytt.";
 
-const galleryViewer = (images, start, urls, onRemove) => {
+const galleryViewer = (images, start, urls, onRemove, title = "Boligbilder") => {
   let index = start;
   const dialog = h("dialog", "pt-modal pt-gallery-modal");
   const box = h("div", "pt-modal-card");
   const head = h("div", "pt-card-head");
-  head.append(h("h2", null, "Boligbilder"));
+  head.append(h("h2", null, title));
   const img = h("img", "pt-gallery-full");
   const page = h("p", "pt-muted pt-gallery-page");
   const close = () => { dialog.close(); dialog.remove(); };
   const show = async () => {
     const image = images[index];
     page.textContent = `${index + 1} av ${images.length}`;
-    img.alt = `Boligbilde ${index + 1} av ${images.length}`;
+    img.alt = `${onRemove ? "Boligbilde" : title + ", bilde"} ${index + 1} av ${images.length}`;
     img.removeAttribute("src");
     const url = urls.get(image.id) ?? (await storedImage(image.storage_path).catch(() => null))?.data ?? null;
     if (url && images[index] === image) { urls.set(image.id, url); img.src = url; }
@@ -4679,7 +4806,8 @@ const galleryViewer = (images, start, urls, onRemove) => {
     close();
   });
   const actions = h("div", "pt-modal-actions");
-  actions.append(remove, prev, next, button("Ferdig", "pt-btn-primary", close));
+  if (onRemove) actions.append(remove);
+  actions.append(prev, next, button("Ferdig", "pt-btn-primary", close));
   box.append(head, img, page, actions);
   dialog.append(box);
   dialog.addEventListener("cancel", close);
@@ -4691,6 +4819,9 @@ const galleryViewer = (images, start, urls, onRemove) => {
   dialog.showModal();
   show();
 };
+
+// Read-only viewer for checklist photos that are already downloaded.
+const photoViewer = (items, start, title) => galleryViewer(items, start, new Map(items.map((i) => [i.id, i.url])), null, title);
 
 const limitConcurrency = (limit) => {
   let active = 0;
