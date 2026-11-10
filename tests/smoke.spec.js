@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, READY_PROCESS_A, readyToEndTables } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, ROOM_EVENT_ID, roomCalendarTables, READY_B, READY_C, READY_PROCESS_A, readyToEndTables } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -369,6 +369,111 @@ test.describe("portal", () => {
     expect(saved.body).not.toHaveProperty("municipality_number");
     expect(saved.body).not.toHaveProperty("municipality_name");
     expect(saved.body.address_line1).toBeTruthy();
+  });
+
+  // iOS #1600: calendar per room.
+  const newEventDialog = async (page) => {
+    await page.getByRole("link", { name: "Kalender", exact: true }).click();
+    await page.getByRole("button", { name: "+ Ny hendelse" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny hendelse" }) });
+    await dialog.getByLabel("Tittel").fill("Felles vask");
+    await dialog.getByLabel("Dato").fill("2026-11-20");
+    return dialog;
+  };
+  test("«Krever svar fra leietaker» is on by default and maps to requires_response (iOS #1600)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: readyToEndTables() });
+    const dialog = await newEventDialog(page);
+    const toggle = dialog.getByRole("switch", { name: /Krever svar fra leietaker/ });
+    await expect(toggle).toBeChecked();
+    await expect(dialog.getByText("Leietakeren får svarknapper. Slå av for en ren informasjonshendelse.")).toBeVisible();
+    // The room picker ships hidden (CALENDAR_ROOM_PICKER_ENABLED off), even in a bofellesskap with rooms.
+    await expect(dialog.getByText("Gjelder", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText("Alle rom")).toHaveCount(0);
+    await expect(page.locator("select")).toHaveCount(0);
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))).toBeTruthy();
+    const body = writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2")).body;
+    expect(body.requested_requires_response).toBe(false);
+    expect(body.requested_audience_tenancy_ids).toBeNull();
+    expect(body.requested_shared_with_property).toBe(true);
+    expect(writes.some((w) => w.path.endsWith("/rpc/create_calendar_item"))).toBe(false);
+    expect(writes.some((w) => /calendar_item_audience|calendar_item_room_responses/.test(w.path) && !w.path.includes("/rpc/"))).toBe(false);
+    // Maintenance hides the switch.
+    await page.getByRole("button", { name: "+ Ny hendelse" }).click();
+    const again = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny hendelse" }) });
+    await again.getByText("Merk som vedlikeholdssak").click();
+    await expect(again.getByRole("switch", { name: /Krever svar/ })).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+
+  test("a server without create_calendar_item_v2 falls back to create_calendar_item (iOS #1600)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { missingRpc: ["create_calendar_item_v2"] });
+    const dialog = await newEventDialog(page);
+    await dialog.getByRole("switch", { name: /Krever svar/ }).click();
+    await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item"))).toBeTruthy();
+    const old = writes.find((w) => w.path.endsWith("/rpc/create_calendar_item")).body;
+    expect(old.requested_requires_response).toBeUndefined();
+    expect(old.requested_audience_tenancy_ids).toBeUndefined();
+    await expect(page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny hendelse" }) })).toHaveCount(0);
+    await expect(page.getByText(/PGRST202|schema cache/)).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test("landlord sees «X av Y har godtatt», each room and «Foreslå ny tid» (iOS #1600)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: roomCalendarTables() });
+    await page.goto(`/portal/#kalender/${ROOM_EVENT_ID}`);
+    await expect(page.getByText("1 av 3 har godtatt")).toBeVisible();
+    const rooms = page.locator(".pt-cal-room");
+    await expect(rooms).toHaveCount(3);
+    await expect(rooms.nth(0)).toContainText("Rom 1Godtatt");
+    await expect(rooms.nth(1)).toContainText("Rom 2Avslått");
+    await expect(rooms.nth(1)).toContainText("Passer ikke");
+    await expect(rooms.nth(2)).toContainText("Rom 3Ikke svart");
+    await expect(page.getByText("Leietaker har avslått")).toHaveCount(0);
+    await page.getByRole("button", { name: "Foreslå ny tid" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny tid" }) });
+    await dialog.getByLabel("Dato").fill("2026-11-21");
+    await dialog.getByLabel("Klokkeslett").fill("12:00");
+    await dialog.getByRole("button", { name: "Foreslå ny tid" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/propose_calendar_item_new_time_v1"))).toBeTruthy();
+    expect(writes.find((w) => w.path.endsWith("/rpc/propose_calendar_item_new_time_v1")).body).toEqual({
+      requested_calendar_item_id: ROOM_EVENT_ID, requested_starts_at: "2026-11-21T11:00:00Z", requested_due_at: null,
+      requested_ends_at: "2026-11-21T12:30:00Z", requested_all_day: false,
+    });
+    await expect(page.getByText("Ny tid er sendt til rommene som avslo.")).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test("a failed proposal says «Kunne ikke foreslå ny tid.» (iOS #1600)", async ({ page }) => {
+    await openPortal(page, { handover: roomCalendarTables(), fail: ["propose_calendar_item_new_time_v1"] });
+    await page.goto(`/portal/#kalender/${ROOM_EVENT_ID}`);
+    await page.getByRole("button", { name: "Foreslå ny tid" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny tid" }) });
+    await dialog.getByRole("button", { name: "Foreslå ny tid" }).click();
+    await expect(dialog.getByText("Kunne ikke foreslå ny tid.")).toBeVisible();
+  });
+
+  test("an information event needs no reply, and the edit switch updates it via update_calendar_item_audience (iOS #1600)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: roomCalendarTables({ requiresResponse: false }) });
+    await page.goto(`/portal/#kalender/${ROOM_EVENT_ID}`);
+    await expect(page.getByText("Dette er informasjon. Ingen svar trengs.")).toBeVisible();
+    await expect(page.getByText("Venter på svar fra leietaker")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Foreslå ny tid" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Rediger", exact: true }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Endre hendelse" }) });
+    const toggle = dialog.getByRole("switch", { name: /Krever svar fra leietaker/ });
+    await expect(toggle).not.toBeChecked();
+    await toggle.click();
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBeTruthy();
+    expect(writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience")).body).toEqual({
+      requested_calendar_item_id: ROOM_EVENT_ID, requested_audience_tenancy_ids: [], requested_requires_response: true,
+    });
+    expect(writes.find((w) => w.path.endsWith("/rpc/update_calendar_item")).body.requested_title).toBe("Felles vask");
+    expect(errors).toEqual([]);
   });
 
   // iOS #1597: one «Klar til å avslutte» card per ready tenancy.

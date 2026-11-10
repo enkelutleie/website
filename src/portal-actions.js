@@ -3,6 +3,7 @@ import { createStuckFinalizer } from "./portal-sign-refresh.js";
 import { createCoInviteAcceptGate } from "./portal-co-invite-accept.js";
 import { rentalProfileOf } from "./portal-own-home.js";
 import { domainChangeHandler } from "./portal-calendar-live.js";
+import { isMissingRpc as calendarRpcMissing } from "./portal-calendar-rooms.js";
 import { osloWallToUtcIso } from "./oslo-time.js";
 import { collectPages } from "./paged.js";
 import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
@@ -124,7 +125,18 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const body = h("div", "pt-form");
     const inputs = {};
     for (const f of fields) {
-      const check = f.type === "checkbox";
+      // A heading with help text for the checkboxes after it (no input of its own).
+      if (f.type === "legend") {
+        const wrap = h("div", "pt-field pt-field-legend");
+        wrap.dataset.field = f.name;
+        wrap.append(h("span", "pt-field-label", f.label));
+        if (f.help) wrap.append(h("span", "pt-field-help", f.help));
+        if (f.hidden) wrap.hidden = true;
+        body.append(wrap);
+        continue;
+      }
+      // A switch is a checkbox with role="switch" (styled in portal.css).
+      const check = f.type === "checkbox" || f.type === "switch";
       // "select" is kept as an alias so no form can ever render a native <select>.
       const choice = f.type === "choice" || f.type === "select";
       // A custom listbox is not a labelable element, so its row is a div (clicks on options must not hit a label).
@@ -137,8 +149,9 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         input = h("input");
         picker = customSelect({ label: f.label, options: f.options ?? [], value: f.value, input }).el;
       } else if (check) {
-        input = h("input", "pt-check");
+        input = h("input", f.type === "switch" ? "pt-check pt-switch" : "pt-check");
         input.type = "checkbox";
+        if (f.type === "switch") input.setAttribute("role", "switch");
         input.checked = !!f.value;
       } else if (f.type === "textarea") {
         input = h("textarea", "pt-input pt-textarea");
@@ -221,10 +234,11 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         status.hidden = true;
         const values = {};
         for (const f of fields) {
+          if (f.type === "legend") continue;
           const input = inputs[f.name];
           const hidden = input.closest(".pt-field").hidden;
           values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null)
-            : f.type === "checkbox" ? (input.checked ? "true" : "") : input.value.trim();
+            : f.type === "checkbox" || f.type === "switch" ? (input.checked ? "true" : "") : input.value.trim();
           if (f.required && !hidden && !values[f.name]) {
             status.textContent = f.requiredMessage ?? `Fyll ut «${f.label}».`;
             status.hidden = false;
@@ -1414,6 +1428,34 @@ export const createCalendarItem = (propertyId, v, { tenancyId = null, maintenanc
     requested_property_id: propertyId, requested_tenancy_id: tenancyId, requested_maintenance_request_id: maintenanceRequestId,
     ...calendarFields(v), requested_shared_with_property: maintenanceRequestId ? false : shared,
   });
+// iOS #1600: create with v2 (audience + requires_response). A missing v2 RPC falls back to the old
+// create_calendar_item: whole home, reply required. Any other error is returned as is.
+export async function createCalendarItemV2(propertyId, v, opts = {}, { audienceTenancyIds = null, requiresResponse = true } = {}) {
+  const { tenancyId = null, maintenanceRequestId = null, shared = true } = opts;
+  const res = await supabase.rpc("create_calendar_item_v2", {
+    requested_property_id: propertyId, requested_tenancy_id: tenancyId, requested_maintenance_request_id: maintenanceRequestId,
+    ...calendarFields(v), requested_shared_with_property: maintenanceRequestId ? false : shared,
+    requested_audience_tenancy_ids: maintenanceRequestId ? null : audienceTenancyIds,
+    requested_requires_response: maintenanceRequestId ? true : requiresResponse,
+  });
+  if (res.error && calendarRpcMissing(res.error)) return createCalendarItem(propertyId, v, opts);
+  return res;
+}
+// Empty ids return the event to the whole home. A missing RPC counts as saved ({ skipped }).
+export async function updateCalendarItemAudience(itemId, audienceTenancyIds, requiresResponse) {
+  const res = await supabase.rpc("update_calendar_item_audience", {
+    requested_calendar_item_id: itemId, requested_audience_tenancy_ids: audienceTenancyIds ?? [], requested_requires_response: requiresResponse,
+  });
+  if (res.error && calendarRpcMissing(res.error)) return { data: null, skipped: true };
+  return res;
+}
+// Rows per room, or { rows: null } when v2 is missing or failed (legacy answers stay).
+export async function calendarRoomResponses(propertyId) {
+  const res = await supabase.rpc("list_calendar_item_responses_v2", { requested_property_id: propertyId });
+  return res.error ? { data: null, error: res.error } : { data: res.data ?? [] };
+}
+export const proposeCalendarNewTime = (itemId, times) =>
+  supabase.rpc("propose_calendar_item_new_time_v1", { requested_calendar_item_id: itemId, ...times });
 export const updateCalendarItem = (id, v) =>
   supabase.rpc("update_calendar_item", { requested_calendar_item_id: id, ...calendarFields(v) });
 // Audience and maintenance link of an active item (iOS #1530, CalendarItemScopeEditor). A null

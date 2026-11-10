@@ -44,7 +44,7 @@ test("a calendar change drops only that property's calendar reads", () => {
   const { live, cache } = setup();
   live.signal({ eventType: "UPDATE", new: { id: "i1", property_id: "p2" }, old: {} });
   assert.deepEqual([...cache.keys()].sort(), ["cal:p1", "calresp:p1", "mt:p1", "tx:p1"]);
-  assert.deepEqual(calendarCacheKeys("p2"), ["cal:p2", "calresp:p2"]);
+  assert.deepEqual(calendarCacheKeys("p2"), ["cal:p2", "calresp:p2", "calresp2:p2"]);
 });
 
 test("a payload without property_id (maintenance_events, resubscribe) drops the selected property", () => {

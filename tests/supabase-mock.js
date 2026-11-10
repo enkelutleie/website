@@ -186,6 +186,33 @@ export function handoverTables(options = {}) {
     ],
   };
 }
+// Calendar per room (iOS #1600): one shared event for three rooms.
+export const ROOM_EVENT_ID = "e9e9e9e9-e9e9-49e9-89e9-e9e9e9e9e9e9";
+export function roomCalendarTables({ requiresResponse = true } = {}) {
+  const item = {
+    id: ROOM_EVENT_ID, property_id: PROPERTY_ID, tenancy_id: null, maintenance_request_id: null, title: "Felles vask",
+    description: null, item_type: "event", category: "other", starts_at: "2026-11-20T09:00:00Z", due_at: null,
+    ends_at: "2026-11-20T10:30:00Z", all_day: false, visibility: "tenant_shared", status: "active",
+    tenant_response: "declined", tenant_response_comment: "Passer ikke", tenant_responded_at: "2026-11-10T10:00:00Z",
+  };
+  const counts = requiresResponse
+    ? { accepted_count: 1, declined_count: 1, unanswered_count: 1, recipient_count: 3 }
+    : { accepted_count: 0, declined_count: 0, unanswered_count: 0, recipient_count: 3 };
+  const row = (n, decision, comment = null) => ({
+    calendar_item_id: ROOM_EVENT_ID, tenancy_id: `a${n}a${n}a${n}a${n}-a${n}a${n}-4a${n}a-8a${n}a-a${n}a${n}a${n}a${n}a${n}a${n}`, unit_label: `Rom ${n}`,
+    decision: requiresResponse ? decision : null, comment: requiresResponse ? comment : null, responded_at: null,
+    ...counts, requires_response: requiresResponse, audience_restricted: false,
+  });
+  return {
+    property_calendar_items: [item],
+    rpc: {
+      list_calendar_items_for_property: [item],
+      list_calendar_item_responses: [{ calendar_item_id: ROOM_EVENT_ID, decision: "declined", comment: "Passer ikke", responded_at: "2026-11-10T10:00:00Z" }],
+      list_calendar_item_responses_v2: [row(2, "declined", "Passer ikke"), row(1, "accepted"), row(3, null)],
+    },
+  };
+}
+
 // «Klar til å avslutte» (iOS #1597): ready tenancies on one property, shared or regular.
 export const READY_A = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1";
 export const READY_B = "a2a2a2a2-a2a2-42a2-82a2-a2a2a2a2a2a2";
@@ -358,6 +385,9 @@ function respond(url, req, body, options) {
   if (url.pathname.includes("/storage/")) return json(404, { message: "not found", statusCode: "404" });
   if (url.pathname.startsWith("/rest/v1/rpc/")) {
     const name = decodeURIComponent(url.pathname.split("/").pop());
+    if (options.missingRpc?.includes(name)) {
+      return json(404, { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache`, details: null, hint: null });
+    }
     if (fail.has(name) || errorOn.has(name)) {
       return json(400, { message: "duplicate key value violates unique constraint \"property_handbook_sections_pkey\"", code: "23505" });
     }
@@ -419,7 +449,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),

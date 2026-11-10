@@ -6,8 +6,8 @@
 // Tables on the notifications-domain channel that also feed the calendar.
 export const CALENDAR_TABLES = new Set(["property_calendar_items", "maintenance_events"]);
 
-// Read-cache keys behind calendarCard: the item list and list_calendar_item_responses.
-export const calendarCacheKeys = (pid) => [`cal:${pid}`, `calresp:${pid}`];
+// Read-cache keys behind calendarCard: the item list, list_calendar_item_responses and its v2.
+export const calendarCacheKeys = (pid) => [`cal:${pid}`, `calresp:${pid}`, `calresp2:${pid}`];
 
 // property_id from a postgres_changes payload, or null (e.g. maintenance_events has none).
 export const calendarSignalProperty = (payload) => {

@@ -12,6 +12,7 @@ import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
 import { createBellWaker } from "./portal-bell-wake.js";
+import { acceptedCountText, audienceIds, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
 import { postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
@@ -385,7 +386,12 @@ const calendarDetail = async (itemId, requestId) => {
   if (manager && item.visibility === "manager_private" && item.status === "active") {
     c.append(h("p", "pt-muted", "Bare utleiere ser denne hendelsen, så ingen leietaker trenger å godkjenne den. Velg «Rediger» for å dele den med leietakeren."));
   }
-  if (shared) {
+  const summary = shared && !item.maintenance_request_id ? groupSummaries(await calendarRoomRows(pid)).get(item.id) : null;
+  if (shared && summary && !summary.requiresResponse) {
+    c.append(responseBox("is-info", ROOM_TEXT.info));
+  } else if (shared && summary?.showsProgress) {
+    c.append(calendarRoomProgress(item, summary));
+  } else if (shared) {
     const responses = await act.calendarResponses(pid);
     const resp = (responses.data ?? []).find((r) => r.calendar_item_id === item.id);
     const decision = resp?.decision ?? item.tenant_response;
@@ -531,7 +537,7 @@ const calendarUpcoming = (items, now, today) => items
 // awaitsTenantResponse (iOS): shared, active and not answered. The badge only shows when the
 // property has a tenancy with an active tenant who can answer; otherwise the item shows normally.
 const calendarAwaitsTenant = (i, hasTenant) =>
-  hasTenant && i.visibility === "tenant_shared" && i.status === "active" && !i.tenant_response;
+  hasTenant && i.visibility === "tenant_shared" && i.status === "active" && !i.tenant_response && i.requires_response !== false;
 // calendarDisplayDate (iOS): «13. okt. 2026 kl. 23:36», date only for all-day items.
 const calendarWhen = (i) => {
   const d = calendarItemDate(i);
@@ -573,19 +579,63 @@ const calendarRow = (i, { now, hasTenant, manager }) => {
   return li;
 };
 
+// «X av Y har godtatt», each room's status and «Foreslå ny tid» for the rooms that declined (iOS #1600).
+const ROOM_TONE = { accepted: " is-success", declined: " is-danger" };
+const calendarRoomProgress = (item, summary) => {
+  const box = h("div", "pt-mt-response pt-cal-rooms");
+  box.append(h("strong", null, acceptedCountText(summary.accepted, summary.recipients)));
+  const ul = h("ul", "pt-cal-room-list");
+  for (const r of summary.rooms) {
+    const li = h("li", "pt-cal-room");
+    li.append(h("span", "pt-cal-room-name", roomTitle(r)), h("span", `pt-chip${ROOM_TONE[r.decision] ?? ""}`, roomStatus(r.decision)));
+    if (r.decision === "declined" && r.comment) li.append(h("p", "pt-ho-note", r.comment));
+    ul.append(li);
+  }
+  box.append(ul);
+  if (summary.canPropose && item.status === "active") box.append(actionsRow(button(ROOM_TEXT.propose, "pt-btn-secondary pt-btn-small", () => calendarProposeForm(item))));
+  return box;
+};
+const calendarProposeForm = (item) => {
+  const deadline = item.item_type === "deadline";
+  const when = localParts(deadline ? item.due_at : item.starts_at);
+  return act.openForm({
+    title: ROOM_TEXT.proposeTitle,
+    submitLabel: ROOM_TEXT.propose,
+    fields: [
+      { name: "date", label: deadline ? "Frist" : "Dato", type: "date", value: when.date, required: true },
+      { name: "allDay", label: "Hele dagen", type: "choice", options: [["false", "Nei"], ["true", "Ja"]], value: item.all_day ? "true" : "false", required: true },
+      { name: "time", label: "Klokkeslett", type: "time", value: when.time },
+    ],
+    onChange: (inputs, show) => show("time", inputs.allDay.value !== "true"),
+    onSubmit: async (v) => {
+      const allDay = v.allDay === "true";
+      const start = osloWallToUtcIso(v.date, allDay ? "00:00" : v.time || "09:00");
+      const res = await act.proposeCalendarNewTime(item.id, proposeTimes(item, start, allDay));
+      if (res.error) return ROOM_TEXT.proposeError;
+      await refresh(ROOM_TEXT.timeProposed);
+      return null;
+    },
+  });
+};
+// list_calendar_item_responses_v2 rows, or null when it is missing or failed (legacy answers stay).
+const calendarRoomRows = (pid) =>
+  cachedOk(`calresp2:${pid}`, () => act.calendarRoomResponses(pid)).then((r) => (r.error ? null : r.data ?? [])).catch(() => null);
 const calendarCard = async (pid, full = false) => {
   const c = card("Kalender", "calendar");
   const manager = isManager(pid);
-  const [res, hasTenant, responses] = await Promise.all([
+  const [res, hasTenant, responses, roomRows] = await Promise.all([
     calendarItems(pid),
     calendarHasTenant(pid),
     manager ? cachedOk(`calresp:${pid}`, () => act.calendarResponses(pid)).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+    manager ? calendarRoomRows(pid) : Promise.resolve(null),
   ]);
   // applying(responses:) (iOS): a fresher answer from list_calendar_item_responses wins.
   const answers = new Map((responses?.data ?? []).map((r) => [r.calendar_item_id, r.decision]));
-  const items = res.error ? [] : (res.data ?? [])
+  // Then the room answers (iOS #1600): info events need no answer, and one room's decline
+  // does not hide the event for the others. A failed v2 read keeps the legacy answers.
+  const items = res.error ? [] : overlayManager((res.data ?? [])
     .filter((i) => i.status !== "cancelled")
-    .map((i) => (answers.get(i.id) && answers.get(i.id) !== i.tenant_response ? { ...i, tenant_response: answers.get(i.id) } : i));
+    .map((i) => (answers.get(i.id) && answers.get(i.id) !== i.tenant_response ? { ...i, tenant_response: answers.get(i.id) } : i)), roomRows);
   const now = new Date();
   const here = osloParts(now);
   const today = new Date(osloWallToUtcIso(here.date, "00:00"));
@@ -1735,6 +1785,23 @@ const calendarForm = async (pid, item) => {
     .map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id).length ? names.get(t.id) : ["leietaker"]).join(", ")}`]);
   const hasTenant = tenancyOptions.length > 0;
   const hasTenancy = mtActiveTenancies(pid).length > 0;
+  // iOS #1600. Edit reads the saved room audience and reply flag from v2; without it (missing
+  // or failed) the switch is not offered, so an edit can never wipe a room audience.
+  const roomRows = item ? await calendarRoomRows(pid) : null;
+  const summary = item && roomRows ? groupSummaries(roomRows).get(item.id) ?? null : null;
+  const offersSwitch = showsRequiresToggle({ isMaintenance: linked, visibility: item ? item.visibility : "tenant_shared", hasActiveTenant: hasTenant })
+    && (!item || (item.status === "active" && roomRows !== null));
+  const initialRequires = summary ? summary.requiresResponse : true;
+  // «Gjelder» (hidden behind CALENDAR_ROOM_PICKER_ENABLED): bofellesskap with two named rooms.
+  let rooms = [];
+  if (CALENDAR_ROOM_PICKER_ENABLED && !linked) {
+    const units = await act.propertyUnitRows(pid);
+    const labels = new Map((units.data ?? []).map((u) => [u.id, u.display_label]));
+    rooms = roomChoices(tenancies, (t) => labels.get(t.unit_id));
+  }
+  const picker = showsPicker(state.properties.find((x) => x.id === pid)?.housing_kind ?? null, rooms, linked);
+  const initialRooms = summary?.audienceRestricted ? new Set(summary.rooms.map((r) => r.tenancy_id)) : null;
+  const roomField = (id) => `room:${id}`;
   let cases = [];
   let initialAudience = "private";
   if (!item) {
@@ -1760,6 +1827,17 @@ const calendarForm = async (pid, item) => {
     { name: "time", label: "Klokkeslett", type: "time", value: when.time },
     { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 5000, rows: 3 },
   );
+  if (picker) {
+    fields.push(
+      { name: "appliesTo", label: ROOM_TEXT.appliesTo, type: "legend", help: ROOM_TEXT.appliesToHint },
+      { name: "allRooms", label: ROOM_TEXT.allRooms, type: "checkbox", value: !initialRooms },
+      ...rooms.map((r) => ({ name: roomField(r.tenancyId), label: r.label, type: "checkbox", value: !!initialRooms?.has(r.tenancyId) })),
+    );
+  }
+  if (offersSwitch) {
+    fields.push({ name: "requiresResponse", label: ROOM_TEXT.requiresResponse, type: "switch", value: initialRequires, help: ROOM_TEXT.requiresResponseHint });
+  }
+  const chosenRooms = (v) => (picker && v.allRooms !== "true" ? rooms.filter((r) => v[roomField(r.tenancyId)] === "true").map((r) => r.tenancyId) : "all");
   if (!item) {
     fields.push(
       { name: "maintenanceVisibility", label: "Synlighet", type: "choice", required: true,
@@ -1793,14 +1871,25 @@ const calendarForm = async (pid, item) => {
     fields,
     onChange: (inputs, show) => {
       show("time", inputs.allDay.value !== "true");
+      const showRooms = (on) => {
+        show("appliesTo", on);
+        show("allRooms", on);
+        for (const r of rooms) show(roomField(r.tenancyId), on && !inputs.allRooms?.checked);
+      };
       if (item) {
         show("caseId", inputs.linkCase.checked);
+        const tenantSide = !inputs.linkCase.checked && inputs.audience?.value !== "private";
+        show("requiresResponse", tenantSide);
+        if (picker) showRooms(tenantSide);
         return;
       }
       const marked = inputs.maintenance.checked || !!pendingCase;
       show("maintenanceCategory", marked);
       show("category", !marked);
       show("maintenanceVisibility", marked);
+      // Hidden and forced on for maintenance.
+      show("requiresResponse", !marked);
+      if (picker) showRooms(!marked);
     },
     onSubmit: async (v) => {
       if (item) {
@@ -1829,6 +1918,18 @@ const calendarForm = async (pid, item) => {
         }
         const res = await act.updateCalendarItem(item.id, { ...v, kind, endsAt });
         if (res.error) return act.explain(res.error);
+        // Reply flag and rooms (update_calendar_item_audience) only when they changed and the
+        // audience was not changed above. Without the picker the saved rooms are sent back as is.
+        if (offersSwitch && !audienceChanged && !caseChanged && v.audience !== "private") {
+          const requires = v.requiresResponse === "true";
+          const picked = chosenRooms(v);
+          const ids = picker ? (audienceIds(picked) ?? []) : initialRooms ? [...initialRooms].sort() : [];
+          const before = initialRooms ? [...initialRooms].sort() : [];
+          if (requires !== initialRequires || ids.join(",") !== before.join(",")) {
+            const aud = await act.updateCalendarItemAudience(item.id, ids, requires);
+            if (aud.error) return act.explain(aud.error);
+          }
+        }
         await refresh("Hendelsen er oppdatert.");
         return null;
       }
@@ -1837,7 +1938,12 @@ const calendarForm = async (pid, item) => {
       if (!marked) {
         // As before: with an active tenancy the item is shared with it (the server picks the
         // tenancy) and waits for the tenant's answer; without one it is landlord-only.
-        const res = await act.createCalendarItem(pid, values, { shared: hasTenancy });
+        // create_calendar_item_v2 (old create_calendar_item when v2 is missing). With the picker off
+        // the audience is the whole home, as before; «Krever svar» maps to requires_response.
+        const res = await act.createCalendarItemV2(pid, values, { shared: hasTenancy }, {
+          audienceTenancyIds: audienceIds(chosenRooms(v)),
+          requiresResponse: offersSwitch ? v.requiresResponse === "true" : true,
+        });
         if (res.error) return act.explain(res.error);
         await refresh("Lagt i kalenderen.");
         return null;
@@ -1851,7 +1957,7 @@ const calendarForm = async (pid, item) => {
         if (!made.requestId) return made.message;
         pendingCase = { id: made.requestId, tenancyId };
       }
-      const res = await act.createCalendarItem(pid, values, { tenancyId: pendingCase.tenancyId, maintenanceRequestId: pendingCase.id });
+      const res = await act.createCalendarItemV2(pid, values, { tenancyId: pendingCase.tenancyId, maintenanceRequestId: pendingCase.id });
       if (res.error) return `Vedlikeholdssaken er opprettet, men hendelsen kunne ikke legges i kalenderen. ${act.explain(res.error)} Prøv igjen for å koble den til saken.`;
       await refresh("Lagt i kalenderen og opprettet som vedlikeholdssak.");
       return null;
