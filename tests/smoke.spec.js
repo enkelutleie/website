@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installSupabase, PROPERTY_ID } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -369,6 +369,67 @@ test.describe("portal", () => {
     expect(saved.body).not.toHaveProperty("municipality_number");
     expect(saved.body).not.toHaveProperty("municipality_name");
     expect(saved.body.address_line1).toBeTruthy();
+  });
+
+  // iOS #1595: every ready checklist photo in the move-in/move-out collections, landlord and tenant alike.
+  const photoSrcs = (strip) => strip.locator("img").evaluateAll((imgs) => imgs.map((i) => i.getAttribute("src")));
+  const expected = (...ns) => ns.map((n) => handoverImageBytes(`handover/${n}.jpg`).toString("base64"));
+  const expectPhotos = async (strip, ns) => {
+    await expect(strip.locator("img")).toHaveCount(ns.length);
+    const srcs = await photoSrcs(strip);
+    srcs.forEach((src) => expect(src.startsWith("data:")).toBe(true));
+    expect(srcs.map((src) => src.split(",")[1])).toEqual(expected(...ns));
+  };
+
+  for (const status of ["open", "accepted"]) {
+    test(`deposit settlement compares checklist photos from landlord and tenant (${status})`, async ({ page }) => {
+      const stats = {};
+      const requests = [];
+      const { errors } = await openPortal(page, { handover: handoverTables({ status }), stats, requests, delayStorage: 80 });
+      await page.goto("/portal/#inn-utflytting/depositum");
+      const card = page.locator(".pt-card").filter({ has: page.getByRole("heading", { name: "Innflytting og utflytting" }) });
+      await expect(card).toBeVisible();
+      await expect(card.getByText("Sjekk vegger – hull og merker")).toBeVisible();
+      await expect(card.getByText("Innflytting · Utført").first()).toBeVisible();
+      // Baseline on the move-out row, and the move-in point (another key) as its own row.
+      await expect(card.getByText("Liten flekk i stua")).toHaveCount(2);
+      await expect(card.getByText("Kontroller vegger og gulv for skader")).toBeVisible();
+      await expect(card.getByText("Utflytting · Ikke utført")).toBeVisible();
+      await expect(card.getByText("Hull etter bilde")).toBeVisible();
+      // Tenant photo (older) before landlord photo; pending, deleted, unknown key, bad uuid,
+      // other collection and the repeated storage path are left out.
+      await expectPhotos(card.getByLabel("Kontroller vegger og gulv for skader, innflytting", { exact: true }), [1, 3]);
+      await expectPhotos(card.getByLabel("Sjekk vegger – hull og merker, utflytting", { exact: true }), [4, 5]);
+      await expect(card.getByText("Innflytting · 12345")).toBeVisible();
+      await expect(card.getByText("Utflytting · 15000")).toBeVisible();
+      await expectPhotos(card.getByLabel("Strøm (kWh), innflytting", { exact: true }), [2]);
+      await expectPhotos(card.getByLabel("Strøm (kWh), utflytting", { exact: true }), [6]);
+      const read = requests.find((r) => r.method === "GET" && r.path.endsWith("/property_images"));
+      expect(read.select).toBe("id,collection_id,caption,storage_path,status,created_at");
+      const downloads = requests.filter((r) => r.path.includes("/property-images/"));
+      expect(new Set(downloads.map((r) => r.path)).size).toBe(downloads.length);
+      expect(stats.maxPropertyImages).toBeLessThanOrEqual(3);
+      await card.getByRole("button", { name: "Sjekk vegger – hull og merker, utflytting, bilde 2 av 2" }).click();
+      const viewer = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Sjekk vegger – hull og merker, utflytting" }) });
+      await expect(viewer.getByText("2 av 2")).toBeVisible();
+      await expect(viewer.getByRole("button", { name: "Fjern dette bildet" })).toHaveCount(0);
+      await viewer.getByRole("button", { name: "Ferdig" }).click();
+      expect(errors).toEqual([]);
+    });
+  }
+
+  test("checklist cards show photos on points and meter rows (iOS #1595)", async ({ page }) => {
+    const { errors } = await openPortal(page, { handover: handoverTables() });
+    await page.goto("/portal/#inn-utflytting/utflytting");
+    const shared = page.locator(".pt-card").filter({ has: page.getByRole("heading", { name: "Nøkler, målere og sjekkpunkter" }) });
+    await expectPhotos(shared.getByLabel("Sjekk vegger – hull og merker", { exact: true }), [4, 5]);
+    await expectPhotos(shared.getByLabel("Strøm (kWh)", { exact: true }), [2, 6]);
+    await expect(page.getByText("Nøkler, målerstander og bilder registreres i appen.")).toHaveCount(0);
+    await page.goto("/portal/#inn-utflytting/innflytting");
+    const inCard = page.locator(".pt-card").filter({ has: page.getByRole("heading", { name: "Nøkler, målere og sjekkpunkter" }) });
+    await expectPhotos(inCard.getByLabel("Kontroller vegger og gulv for skader", { exact: true }), [1, 3]);
+    await expectPhotos(inCard.getByLabel("Strøm (kWh)", { exact: true }), [2]);
+    expect(errors).toEqual([]);
   });
 
   test("own home asks whether you use at least half and sends uses_at_least_half (iOS #1591)", async ({ page }) => {

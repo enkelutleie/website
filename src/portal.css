@@ -558,6 +558,15 @@ svg { flex: none; }
 .pt-ho-status { font-weight: 600; margin: var(--space-s) 0; }
 .pt-ho-error { color: var(--danger); font-size: var(--fs-subheadline); }
 .pt-card > .pt-label { margin-top: var(--space-m); }
+.pt-ho-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 96px)); gap: var(--space-s); margin: var(--space-s) 0 0; }
+.pt-ho-photos[aria-busy="true"] { min-height: 72px; }
+.pt-ho-photo { padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: var(--radius-sm); }
+.pt-ho-photo:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.pt-ho-photo .pt-mt-thumb { display: block; }
+.pt-ho-compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-m); }
+.pt-ho-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pt-ho-side .pt-label { margin: 0; }
+@media (max-width: 560px) { .pt-ho-compare { grid-template-columns: minmax(0, 1fr); } }
 
 /* Dokumenter og maler */
 .pt-doc-tile { border: none; font: inherit; color: var(--ink); text-align: left; text-decoration: none; cursor: pointer; }
