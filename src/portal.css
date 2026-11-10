@@ -620,3 +620,16 @@ svg { flex: none; }
 .pt-ready-button:disabled { opacity: .6; cursor: default; }
 .pt-btn.pt-ready-later { width: 100%; min-height: 44px; background: none; border: 0; color: var(--secondary-ink); padding: 0 24px; }
 .pt-btn.pt-ready-later:hover { text-decoration: underline; }
+
+/* Kalender per rom (iOS #1600) */
+.pt-check.pt-switch { appearance: none; -webkit-appearance: none; width: 44px; height: 26px; border-radius: 999px; background: var(--brand-border); position: relative; cursor: pointer; flex: none; transition: background-color var(--ease); }
+.pt-check.pt-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); transition: transform var(--ease); }
+.pt-check.pt-switch:checked { background: var(--success); }
+.pt-check.pt-switch:checked::after { transform: translateX(18px); }
+.pt-check.pt-switch:focus-visible { outline: 3px solid var(--brand-border); outline-offset: 2px; }
+.pt-field-legend { gap: 2px; }
+.pt-mt-response.is-info { background: var(--brand-soft); color: var(--ink); }
+.pt-cal-room-list { list-style: none; margin: var(--space-s) 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pt-cal-room { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-s); }
+.pt-cal-room .pt-ho-note { flex-basis: 100%; margin: 0; }
+.pt-cal-room-name { font-weight: 600; }
