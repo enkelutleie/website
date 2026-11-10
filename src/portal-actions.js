@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { createStuckFinalizer } from "./portal-sign-refresh.js";
 import { osloWallToUtcIso } from "./oslo-time.js";
 import { collectPages } from "./paged.js";
 import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
@@ -1246,6 +1247,17 @@ export async function agreementLease(agreementId) {
   ]);
   if (lease.error) return { error: lease.error };
   return { data: first(lease.data) ?? null, parties: parties.data ?? [] };
+}
+
+// iOS #1583: all required parties signed, status still partially_signed. Silent, throttled
+// per version; on success the portal reads are dropped so the caller can reload.
+const stuckFinalizer = createStuckFinalizer({
+  invoke: (name, options) => supabase.functions.invoke(name, options),
+});
+export async function finalizeStuckAgreement(a, lease) {
+  const res = await stuckFinalizer.finalize(a, lease);
+  if (res.ok) invalidatePortalReads();
+  return res;
 }
 
 // downloadLeasePDF: documents row (status ready) -> documents bucket, under RLS.
