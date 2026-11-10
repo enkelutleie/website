@@ -10,6 +10,7 @@ import { notificationRoute, notificationText, notificationTitle } from "./portal
 import { createFinnImport } from "./portal-finn.js";
 import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
+import { transactionListTitle } from "./portal-transaction-title.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 
@@ -175,7 +176,7 @@ const transactions = (pid) =>
   cached(`tx:${pid}`, async () => {
     const yearStart = `${osloYear()}-01-01`;
     return supabase.from("financial_transactions")
-      .select("id, transaction_type, category, legacy_category, amount_minor, transaction_date, description, counterparty, maintenance_request_id, updated_at")
+      .select("id, transaction_type, category, legacy_category, amount_minor, transaction_date, series_occurrence_date, description, counterparty, maintenance_request_id, updated_at")
       // As in the app (#1468): future-dated posts (e.g. a recurring series) are not shown yet.
       .eq("property_id", pid).is("voided_at", null).gte("transaction_date", yearStart).lte("transaction_date", todayISO())
       .order("transaction_date", { ascending: false }).limit(1000);
@@ -835,6 +836,8 @@ const propertiesTable = () => {
 };
 
 const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long" });
+// Category for the title fallback; a row without a category falls through to «Inntekt»/«Utgift».
+const txCategoryName = (r) => (String(r.category ?? "").trim() ? act.categoryTitle(r) : null);
 const transactionRow = (pid, r, docIds = []) => {
   const inc = r.transaction_type === "income";
   const li = h("li", "pt-row");
@@ -842,7 +845,7 @@ const transactionRow = (pid, r, docIds = []) => {
   // EconomyTransactionPresentation.listCopy: a trip expense shows its purpose and «25,5 km», no category.
   const mileage = act.mileageFields(r);
   const category = mileage ? null : act.categoryTitle(r);
-  const title = mileage ? mileage.purpose || "Kjørebok" : r.description || category;
+  const title = mileage ? mileage.purpose || "Kjørebok" : transactionListTitle(r, txCategoryName(r));
   const sub = mileage ? [`${act.kilometerText(mileage.meters)} km`, dateText(r.transaction_date)] : [dateText(r.transaction_date), category];
   main.append(h("strong", null, title), h("span", null, sub.join(" · ")));
   if (mileage) main.append(h("span", "pt-chip", "Kjørebok"));
@@ -945,7 +948,7 @@ const recurrenceCaption = (frequency, date) =>
   frequency === "monthly" ? `Beløpet registreres automatisk den ${Number((date || todayISO()).slice(8, 10))}. hver måned.`
     : frequency === "weekly" ? "Beløpet registreres automatisk hver uke." : "Beløpet registreres automatisk hvert år.";
 
-// FinancialTransactionComposer: type-specific labels, and income needs a description (#1486).
+// FinancialTransactionComposer: type-specific labels; income (#1486) and expense (#1590) need a description.
 const transactionForm = (pid, type, row) => {
   const income = type === "income";
   const cats = income ? act.INCOME_CATEGORIES : act.EXPENSE_CATEGORIES;
@@ -966,7 +969,7 @@ const transactionForm = (pid, type, row) => {
       { name: "date", label: "Dato", type: "date", value: row?.transaction_date ?? todayISO(), required: true },
       income
         ? { name: "description", label: "Hva gjelder inntekten?", type: "text", value: row?.description ?? "", maxLength: 500, required: true, placeholder: "Husleie for oktober" }
-        : { name: "description", label: "Hva gjelder utgiften?", type: "text", value: row?.description ?? "", maxLength: 500, placeholder: "Reparasjon av vaskemaskin" },
+        : { name: "description", label: "Hva gjelder utgiften?", type: "text", value: row?.description ?? "", maxLength: 500, required: true, placeholder: "Reparasjon av vaskemaskin" },
       { name: "counterparty", label: income ? "Betalt av" : "Butikk eller leverandør", type: "text", value: row?.counterparty ?? "", maxLength: 200 },
       ...(row ? [] : [
         { name: "receipt", label: "Kvittering", type: "file", accept: RECEIPT_ACCEPT, help: "PDF, JPEG eller PNG. Bilder lagres som PDF." },
@@ -1042,7 +1045,7 @@ const receiptDialog = async (pid, r, docIds) => {
   const linkable = (all.data ?? []).filter((d) => d.status === "ready" && !docIds.includes(d.id));
   return act.openForm({
     title: "Kvittering og bilag",
-    intro: `${r.description || act.categoryTitle(r)} · ${dateText(r.transaction_date)} · ${money(r.amount_minor)}`,
+    intro: `${transactionListTitle(r, txCategoryName(r))} · ${dateText(r.transaction_date)} · ${money(r.amount_minor)}`,
     sections: [wrap],
     submitLabel: "Lagre",
     footer: (close) => { closeDialog = close; return h("span"); },
