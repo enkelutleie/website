@@ -8,6 +8,7 @@ import * as annual from "./portal-annual.js";
 import * as privacy from "./portal-privacy.js";
 import { notificationRoute, notificationText, notificationTitle } from "./portal-notifications.js";
 import { createFinnImport } from "./portal-finn.js";
+import { createCalendarLive } from "./portal-calendar-live.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 
@@ -732,6 +733,9 @@ const calendarCard = async (pid, full = false) => {
   c.append(monthBox);
   if (manager) c.append(actionsRow(button("+ Ny hendelse", "pt-btn-primary pt-cal-new", () => calendarForm(pid))));
   c.append(dayBox, listBox);
+  // Found again by the live calendar (redrawCalendar) when another device changes an item.
+  c.dataset.calendarCard = pid;
+  if (full) c.dataset.calendarFull = "1";
   return c;
 };
 
@@ -5203,6 +5207,51 @@ const wakeBell = () => {
   }, 1000);
 };
 
+// Live calendar (iOS #1585): a calendar change from another device redraws only the calendar
+// card (or the open #kalender/<id>) for that property, once per burst, keeping the scroll.
+const calendarRoute = () => location.hash.slice(1).split("/");
+const editingIn = (el) => {
+  const active = document.activeElement;
+  if (active && el.contains(active) && active.matches("input, textarea, select, [contenteditable]")) return true;
+  return [...el.querySelectorAll("input, textarea")].some((f) => (f.type === "checkbox" || f.type === "radio" ? f.checked !== f.defaultChecked : f.value !== f.defaultValue));
+};
+const calendarOnScreen = () => {
+  if (!content || !state.propertyId) return null;
+  const [id, sub] = calendarRoute();
+  if (id === "kalender" && sub) return state.propertyId;
+  return content.querySelector("[data-calendar-card]")?.dataset.calendarCard ?? null;
+};
+const redrawCalendar = async (pid) => {
+  const token = renderToken;
+  const [id, sub, extra] = calendarRoute();
+  const y = window.scrollY;
+  if (id === "kalender" && sub) {
+    if (editingIn(content) || document.querySelector("dialog[open]")) return;
+    calendarItems(pid); // the list the detail reuses (one RPC), so it is not asked for twice
+    const nodes = await calendarDetail(sub, extra);
+    if (token !== renderToken || calendarRoute().join("/") !== [id, sub, extra].filter((v) => v != null).join("/") || editingIn(content)) return;
+    content.replaceChildren(...nodes);
+  } else {
+    const old = content.querySelector(`[data-calendar-card="${CSS.escape(pid)}"]`);
+    if (!old) return;
+    const next = await calendarCard(pid, old.dataset.calendarFull === "1");
+    if (token !== renderToken || !old.isConnected) return;
+    // Keep focus on the same control (e.g. a day or the month arrows) after the swap.
+    const focusables = (el) => [...el.querySelectorAll("a[href], button")];
+    const at = old.contains(document.activeElement) ? focusables(old).indexOf(document.activeElement) : -1;
+    old.replaceWith(next);
+    if (at >= 0) focusables(next)[at]?.focus({ preventScroll: true });
+  }
+  if (window.scrollY !== y) window.scrollTo(window.scrollX, y);
+};
+const calendarLive = createCalendarLive({
+  invalidate: (key) => state.cache.delete(key),
+  selected: () => state.propertyId,
+  onScreen: calendarOnScreen,
+  redraw: redrawCalendar,
+  isHidden: () => document.hidden,
+});
+
 const openNotification = (n) => {
   const scope = bell.scope;
   if (n.is_unread) {
@@ -5316,7 +5365,8 @@ const startBell = () => {
   window.addEventListener("focus", () => { if (!document.hidden) wakeBell(); });
   // Foreground reminder: at most every 5 minutes, and only while the tab is visible.
   setInterval(() => { if (!document.hidden) wakeBell(); }, 300_000);
-  bell.stop = act.subscribeNotifications(wakeBell);
+  bell.stop = act.subscribeNotifications(wakeBell, calendarLive.signal);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) calendarLive.resume(); });
   act.exposeMeasure("pokeBell", wakeBell);
   drawBell();
 };
