@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { createStuckFinalizer } from "./portal-sign-refresh.js";
+import { domainChangeHandler } from "./portal-calendar-live.js";
 import { osloWallToUtcIso } from "./oslo-time.js";
 import { collectPages } from "./paged.js";
 import { classifyFinnFailure, finnImportMessage, isStoredFinnCode } from "./finn-import.js";
@@ -2083,9 +2084,10 @@ export const markNotificationRead = (scope, notificationId) =>
 export const markAllNotificationsRead = (scope) =>
   supabase.rpc("mark_my_notifications_read", { requested_role_scope: scope });
 
-// NotificationsRealtimeRemote: one channel, the same tables as iOS. Payloads are never
-// read; every change only asks for a refetch through list_my_notifications (RLS).
-export function subscribeNotifications(onChange) {
+// NotificationsRealtimeRemote: one channel, the same tables as iOS. Every change asks the bell
+// for a refetch through list_my_notifications (RLS). Calendar tables also hand their payload to
+// onCalendar (only property_id is read) so the calendar can refetch that property (iOS #1585).
+export function subscribeNotifications(onChange, onCalendar = null) {
   let channel = null;
   let stopped = false;
   let attempt = 0;
@@ -2093,6 +2095,8 @@ export function subscribeNotifications(onChange) {
   let hadConnection = false;
   let cancelWait = null;
   const wake = () => { if (!stopped && !document.hidden) onChange(); };
+  const calendar = onCalendar ? (payload) => { if (!stopped) onCalendar(payload); } : null;
+  const on = (table) => domainChangeHandler(table, { wakeBell: wake, calendar });
   const connect = () => {
     if (stopped) return;
     cancelWait?.();
@@ -2100,16 +2104,20 @@ export function subscribeNotifications(onChange) {
     if (cancelWait) return;
     const ch = supabase.channel(`notifications-domain:${crypto.randomUUID()}`);
     channel = ch;
-    ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "maintenance_events" }, wake)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "property_calendar_items" }, wake)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "property_calendar_items" }, wake)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "tenancy_members", filter: "invitation_status=eq.accepted" }, wake)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "tenancy_members", filter: "invitation_status=eq.accepted" }, wake)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notification_inbox_wakes" }, wake);
+    ch.on("postgres_changes", { event: "INSERT", schema: "public", table: "maintenance_events" }, on("maintenance_events"))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "property_calendar_items" }, on("property_calendar_items"))
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "property_calendar_items" }, on("property_calendar_items"))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "tenancy_members", filter: "invitation_status=eq.accepted" }, on("tenancy_members"))
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "tenancy_members", filter: "invitation_status=eq.accepted" }, on("tenancy_members"))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notification_inbox_wakes" }, on("notification_inbox_wakes"));
     ch.subscribe((status) => {
       if (stopped || ch !== channel) return;
       if (status === "SUBSCRIBED") {
-        if ((hadConnection || attempt > 0) && !document.hidden) wake();
+        if ((hadConnection || attempt > 0) && !document.hidden) {
+          wake();
+          // Changes may have been missed while disconnected: refetch the selected calendar once.
+          calendar?.(null);
+        }
         hadConnection = true;
         attempt = 0;
       } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
