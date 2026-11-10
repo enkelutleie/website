@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { createStuckFinalizer } from "./portal-sign-refresh.js";
 import { createCoInviteAcceptGate } from "./portal-co-invite-accept.js";
+import { rentalProfileOf } from "./portal-own-home.js";
 import { domainChangeHandler } from "./portal-calendar-live.js";
 import { osloWallToUtcIso } from "./oslo-time.js";
 import { collectPages } from "./paged.js";
@@ -511,6 +512,14 @@ export const RENTAL_USE = [
   ["holiday_home", "Fritidsbolig"],
 ];
 
+// list_managed_property_rental_tax_facts row for one property (home_use, rental_duration,
+// uses_at_least_half), or { error }.
+export async function rentalTaxFacts(propertyId) {
+  const { data, error } = await supabase.rpc("list_managed_property_rental_tax_facts", { requested_property_ids: [propertyId] });
+  if (error) return { error };
+  return { facts: (data ?? []).find((r) => r.property_id === propertyId) ?? null };
+}
+
 export const validateProperty = (v) => {
   if (!v.address || v.address.length > 160) return "Adressen må fylles ut (maks 160 tegn).";
   if ((v.unit ?? "").length > 30) return "Enhet kan være maks 30 tegn.";
@@ -551,14 +560,6 @@ export async function fetchFinnListing(code) {
   }
 }
 
-const profileOf = (use, existing) => ({
-  landlord_kind: existing?.landlord_kind ?? "individual",
-  legal_form: existing?.legal_form ?? null,
-  business_name: existing?.business_name ?? "",
-  organization_number: existing?.organization_number ?? "",
-  home_use: use,
-  rental_duration: existing?.rental_duration && existing.rental_duration !== "unknown" ? existing.rental_duration : "long_term",
-});
 const finnOf = (raw) => (raw ? raw.replace(/\D/g, "") || null : null);
 
 export async function createProperty(ownerId, v) {
@@ -570,19 +571,19 @@ export async function createProperty(ownerId, v) {
     city: v.city,
     country_code: "NO",
     housing_kind: v.housingKind,
-    rental_profile: profileOf(v.use),
+    rental_profile: rentalProfileOf(v.use, null, null, v.halfUse),
     ...(finnOf(v.finn) ? { finn_code: finnOf(v.finn) } : {}),
   }).select("id");
 }
 
-export const updateProperty = (p, v) =>
+export const updateProperty = (p, v, facts) =>
   supabase.from("properties").update({
     address_line1: v.address,
     unit_identifier: v.unit || null,
     postal_code: v.postal,
     city: v.city,
     housing_kind: p.housing_kind,
-    rental_profile: profileOf(v.use, p.rental_profile),
+    rental_profile: rentalProfileOf(v.use, p.rental_profile, facts, v.halfUse),
     finn_code: finnOf(v.finn),
     payment_account_override: (v.account ?? "").replace(/\D/g, "") || null,
   }).eq("id", p.id);

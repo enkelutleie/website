@@ -11,6 +11,7 @@ import { createFinnImport } from "./portal-finn.js";
 import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
+import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 
@@ -1069,8 +1070,17 @@ const receiptDialog = async (pid, r, docIds) => {
   });
 };
 
-const propertyForm = (p) => {
-  const use = p?.rental_profile?.home_use;
+const propertyForm = async (p) => {
+  // home_use, rental_duration and uses_at_least_half live in the tax facts (iOS #1591); the
+  // stored rental_profile has them masked, so editing without the facts would reset them.
+  let facts = null;
+  if (p) {
+    const res = await act.rentalTaxFacts(p.id);
+    if (res.error) return act.toast("Kunne ikke hente informasjonen om boligen. Prøv igjen.");
+    facts = res.facts;
+  }
+  const use = formHomeUse(facts, p?.rental_profile, act.RENTAL_USE.map(([v]) => v));
+  const halfAnswer = use === "own_home" ? facts?.uses_at_least_half ?? null : null;
   // Import is only offered when creating. Editing keeps the stored Finn-kode field.
   const finn = p ? null : createFinnImport({ fetchListing: act.fetchFinnListing });
   // As in the app: only the owner sees «Arkiver bolig», below the save button.
@@ -1096,13 +1106,15 @@ const propertyForm = (p) => {
         { name: "housingKind", label: "Type bolig", type: "choice", options: act.HOUSING_KINDS, value: "standard", required: true, help: "Ved bofellesskap leies rommene ut hver for seg. Hvert rom har eget leieforhold og egen leiekontrakt." },
         { name: "roomCount", label: "Antall rom som skal leies ut", type: "text", placeholder: "1–10", maxLength: 2, hidden: true, help: "Vi oppretter Rom 1, Rom 2 … slik at du kan invitere én leietaker per rom. Maks 10." },
       ]),
-      { name: "use", label: "Hva leies ut", type: "choice", options: act.RENTAL_USE, value: act.RENTAL_USE.some(([v]) => v === use) ? use : "other_home", required: true },
+      { name: "use", label: "Hva leies ut", type: "choice", options: act.RENTAL_USE, value: use, required: true },
+      { name: "halfUse", label: HALF_USE_QUESTION, type: "choice", options: halfUseOptions(halfAnswer), value: halfUseChoiceValue(halfAnswer), required: true, requiredMessage: HALF_USE_REQUIRED, help: HALF_USE_HELP, hidden: use !== "own_home" },
       { name: "finn", label: "Finn-kode", type: "text", value: p?.finn_code ?? "", maxLength: 12 },
       ...(p ? [{ name: "account", label: "Kontonummer for husleie", type: "text", value: p.payment_account_override ?? "", maxLength: 20, help: "Tomt betyr kontonummeret fra profilen din." }] : []),
     ],
     onChange: (inputs, show) => {
       finn?.bind(inputs);
       if (inputs.housingKind) show("roomCount", inputs.housingKind.value === "shared");
+      show("halfUse", inputs.use.value === "own_home");
     },
     onSubmit: async (v) => {
       finn?.setLocked(true);
@@ -1145,7 +1157,7 @@ const propertyForm = (p) => {
           location.hash = "#om-boligen";
           return null;
         }
-        const res = await act.updateProperty(p, v);
+        const res = await act.updateProperty(p, v, facts);
         if (res.error) return act.explain(res.error);
         await refresh("Informasjonen er lagret.");
         return null;
