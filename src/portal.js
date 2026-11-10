@@ -11,6 +11,7 @@ import { createFinnImport } from "./portal-finn.js";
 import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
+import { createBellWaker } from "./portal-bell-wake.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
 import { OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
@@ -5190,7 +5191,7 @@ const notificationTime = (value) => {
   return today ? `I dag ${time}` : `${d.toLocaleDateString("nb-NO", { day: "numeric", month: "short" })} ${time}`;
 };
 
-const bell = { scope: null, rows: [], more: false, loading: false, loadingMore: false, failed: false, open: false, token: 0, wakeTimer: null, stop: null };
+const bell = { scope: null, rows: [], more: false, loading: false, loadingMore: false, failed: false, open: false, token: 0, stop: null };
 // Landlord-only portal: the bell always reads the manager scope.
 const bellScope = () => "manager";
 const bellEls = () => ({ wrap: root.querySelector("[data-bell-wrap]"), btn: root.querySelector("[data-bell]") });
@@ -5206,6 +5207,7 @@ const loadBell = async ({ quiet = false } = {}) => {
     if (bell.rows.length) act.toast("Kunne ikke oppdatere varslene. Listen du allerede ser er beholdt.");
     else bell.failed = true;
   } else {
+    bellWaker.markSuccess();
     bell.failed = false;
     bell.rows = res.data ?? [];
     bell.more = bell.rows.length >= act.NOTIFICATION_PAGE_SIZE;
@@ -5240,13 +5242,12 @@ const syncBellScope = () => {
   bell.failed = false;
   loadBell();
 };
-const wakeBell = () => {
-  clearTimeout(bell.wakeTimer);
-  bell.wakeTimer = setTimeout(() => {
-    if (!bell.scope || document.hidden) return;
-    loadBell({ quiet: true });
-  }, 1000);
-};
+// iOS #1594: Realtime bursts and foreground returns are merged (see portal-bell-wake.js).
+const bellWaker = createBellWaker({
+  fetch: () => (bell.scope ? loadBell({ quiet: true }) : null),
+  isHidden: () => document.hidden,
+});
+const wakeBell = () => bellWaker.signal();
 
 // Live calendar (iOS #1585): a calendar change from another device redraws only the calendar
 // card (or the open #kalender/<id>) for that property, once per burst, keeping the scroll.
@@ -5398,14 +5399,16 @@ const startBell = () => {
     bell.open = !bell.open;
     drawBell();
     if (!bell.open) return;
-    loadBell({ quiet: true });
+    bellWaker.immediate();
     wrap.querySelector(".pt-notif")?.focus();
   });
   document.addEventListener("click", (e) => { if (bell.open && !wrap.contains(e.target)) closeBell(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && bell.open) { closeBell(); btn.focus(); } });
-  window.addEventListener("focus", () => { if (!document.hidden) wakeBell(); });
-  // Foreground reminder: at most every 5 minutes, and only while the tab is visible.
-  setInterval(() => { if (!document.hidden) wakeBell(); }, 300_000);
+  // Back in the foreground: skipped when the last fetch is under 15 s old (iOS #1594).
+  window.addEventListener("focus", () => bellWaker.foreground());
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) bellWaker.foreground(); });
+  // Idle fallback only: Realtime is the live path, so this fetches only after 10 quiet minutes.
+  setInterval(() => bellWaker.idleTick(), 60_000);
   bell.stop = act.subscribeNotifications(wakeBell, calendarLive.signal);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) calendarLive.resume(); });
   act.exposeMeasure("pokeBell", wakeBell);

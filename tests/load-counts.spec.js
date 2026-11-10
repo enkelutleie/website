@@ -77,7 +77,8 @@ test("portal pages reuse the session and realtime bursts reload once", async ({ 
     await page.evaluate(() => {
       for (let i = 0; i < 5; i++) window.__ptMeasure.pokeBell();
     });
-    await page.waitForTimeout(1400);
+    // iOS #1594: one leading fetch, one trailing fetch when the 2.5 s window closes.
+    await page.waitForTimeout(3000);
   });
   await page.getByRole("link", { name: "Meldinger", exact: true }).click();
   await settle(page, "Meldinger");
@@ -204,7 +205,7 @@ test("portal pages reuse the session and realtime bursts reload once", async ({ 
   expect(count(again, "POST rpc/provision_my_chat_conversations")).toBe(0);
   expect(count(again, "POST rpc/list_calendar_item_responses")).toBe(0);
   expect(count(kalender, "POST rpc/list_calendar_items_for_property")).toBe(0);
-  expect(count(bellBurst, "POST rpc/list_my_notifications")).toBe(1);
+  expect(count(bellBurst, "POST rpc/list_my_notifications")).toBe(2);
   expect(count(chatBurst, "POST rpc/list_chat_messages_before")).toBe(1);
   expect(count(chatBurst, "POST rpc/list_chat_peer_read_cursors")).toBe(1);
   expect(inspectionSelect).toBe(INSPECTION_COLUMNS.replaceAll(" ", ""));
