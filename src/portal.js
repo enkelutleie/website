@@ -4635,18 +4635,8 @@ const mileagePage = async (pid) => {
     }
     list.append(ul);
   }
-  // «Kilometerfradrag», «Bompenger» (only with an amount) and «Sum fradrag».
-  const sums = h("section", "pt-card pt-toll-summary");
-  sums.dataset.testid = "mileage.tolls.summary";
-  const sumRow = (label, value, cls = null) => {
-    const row = h("div", cls ? `pt-toll-sum-row ${cls}` : "pt-toll-sum-row");
-    row.append(h("span", null, label), h("span", "pt-toll-sum-value", value));
-    return row;
-  };
-  sums.append(sumRow(TOLL_TEXT.kilometerDeduction, money(breakdown.kilometerMinor)));
-  if (breakdown.tollMinor > 0) sums.append(sumRow(TOLL_TEXT.title, money(breakdown.tollMinor)));
-  sums.append(sumRow(TOLL_TEXT.total, money(breakdown.totalMinor), "is-total"));
-  const out = [back, head, grid, sums];
+  // Magnus 2026-11-11: no separate Kilometerfradrag/Sum fradrag card; «Fradragsgrunnlag» above is km + bompenger.
+  const out = [back, head, grid];
   if (isManager(pid)) out.push(mileageTollSettingsCard(tollSettings, tollRes?.error ? TOLL_TEXT.settingsError : null));
   out.push(list);
   return out;

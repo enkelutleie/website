@@ -507,7 +507,7 @@ test.describe("portal", () => {
   };
   const rpcBody = (writes, name) => writes.filter((w) => w.path.endsWith(`/rpc/${name}`)).at(-1)?.body;
 
-  test("Kjørebok shows tolls per trip, Kilometerfradrag + Bompenger = Sum fradrag, and the settings (iOS #1613)", async ({ page }) => {
+  test("Kjørebok shows tolls per trip, «Fradragsgrunnlag» = km + bompenger, no separate sum card, and the settings (iOS #1613)", async ({ page }) => {
     const { errors } = await openMileage(page);
     const row = (text) => page.locator("li.pt-row").filter({ hasText: text });
     await expect(row("Bomveien 2")).toContainText("Bompenger");
@@ -515,11 +515,12 @@ test.describe("portal", () => {
     await expect(row("Bomveien 2").locator(".pt-amount")).toContainText("103,60");
     await expect(row("Gamleveien 3")).not.toContainText("Bompenger");
     await expect(row("Gamleveien 3").locator(".pt-amount")).toContainText("70,00");
-    const sums = page.getByTestId("mileage.tolls.summary");
-    await expect(sums.locator(".pt-toll-sum-row")).toHaveCount(3);
-    await expect(sums.locator(".pt-toll-sum-row").nth(0)).toContainText(/Kilometerfradrag.*140,00/);
-    await expect(sums.locator(".pt-toll-sum-row").nth(1)).toContainText(/Bompenger.*33,60/);
-    await expect(sums.locator(".pt-toll-sum-row").nth(2)).toContainText(/Sum fradrag.*173,60/);
+    await expect(page.locator(".pt-kpi").filter({ hasText: "Fradragsgrunnlag" })).toContainText("173,60");
+    await expect(page.getByTestId("mileage.tolls.summary")).toHaveCount(0);
+    await expect(page.getByText("Kilometerfradrag")).toHaveCount(0);
+    await expect(page.getByText("Sum fradrag")).toHaveCount(0);
+    // The content below follows the three cards directly.
+    await expect(page.locator(".pt-kpis + *")).toHaveAttribute("data-testid", "mileage.tolls.settings");
     await page.getByRole("button", { name: "Les mer" }).click();
     await expect(page.getByText("Bompengene er et estimat og kan avvike litt fra AutoPASS-fakturaen, og bompenger som er med i kjøreboken, skal ikke føres under Utgifter i tillegg.", { exact: false })).toBeVisible();
     const settings = page.getByTestId("mileage.tolls.settings");
@@ -531,12 +532,11 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  test("Kjørebok without any tolls shows no «Bompenger» sum line (iOS #1613)", async ({ page }) => {
+  test("Kjørebok without any tolls: «Fradragsgrunnlag» is the kilometer deduction only (iOS #1613)", async ({ page }) => {
     await openPortal(page, { handover: { rpc: { list_mileage_trips: [tollTrip(OLD_ID)] } } });
     await page.goto("/portal/#okonomi/kjorebok");
-    const sums = page.getByTestId("mileage.tolls.summary");
-    await expect(sums.locator(".pt-toll-sum-row")).toHaveCount(2);
-    await expect(sums).not.toContainText("Bompenger");
+    await expect(page.locator(".pt-kpi").filter({ hasText: "Fradragsgrunnlag" })).toContainText("70,00");
+    await expect(page.getByTestId("mileage.tolls.summary")).toHaveCount(0);
   });
 
   test("editing a calculated toll turns «Bompenger (beregnet)» into «Bompenger» and sends it by hand (iOS #1613)", async ({ page }) => {
