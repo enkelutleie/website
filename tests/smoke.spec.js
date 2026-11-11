@@ -239,9 +239,11 @@ test.describe("portal", () => {
     await expect(page.getByText("Solgt eller utrangert")).toHaveCount(0);
     await expect(page.getByText("Møbelhistorikk")).toHaveCount(0);
     await expect(page.getByText("avhendet")).toHaveCount(0);
-    // The list card has no «Registrerte møbler» heading (iOS/Android parity), but keeps its content.
+    // The list card has no «Registrerte møbler» heading, count line or estimate note (iOS/Android parity).
     await expect(page.getByText("Registrerte møbler")).toHaveCount(0);
-    await expect(page.getByText("Estimater er til din egen planlegging. Det er ikke skatteråd og ikke skattemelding.")).toBeVisible();
+    await expect(page.getByText("Estimater er til din egen planlegging. Det er ikke skatteråd og ikke skattemelding.")).toHaveCount(0);
+    await expect(page.getByText(/\d+ møb(el|ler) registrert\./)).toHaveCount(0);
+    await expect(page.getByText("Ingen møbler eller inventar registrert.")).toBeVisible();
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("link", { name: /Årsoppgave/ }).click();
     await expect(page.getByRole("heading", { name: "Årsoppgave" })).toBeVisible();
@@ -468,6 +470,23 @@ test.describe("portal", () => {
     expect(requests.some((r) => r.path.endsWith("/financial_transactions") && /\bseries_id\b/.test(r.select ?? ""))).toBe(true);
     expect(errors).toEqual([]);
   });
+
+  const furnitureAsset = (id, name) => ({
+      id, property_id: PROPERTY_ID, name, item_kind: "loose_inventory", category: "furnishings", purchase_date: "2026-03-01",
+      purchase_amount_minor: 1_500_000, useful_life_years: 5, life_under_three_years: false, counts_for_taxable_rental: true,
+      fixed_treatment: null, disposal_date: null, disposal_proceeds_minor: null, notes: null, source_transaction_id: null,
+  });
+  for (const assets of [[furnitureAsset("a5000000-0000-4000-8000-000000000001", "Sofa")], [furnitureAsset("a5000000-0000-4000-8000-000000000001", "Sofa"), furnitureAsset("a5000000-0000-4000-8000-000000000002", "Spisebord")]]) {
+    test(`«Møbler og inventar» lists ${assets.length} item(s) without a count line or estimate note`, async ({ page }) => {
+      const { errors } = await openPortal(page, { handover: { rpc: { list_property_assets: assets } } });
+      await page.goto("/portal/#okonomi/mobler");
+      for (const a of assets) await expect(page.getByText(a.name, { exact: true }).first()).toBeVisible();
+      await expect(page.getByText(/\d+ møb(el|ler) registrert\./)).toHaveCount(0);
+      await expect(page.getByText("Estimater er til din egen planlegging. Det er ikke skatteråd og ikke skattemelding.")).toHaveCount(0);
+      await expect(page.getByText("Registrerte møbler")).toHaveCount(0);
+      expect(errors).toEqual([]);
+    });
+  }
 
   // iOS #1600: calendar per room.
   const newEventDialog = async (page) => {

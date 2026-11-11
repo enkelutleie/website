@@ -4803,9 +4803,8 @@ const assetsPage = async (pid) => {
   else {
     const ul = h("ul", "pt-list");
     for (const i of shown) ul.append(assetRow(i, view.rows[i.id], view.allocations[i.id], data, showProperty));
-    list.append(ul, h("p", "pt-muted", `${shown.length} ${shown.length === 1 ? "møbel" : "møbler"} registrert.`));
+    list.append(ul);
   }
-  list.append(h("p", "pt-muted", "Estimater er til din egen planlegging. Det er ikke skatteråd og ikke skattemelding."));
   return [back, head, ...cards, list];
 };
 
