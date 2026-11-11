@@ -956,6 +956,38 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
+  // iOS #1611 (DEPOSIT_SETTLEMENT_NAV_AFTER_SEND): a successful send lands on the hub, same tenancy.
+  const depositSnap = (status, claims) => ({
+    id: "d4d4d4d4-d4d4-44d4-84d4-d4d4d4d4d4d4", status, deposit_amount_minor: 3_000_000, security_type: "deposit",
+    claims: claims ? [{ id: "c1c1c1c1-0000-4000-8000-000000000001", description: "Vask", amount_minor: 200_000, position: 0 }] : [],
+  });
+  for (const [name, status, claims, buttonName, confirm, rpc] of [
+    ["approve without claims", "open", false, "Godkjenn og send til leietaker", "Godkjenn", "approve_deposit_full_refund"],
+    ["first send of claims", "open", true, "Send krav til leietaker", "Send", "submit_deposit_settlement_claims"],
+    ["send again after changed claims", "declined", true, "Send krav til leietaker", "Send", "submit_deposit_settlement_claims"],
+  ]) {
+    test(`deposit settlement: ${name} returns to «Inn- og utflytting» (iOS #1611)`, async ({ page }) => {
+      const tables = handoverTables({ status });
+      const { writes, errors } = await openPortal(page, { handover: { ...tables, rpc: { ...(tables.rpc ?? {}), open_deposit_settlement: depositSnap(status, claims) } } });
+      await page.goto("/portal/#inn-utflytting/depositum");
+      await page.getByRole("button", { name: buttonName }).click();
+      await page.getByRole("dialog").getByRole("button", { name: confirm, exact: true }).click();
+      await expect.poll(() => writes.some((w) => w.path.endsWith(`/rpc/${rpc}`))).toBe(true);
+      await expect(page).toHaveURL(/#inn-utflytting$/);
+      for (const tile of ["Innflytting", "Utflytting", "Depositumsoppgjør"]) await expect(page.locator("a.pt-ho-tile").filter({ hasText: tile }).first()).toBeVisible();
+      expect(errors).toEqual([]);
+    });
+  }
+  test("a failed deposit send stays on the settlement page (iOS #1611)", async ({ page }) => {
+    const tables = handoverTables({ status: "open" });
+    await openPortal(page, { handover: { ...tables, rpc: { ...(tables.rpc ?? {}), open_deposit_settlement: depositSnap("open", true) } }, fail: ["submit_deposit_settlement_claims"] });
+    await page.goto("/portal/#inn-utflytting/depositum");
+    await page.getByRole("button", { name: "Send krav til leietaker" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Send krav til leietaker" })).toBeVisible();
+    await expect(page).toHaveURL(/#inn-utflytting\/depositum$/);
+  });
+
   // iOS #1595: every ready checklist photo in the move-in/move-out collections, landlord and tenant alike.
   const photoSrcs = (strip) => strip.locator("img").evaluateAll((imgs) => imgs.map((i) => i.getAttribute("src")));
   const expected = (...ns) => ns.map((n) => handoverImageBytes(`handover/${n}.jpg`).toString("base64"));
