@@ -12,8 +12,8 @@ import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
 import { createBellWaker } from "./portal-bell-wake.js";
-import { acceptedCountText, audienceIds, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
-import { postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
+import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
+import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
 import { manualOccupantsFor, OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
@@ -872,7 +872,7 @@ const readyToEndLines = async (pid, allowsPostpone) => {
     tenancyPeople(pid),
     candidates.some((t) => t.unit_id) ? act.propertyUnitRows(pid) : Promise.resolve({ data: [] }),
   ]);
-  const current = (people.data ?? []).filter((m) => m.role === "tenant" && m.invitation_status === "accepted" && !m.valid_until);
+  const current = (people.data ?? []).filter((m) => m.role === "tenant");
   const members = new Map();
   for (const m of current) if (m.id) members.set(m.tenancy_id, [...(members.get(m.tenancy_id) ?? []), m.id]);
   const settlements = new Map();
@@ -1768,6 +1768,97 @@ const calendarScopeError = (error) => {
   if (/only active calendar items/i.test(msg)) return "Bare aktive hendelser kan endres.";
   return act.explain(error);
 };
+// «Krever svar fra leietaker» card (iOS #1602): icon, title, subtitle and a switch. On, and in a
+// bofellesskap with two named rooms, «Hvem skal svare?» offers «Alle leietakere» or «Velg
+// leietakere» with a room list. Off hides the rest. Native radios/checkboxes drawn in portal.css.
+let rrSeq = 0;
+const requireResponseCard = ({ on, picker, rooms, selected, legacyLabels, onValidity }) => {
+  const id = `pt-rr-${++rrSeq}`;
+  const st = { on, mode: selected?.size ? "select" : "all", selected: new Set(selected ?? []) };
+  const card = h("section", "pt-rr-card");
+  const head = h("label", "pt-rr-head");
+  const texts = h("span", "pt-rr-texts");
+  const title = h("strong", "pt-rr-title", RR_TEXT.title);
+  title.id = `${id}-title`;
+  const sub = h("span", "pt-rr-subtitle", RR_TEXT.subtitle);
+  sub.id = `${id}-sub`;
+  texts.append(title, sub);
+  const toggle = h("input", "pt-check pt-switch pt-rr-switch");
+  toggle.type = "checkbox";
+  toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-labelledby", title.id);
+  toggle.setAttribute("aria-describedby", sub.id);
+  toggle.dataset.testid = "calendar.form.requiresResponse";
+  toggle.checked = st.on;
+  head.append(icon("checkBubble", "pt-rr-icon"), texts, toggle);
+  card.append(head);
+  const legacy = legacyLabels?.length ? h("p", "pt-rr-legacy", RR_TEXT.legacyRooms(legacyLabels)) : null;
+  if (legacy) card.append(legacy);
+  const who = h("div", "pt-rr-who");
+  const list = h("div", "pt-rr-rooms");
+  let radios = null;
+  if (picker) {
+    const heading = h("p", "pt-rr-who-title", RR_TEXT.who);
+    heading.id = `${id}-who`;
+    const group = h("div", "pt-rr-options");
+    group.setAttribute("role", "radiogroup");
+    group.setAttribute("aria-labelledby", heading.id);
+    const option = (mode, text, testid) => {
+      const row = h("label", "pt-rr-option");
+      const radio = h("input", "pt-rr-radio");
+      radio.type = "radio";
+      radio.name = `${id}-mode`;
+      radio.value = mode;
+      radio.dataset.testid = testid;
+      radio.addEventListener("change", () => { st.mode = mode; sync(); });
+      row.append(radio, h("span", null, text));
+      group.append(row);
+      return { row, radio };
+    };
+    const all = option("all", RR_TEXT.all, "calendar.form.respondents.all");
+    const pick = option("select", RR_TEXT.select, "calendar.form.respondents.select");
+    for (const r of rooms) {
+      const row = h("label", "pt-rr-room");
+      const box = h("input", "pt-rr-box");
+      box.type = "checkbox";
+      box.dataset.testid = `calendar.form.room.${String(r.tenancyId).toUpperCase()}`;
+      box.checked = st.selected.has(r.tenancyId);
+      box.addEventListener("change", () => {
+        if (box.checked) st.selected.add(r.tenancyId); else st.selected.delete(r.tenancyId);
+        sync();
+      });
+      row.append(box, h("span", null, r.line));
+      list.append(row);
+    }
+    who.append(heading, group, list);
+    card.append(who);
+    radios = { all, pick };
+  }
+  const value = () => requireResponseMapping({
+    shown: true, on: st.on, picker, mode: st.mode, selected: st.selected,
+    legacyRooms: legacyLabels?.length && !st.on ? [...(selected ?? [])] : null,
+  });
+  const sync = () => {
+    card.classList.toggle("is-on", st.on);
+    if (legacy) legacy.hidden = st.on;
+    if (picker) {
+      who.hidden = !st.on;
+      radios.all.radio.checked = st.mode === "all";
+      radios.pick.radio.checked = st.mode === "select";
+      radios.all.row.classList.toggle("is-selected", st.mode === "all");
+      radios.pick.row.classList.toggle("is-selected", st.mode === "select");
+      list.hidden = st.mode !== "select";
+      for (const row of list.children) row.classList.toggle("is-selected", row.querySelector("input").checked);
+    }
+    onValidity?.(value().valid);
+  };
+  toggle.addEventListener("change", () => { st.on = toggle.checked; sync(); });
+  // The form's own input listener must not treat these controls as fields.
+  card.addEventListener("input", (e) => e.stopPropagation());
+  queueMicrotask(sync);
+  return { el: card, value, sync };
+};
+
 const calendarForm = async (pid, item) => {
   const when = localParts(item?.item_type === "deadline" ? item.due_at : item?.starts_at || item?.due_at);
   const deadline = item?.item_type === "deadline";
@@ -1780,7 +1871,7 @@ const calendarForm = async (pid, item) => {
   const tenancies = mtActiveTenancies(pid);
   const people = await tenancyPeople(pid);
   const names = new Map();
-  for (const m of people.data ?? []) if (m.role === "tenant") names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name].filter(Boolean));
+  for (const m of people.data ?? []) if (m.role === "tenant") names.set(m.tenancy_id, [...(names.get(m.tenancy_id) ?? []), m.name].filter((n) => n && !isNationalIdentityNumber(n)));
   const tenancyOptions = tenancies.filter((t) => names.has(t.id)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((t) => [t.id, `Delt med leietaker – ${(names.get(t.id).length ? names.get(t.id) : ["leietaker"]).join(", ")}`]);
   const hasTenant = tenancyOptions.length > 0;
@@ -1792,18 +1883,37 @@ const calendarForm = async (pid, item) => {
   const offersSwitch = showsRequiresToggle({ isMaintenance: linked, visibility: item ? item.visibility : "tenant_shared", hasActiveTenant: hasTenant })
     && (!item || (item.status === "active" && roomRows !== null));
   const initialRequires = summary ? summary.requiresResponse : true;
-  // «Gjelder» (hidden behind CALENDAR_ROOM_PICKER_ENABLED): bofellesskap with two named rooms.
+  // «Hvem skal svare?» (CALENDAR_ROOM_PICKER_ENABLED): bofellesskap with two named rooms. Rows
+  // read «Rom N – Navn» from profile names and manual residents (never e-mail or 11 digits).
   let rooms = [];
-  if (CALENDAR_ROOM_PICKER_ENABLED && !linked) {
+  if (CALENDAR_ROOM_PICKER_ENABLED && !linked && offersSwitch) {
     const units = await act.propertyUnitRows(pid);
     const labels = new Map((units.data ?? []).map((u) => [u.id, u.display_label]));
     rooms = roomChoices(tenancies, (t) => labels.get(t.unit_id));
+    if (rooms.length) {
+      const tenants = (people.data ?? []).filter((m) => m.role === "tenant");
+      const contacts = await act.linkedContactRows([...new Set(tenants.map((m) => m.user_id))]);
+      const profile = new Map((contacts.data ?? []).map((c) => [c.user_id, c.display_name ?? ""]));
+      rooms = rooms.map((r) => ({ ...r, line: respondentLine(r.label, [
+        ...tenants.filter((m) => m.tenancy_id === r.tenancyId).map((m) => profile.get(m.user_id) ?? ""),
+        ...manualOccupantsFor(state.manualOccupants, r.tenancyId).map((o) => o.display_name ?? ""),
+      ]) }));
+    }
   }
   const picker = showsPicker(state.properties.find((x) => x.id === pid)?.housing_kind ?? null, rooms, linked);
   const initialRooms = summary?.audienceRestricted ? new Set(summary.rooms.map((r) => r.tenancy_id)) : null;
-  const roomField = (id) => `room:${id}`;
+  let submitButton = null;
+  const rr = offersSwitch ? requireResponseCard({
+    on: initialRequires,
+    picker,
+    rooms,
+    selected: initialRooms,
+    legacyLabels: !initialRequires && initialRooms ? summary.rooms.map(roomTitle) : null,
+    onValidity: (ok) => { if (submitButton) submitButton.disabled = !ok; },
+  }) : null;
   let cases = [];
   let initialAudience = "private";
+  if (rr) fields.push({ name: "requireResponse", type: "element", el: rr.el });
   if (!item) {
     fields.push(
       { name: "maintenance", label: "Merk som vedlikeholdssak", type: "checkbox", value: false, help: "Viser skiftenøkkel og oppretter en vedlikeholdssak for hendelsen." },
@@ -1827,17 +1937,8 @@ const calendarForm = async (pid, item) => {
     { name: "time", label: "Klokkeslett", type: "time", value: when.time },
     { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 5000, rows: 3 },
   );
-  if (picker) {
-    fields.push(
-      { name: "appliesTo", label: ROOM_TEXT.appliesTo, type: "legend", help: ROOM_TEXT.appliesToHint },
-      { name: "allRooms", label: ROOM_TEXT.allRooms, type: "checkbox", value: !initialRooms },
-      ...rooms.map((r) => ({ name: roomField(r.tenancyId), label: r.label, type: "checkbox", value: !!initialRooms?.has(r.tenancyId) })),
-    );
-  }
-  if (offersSwitch) {
-    fields.push({ name: "requiresResponse", label: ROOM_TEXT.requiresResponse, type: "switch", value: initialRequires, help: ROOM_TEXT.requiresResponseHint });
-  }
-  const chosenRooms = (v) => (picker && v.allRooms !== "true" ? rooms.filter((r) => v[roomField(r.tenancyId)] === "true").map((r) => r.tenancyId) : "all");
+  // Hidden switch (maintenance, «Kun for utleiere», no tenant): reply required, whole home.
+  const rrValue = () => (rr ? rr.value() : { requiresResponse: true, audience: null, valid: true });
   if (!item) {
     fields.push(
       { name: "maintenanceVisibility", label: "Synlighet", type: "choice", required: true,
@@ -1871,16 +1972,13 @@ const calendarForm = async (pid, item) => {
     fields,
     onChange: (inputs, show) => {
       show("time", inputs.allDay.value !== "true");
-      const showRooms = (on) => {
-        show("appliesTo", on);
-        show("allRooms", on);
-        for (const r of rooms) show(roomField(r.tenancyId), on && !inputs.allRooms?.checked);
-      };
+      if (!submitButton && rr) {
+        submitButton = rr.el.closest("form")?.querySelector('button[type="submit"]') ?? null;
+        rr.sync();
+      }
       if (item) {
         show("caseId", inputs.linkCase.checked);
-        const tenantSide = !inputs.linkCase.checked && inputs.audience?.value !== "private";
-        show("requiresResponse", tenantSide);
-        if (picker) showRooms(tenantSide);
+        show("requireResponse", !inputs.linkCase.checked && inputs.audience?.value !== "private");
         return;
       }
       const marked = inputs.maintenance.checked || !!pendingCase;
@@ -1888,13 +1986,13 @@ const calendarForm = async (pid, item) => {
       show("category", !marked);
       show("maintenanceVisibility", marked);
       // Hidden and forced on for maintenance.
-      show("requiresResponse", !marked);
-      if (picker) showRooms(!marked);
+      show("requireResponse", !marked);
     },
     onSubmit: async (v) => {
       if (item) {
         const caseId = v.linkCase === "true" ? v.caseId || null : null;
         if (v.linkCase === "true" && !caseId) return "Velg hvilken vedlikeholdssak hendelsen skal kobles til.";
+        if (rr && v.linkCase !== "true" && v.audience !== "private" && !rr.value().valid) return "Velg minst én leietaker.";
         const audienceChanged = v.audience !== initialAudience;
         const caseChanged = caseId !== (item.maintenance_request_id ?? null);
         if (audienceChanged || caseChanged) {
@@ -1920,11 +2018,11 @@ const calendarForm = async (pid, item) => {
         if (res.error) return act.explain(res.error);
         // Reply flag and rooms (update_calendar_item_audience) only when they changed and the
         // audience was not changed above. Without the picker the saved rooms are sent back as is.
-        if (offersSwitch && !audienceChanged && !caseChanged && v.audience !== "private") {
-          const requires = v.requiresResponse === "true";
-          const picked = chosenRooms(v);
-          const ids = picker ? (audienceIds(picked) ?? []) : initialRooms ? [...initialRooms].sort() : [];
+        if (rr && !audienceChanged && !caseChanged && v.audience !== "private") {
+          const m = rr.value();
+          const requires = m.requiresResponse;
           const before = initialRooms ? [...initialRooms].sort() : [];
+          const ids = picker || !initialRooms ? m.audience ?? [] : before;
           if (requires !== initialRequires || ids.join(",") !== before.join(",")) {
             const aud = await act.updateCalendarItemAudience(item.id, ids, requires);
             if (aud.error) return act.explain(aud.error);
@@ -1940,9 +2038,11 @@ const calendarForm = async (pid, item) => {
         // tenancy) and waits for the tenant's answer; without one it is landlord-only.
         // create_calendar_item_v2 (old create_calendar_item when v2 is missing). With the picker off
         // the audience is the whole home, as before; «Krever svar» maps to requires_response.
+        const m = rrValue();
+        if (!m.valid) return "Velg minst én leietaker.";
         const res = await act.createCalendarItemV2(pid, values, { shared: hasTenancy }, {
-          audienceTenancyIds: audienceIds(chosenRooms(v)),
-          requiresResponse: offersSwitch ? v.requiresResponse === "true" : true,
+          audienceTenancyIds: m.audience,
+          requiresResponse: m.requiresResponse,
         });
         if (res.error) return act.explain(res.error);
         await refresh("Lagt i kalenderen.");

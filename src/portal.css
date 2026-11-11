@@ -633,3 +633,30 @@ svg { flex: none; }
 .pt-cal-room { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-s); }
 .pt-cal-room .pt-ho-note { flex-basis: 100%; margin: 0; }
 .pt-cal-room-name { font-weight: 600; }
+
+/* «Krever svar fra leietaker» (iOS #1602, CALENDAR_REQUIRE_RESPONSE_SECTION_ANDROID_PARITY). */
+.pt-rr-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--brand-border); border-radius: 24px; }
+.pt-rr-head { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.pt-rr-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; color: var(--brand); background: color-mix(in srgb, var(--brand) 20%, transparent); transition: background-color var(--ease); }
+.pt-rr-card.is-on .pt-rr-icon { background: color-mix(in srgb, var(--brand) 34%, transparent); }
+.pt-rr-icon svg { width: 22px; height: 22px; }
+.pt-rr-texts { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pt-rr-title { font-weight: 600; color: var(--ink); }
+.pt-rr-subtitle, .pt-rr-legacy { font-size: var(--fs-footnote, 13px); color: var(--secondary-ink); }
+.pt-rr-legacy { margin: 0; }
+.pt-check.pt-switch.pt-rr-switch:checked { background: var(--brand); }
+.pt-rr-who { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--brand-border); padding-top: 14px; }
+.pt-rr-who[hidden], .pt-rr-rooms[hidden], .pt-rr-legacy[hidden] { display: none; }
+.pt-rr-who-title { margin: 0; font-size: var(--fs-subheadline); font-weight: 600; color: var(--ink); }
+.pt-rr-options { display: flex; flex-direction: column; gap: 4px; }
+.pt-rr-option { background: transparent; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; cursor: pointer; color: var(--ink); transition: background-color var(--ease); }
+.pt-rr-option.is-selected { background: var(--brand-soft); }
+.pt-rr-radio, .pt-rr-box { appearance: none; -webkit-appearance: none; flex: none; margin: 0; width: 22px; height: 22px; cursor: pointer; border: 1.5px solid color-mix(in srgb, var(--secondary-ink) 50%, transparent); background: var(--surface); }
+.pt-rr-radio { border-radius: 50%; }
+.pt-rr-radio:checked { border-color: var(--brand); background: radial-gradient(circle, #fff 0 4px, var(--brand) 4.5px); }
+.pt-rr-box { border-radius: 6px; background-position: center; background-repeat: no-repeat; background-size: 14px 14px; }
+.pt-rr-box:checked { border-color: var(--brand); background-color: var(--brand); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 4.5 4.5L19 7'/%3E%3C/svg%3E"); }
+.pt-rr-radio:focus-visible, .pt-rr-box:focus-visible { outline: 3px solid var(--brand-border); outline-offset: 2px; }
+.pt-rr-rooms { display: flex; flex-direction: column; border: 1px solid var(--brand-border); border-radius: 12px; overflow: hidden; }
+.pt-rr-room { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; color: var(--ink); }
+.pt-rr-room + .pt-rr-room { border-top: 1px solid var(--brand-border); }

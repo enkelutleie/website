@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   acceptedCountText, audienceIds, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, isMissingRpc, overlayManager, proposeTimes,
-  roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle,
+  requireResponseMapping, respondentLine, respondentNames, roomChoices, roomStatus, roomTitle, RR_TEXT, showsPicker, showsRequiresToggle,
 } from "./portal-calendar-rooms.js";
 
 test("the room picker flag is on (iOS #1601)", () => {
@@ -106,4 +106,24 @@ test("«Foreslå ny tid» sends only the time fields of the kind", () => {
   assert.deepEqual(proposeTimes({ item_type: "deadline", due_at: "x" }, "2026-11-21T23:00:00Z", true), {
     requested_starts_at: null, requested_due_at: "2026-11-21T23:00:00Z", requested_ends_at: null, requested_all_day: true,
   });
+});
+
+
+test("require-response mapping follows the parity table", () => {
+  const base = { shown: true, picker: true, mode: "all", selected: [] };
+  assert.deepEqual(requireResponseMapping({ ...base, on: false }), { requiresResponse: false, audience: null, valid: true });
+  assert.deepEqual(requireResponseMapping({ ...base, on: true }), { requiresResponse: true, audience: null, valid: true });
+  assert.deepEqual(requireResponseMapping({ ...base, on: true, mode: "select", selected: ["b", "a"] }), { requiresResponse: true, audience: ["a", "b"], valid: true });
+  assert.equal(requireResponseMapping({ ...base, on: true, mode: "select", selected: [] }).valid, false);
+  assert.deepEqual(requireResponseMapping({ ...base, picker: false, on: true, mode: "select", selected: ["a"] }), { requiresResponse: true, audience: null, valid: true });
+  assert.deepEqual(requireResponseMapping({ ...base, shown: false, on: false }), { requiresResponse: true, audience: null, valid: true });
+  // Legacy: an info event for some rooms keeps those rooms when saved with the switch off.
+  assert.deepEqual(requireResponseMapping({ ...base, on: false, legacyRooms: ["r2", "r1"] }), { requiresResponse: false, audience: ["r1", "r2"], valid: true });
+});
+
+test("respondent lines: profile and manual names, never e-mail or national id", () => {
+  assert.deepEqual(respondentNames([" Kari Nordmann ", "kari@example.com", "12345678901", "010190 12345", "Registrert leietaker", "Kari Nordmann", "Ola"]), ["Kari Nordmann", "Ola"]);
+  assert.equal(respondentLine("Rom 1", ["Kari Nordmann", "Ola Nordmann"]), "Rom 1 – Kari Nordmann, Ola Nordmann");
+  assert.equal(respondentLine("Rom 2", ["ola@example.com"]), "Rom 2");
+  assert.equal(RR_TEXT.legacyRooms(["Rom 1", "Rom 2"]), "Gjelder bare: Rom 1, Rom 2");
 });
