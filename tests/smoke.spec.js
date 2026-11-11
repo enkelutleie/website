@@ -488,6 +488,161 @@ test.describe("portal", () => {
     });
   }
 
+  // iOS #1613: bompenger i Kjørebok.
+  const tollTrip = (id, over = {}) => ({
+    id, property_id: PROPERTY_ID, trip_date: "2026-11-05", distance_meters: 20000, amount_minor: 7000,
+    purpose: "Visning", from_place: "Hjemme", to_place: "Testveien 1", created_at: "2026-11-05T10:00:00Z", voided_at: null, ...over,
+  });
+  const TOLL_ID = "7a000000-0000-4000-8000-000000000001";
+  const OLD_ID = "7a000000-0000-4000-8000-000000000002";
+  const tollTrips = () => [
+    tollTrip(TOLL_ID, { toll_amount_minor: 3360, toll_estimated: true, to_place: "Bomveien 2" }),
+    tollTrip(OLD_ID, { trip_date: "2026-11-01", to_place: "Gamleveien 3" }), // older row: no toll fields
+  ];
+  const openMileage = async (page, options = {}) => {
+    const opened = await openPortal(page, { ...options, handover: { rpc: { list_mileage_trips: tollTrips(), ...(options.rpc ?? {}) } } });
+    await page.goto("/portal/#okonomi/kjorebok");
+    await expect(page.getByRole("heading", { name: "Kjøregodtgjørelse" })).toBeVisible();
+    return opened;
+  };
+  const rpcBody = (writes, name) => writes.filter((w) => w.path.endsWith(`/rpc/${name}`)).at(-1)?.body;
+
+  test("Kjørebok shows tolls per trip, Kilometerfradrag + Bompenger = Sum fradrag, and the settings (iOS #1613)", async ({ page }) => {
+    const { errors } = await openMileage(page);
+    const row = (text) => page.locator("li.pt-row").filter({ hasText: text });
+    await expect(row("Bomveien 2")).toContainText("Bompenger");
+    await expect(row("Bomveien 2")).toContainText("33,60");
+    await expect(row("Bomveien 2").locator(".pt-amount")).toContainText("103,60");
+    await expect(row("Gamleveien 3")).not.toContainText("Bompenger");
+    await expect(row("Gamleveien 3").locator(".pt-amount")).toContainText("70,00");
+    const sums = page.getByTestId("mileage.tolls.summary");
+    await expect(sums.locator(".pt-toll-sum-row")).toHaveCount(3);
+    await expect(sums.locator(".pt-toll-sum-row").nth(0)).toContainText(/Kilometerfradrag.*140,00/);
+    await expect(sums.locator(".pt-toll-sum-row").nth(1)).toContainText(/Bompenger.*33,60/);
+    await expect(sums.locator(".pt-toll-sum-row").nth(2)).toContainText(/Sum fradrag.*173,60/);
+    await page.getByRole("button", { name: "Les mer" }).click();
+    await expect(page.getByText("Bompengene er et estimat og kan avvike litt fra AutoPASS-fakturaen, og bompenger som er med i kjøreboken, skal ikke føres under Utgifter i tillegg.", { exact: false })).toBeVisible();
+    const settings = page.getByTestId("mileage.tolls.settings");
+    await expect(settings.getByRole("radio", { name: "Fossil" })).toHaveAttribute("aria-checked", "true");
+    await expect(settings.getByRole("radio", { name: "Elbil" })).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByTestId("mileage.tolls.autopass")).toBeChecked();
+    await expect(page.getByTestId("mileage.tolls.include")).toBeChecked();
+    await expect(page.locator("select")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test("Kjørebok without any tolls shows no «Bompenger» sum line (iOS #1613)", async ({ page }) => {
+    await openPortal(page, { handover: { rpc: { list_mileage_trips: [tollTrip(OLD_ID)] } } });
+    await page.goto("/portal/#okonomi/kjorebok");
+    const sums = page.getByTestId("mileage.tolls.summary");
+    await expect(sums.locator(".pt-toll-sum-row")).toHaveCount(2);
+    await expect(sums).not.toContainText("Bompenger");
+  });
+
+  test("editing a calculated toll turns «Bompenger (beregnet)» into «Bompenger» and sends it by hand (iOS #1613)", async ({ page }) => {
+    const { writes, errors } = await openMileage(page);
+    await page.locator("li.pt-row").filter({ hasText: "Bomveien 2" }).getByRole("button", { name: "Rediger" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    const field = dialog.getByLabel("Bompenger (beregnet)", { exact: true });
+    await expect(field).toHaveValue("33,60");
+    await field.fill("40");
+    await expect(dialog.getByLabel("Bompenger", { exact: true })).toHaveValue("40");
+    await expect(dialog.getByText("Bompenger (beregnet)")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "correct_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "correct_mileage_trip")).toMatchObject({ requested_trip_id: TOLL_ID, requested_toll_amount_minor: 4000, requested_toll_estimated: false });
+    expect(errors).toEqual([]);
+  });
+
+  test("an unchanged calculated toll stays «beregnet», and an older trip clears with 0 + false (iOS #1613)", async ({ page }) => {
+    const { writes } = await openMileage(page);
+    await page.locator("li.pt-row").filter({ hasText: "Bomveien 2" }).getByRole("button", { name: "Rediger" }).click();
+    let dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "correct_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "correct_mileage_trip")).toMatchObject({ requested_toll_amount_minor: 3360, requested_toll_estimated: true });
+    await page.goto("/portal/#okonomi/kjorebok");
+    await page.locator("li.pt-row").filter({ hasText: "Gamleveien 3" }).getByRole("button", { name: "Rediger" }).click();
+    dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    await expect(dialog.getByLabel("Bompenger", { exact: true })).toHaveValue("");
+    const before = writes.filter((w) => w.path.endsWith("/rpc/correct_mileage_trip")).length;
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => writes.filter((w) => w.path.endsWith("/rpc/correct_mileage_trip")).length).toBe(before + 1);
+    expect(rpcBody(writes, "correct_mileage_trip")).toMatchObject({ requested_trip_id: OLD_ID, requested_toll_amount_minor: 0, requested_toll_estimated: false });
+  });
+
+  test("Ny kjøretur sends a typed toll, null when empty, and refuses more than 10 000 kr (iOS #1613)", async ({ page }) => {
+    const { writes, errors } = await openMileage(page);
+    const fill = async () => {
+      await page.getByRole("button", { name: "Legg til tur" }).click();
+      const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny kjøretur" }) });
+      await dialog.getByLabel("Fra-adresse").fill("Hjemme");
+      await dialog.getByLabel("Til-adresse").fill("Testveien 1");
+      await dialog.getByLabel("Formål").fill("Visning");
+      await dialog.getByLabel("Kilometer").fill("20");
+      return dialog;
+    };
+    let dialog = await fill();
+    await dialog.getByLabel("Bompenger", { exact: true }).fill("10000,50");
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect(dialog.getByText("Bompenger må være mellom 0 og 10 000 kr.")).toBeVisible();
+    expect(rpcBody(writes, "create_mileage_trip")).toBeUndefined();
+    await dialog.getByLabel("Bompenger", { exact: true }).fill("25");
+    await expect(dialog.getByText(/Beløp: .*95,00/)).toBeVisible();
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_distance_meters: 20000, requested_toll_amount_minor: 2500, requested_toll_estimated: false });
+    await expect(dialog).toHaveCount(0);
+    dialog = await fill();
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => writes.filter((w) => w.path.endsWith("/rpc/create_mileage_trip")).length).toBe(2);
+    const body = rpcBody(writes, "create_mileage_trip");
+    expect(body.requested_toll_amount_minor).toBeNull();
+    expect(body.requested_toll_estimated).toBeNull();
+    expect(errors).toEqual([]);
+  });
+
+  test("toll settings save right away; a failed save says so and keeps the old choice (iOS #1613)", async ({ page }) => {
+    const { writes, errors } = await openMileage(page, { rpc: { set_mileage_toll_settings: [{ vehicle_type: "electric", uses_autopass: true, include_tolls: true }] } });
+    const settings = page.getByTestId("mileage.tolls.settings");
+    await settings.getByRole("radio", { name: "Elbil" }).click();
+    await expect.poll(() => rpcBody(writes, "set_mileage_toll_settings")).toEqual({ requested_vehicle_type: "electric", requested_uses_autopass: true, requested_include_tolls: true });
+    await expect(settings.getByRole("radio", { name: "Elbil" })).toHaveAttribute("aria-checked", "true");
+    expect(writes.some((w) => w.path.includes("mileage_toll_settings") && !w.path.includes("/rpc/"))).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  test("a failed toll settings save shows the error and keeps Fossil (iOS #1613)", async ({ page }) => {
+    await openMileage(page, { fail: ["set_mileage_toll_settings"] });
+    const settings = page.getByTestId("mileage.tolls.settings");
+    await settings.getByRole("radio", { name: "Elbil" }).click();
+    await expect(settings.getByText("Kunne ikke oppdatere bompengeinnstillingene. Prøv igjen.")).toBeVisible();
+    await expect(settings.getByRole("radio", { name: "Fossil" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("with «Ta med bompenger» off a new trip has no toll field and sends no tolls (iOS #1613)", async ({ page }) => {
+    const { writes } = await openMileage(page, { rpc: { get_mileage_toll_settings: [{ vehicle_type: "fossil", uses_autopass: true, include_tolls: false }] } });
+    await expect(page.getByTestId("mileage.tolls.include")).not.toBeChecked();
+    await page.getByRole("button", { name: "Legg til tur" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny kjøretur" }) });
+    await expect(dialog.getByLabel(/^Bompenger/)).toHaveCount(0);
+    await dialog.getByLabel("Fra-adresse").fill("Hjemme");
+    await dialog.getByLabel("Til-adresse").fill("Testveien 1");
+    await dialog.getByLabel("Formål").fill("Visning");
+    await dialog.getByLabel("Kilometer").fill("20");
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "create_mileage_trip").requested_toll_amount_minor).toBeNull();
+  });
+
+  test("a failed toll settings read does not block Kjørebok (iOS #1613)", async ({ page }) => {
+    const { errors } = await openMileage(page, { fail: ["get_mileage_toll_settings"] });
+    await expect(page.locator("li.pt-row").filter({ hasText: "Bomveien 2" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Legg til tur" })).toBeEnabled();
+    await expect(page.getByText("Kunne ikke oppdatere bompengeinnstillingene. Prøv igjen.")).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
   // iOS #1600: calendar per room.
   const newEventDialog = async (page) => {
     await page.getByRole("link", { name: "Kalender", exact: true }).click();

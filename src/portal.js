@@ -13,6 +13,7 @@ import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
 import { createBellWaker } from "./portal-bell-wake.js";
 import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
+import { DEFAULT_TOLL_SETTINGS, showsTollField, tollBreakdown, tollInputMinor, tollLabel, tollParams, tollSettingsFrom, tollSettingsParams, TOLL_TEXT, tripTollMinor, tripTotalMinor } from "./portal-mileage-tolls.js";
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
@@ -4249,6 +4250,8 @@ Eksempel:
 
 For å ha god dokumentasjon registrerer du dato, hvor du kjørte fra og til, hvorfor du kjørte og antall kilometer.
 
+${TOLL_TEXT.info}
+
 Greit å vite
 Reglene kan være annerledes dersom utleien din regnes som næringsvirksomhet. Beregningene i Enkel Utleie er derfor veiledende, og det er Skatteetatens regler som avgjør hva du faktisk har krav på.`;
 const mileageState = { year: null, infoOpen: false };
@@ -4316,7 +4319,7 @@ const loadAnnual = async (pid, year) => {
   };
 };
 
-const reportTable = (columns, rows, sum) => {
+const reportTable = (columns, rows, sum, extraSums = []) => {
   const wrap = h("div", "pt-table-wrap");
   const table = h("table", "pt-table pt-report-table");
   const head = h("tr");
@@ -4341,13 +4344,16 @@ const reportTable = (columns, rows, sum) => {
     tbody.append(tr);
   }
   table.append(thead, tbody);
-  if (sum) {
-    const tr = h("tr", "pt-report-sum");
-    const label = h("td", null, sum[0]);
-    label.colSpan = columns.length - 1;
-    tr.append(label, h("td", "is-num", sum[1]));
+  const sums = [sum, ...extraSums].filter(Boolean);
+  if (sums.length) {
     const tfoot = h("tfoot");
-    tfoot.append(tr);
+    for (const [text, value] of sums) {
+      const tr = h("tr", "pt-report-sum");
+      const label = h("td", null, text);
+      label.colSpan = columns.length - 1;
+      tr.append(label, h("td", "is-num", value));
+      tfoot.append(tr);
+    }
     table.append(tfoot);
   }
   wrap.append(table);
@@ -4439,7 +4445,7 @@ const annualPage = async (pid) => {
   }
   const trips = card(`${n++}  Kjørebok`, "car");
   trips.append(reportTable([{ label: "Dato" }, { label: "Fra → til" }, { label: "Formål" }, { label: "Km", align: R }],
-    report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Sum kjøring", annual.kmText(report.summary.drivingMeters)]));
+    report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Sum kjøring", annual.kmText(report.summary.drivingMeters)], annual.drivingSums(report)));
   const sum = card(`${n++}  Oppsummering`, "net");
   sum.append(reportTable([{ label: "" }, { label: "", align: R }],
     [["Sum inntekter", kr2(report.summary.incomeMinor)], ["Sum utgifter", kr2(report.summary.expenseMinor)]],
@@ -4452,9 +4458,16 @@ const annualPage = async (pid) => {
 };
 
 // MileageComposerView: manual kilometers (the app can also measure the route on the map).
-const mileageForm = (pid, trip) => {
+// iOS #1613: «Bompenger (beregnet)» / «Bompenger» after Kilometer. The portal has no map
+// coordinates, so it cannot ask mileage-route for an estimate: a stored estimate is shown as
+// «beregnet» until it is changed by hand, and a new amount is typed in.
+const mileageForm = (pid, trip, tollSettings = DEFAULT_TOLL_SETTINGS) => {
   const requestId = crypto.randomUUID();
   const preview = h("p", "pt-muted");
+  const tollShown = showsTollField(tollSettings, trip);
+  const initialToll = trip && tripTollMinor(trip) != null ? act.kronerOf(tripTollMinor(trip)) : "";
+  let tollEstimated = trip?.toll_estimated === true && tripTollMinor(trip) != null;
+  let tollLabelEl = null;
   const rateFor = (date) => act.MILEAGE_RATES[Number(String(date || "").slice(0, 4))];
   const fields = [
     { name: "date", label: "Dato", type: "date", value: trip?.trip_date ?? todayISO(), required: true },
@@ -4463,6 +4476,7 @@ const mileageForm = (pid, trip) => {
     { name: "purpose", label: "Formål", type: "textarea", value: trip?.purpose ?? "", maxLength: 200, placeholder: "F.eks. visning av leilighet, kjøp av materialer", required: true, requiredMessage: "Skriv inn formål." },
     { name: "km", label: "Kilometer", value: trip ? act.kilometerText(trip.distance_meters) : "", placeholder: "F.eks. 25,5", required: true, requiredMessage: "Skriv inn kilometer." },
   ];
+  if (tollShown) fields.push({ name: "toll", label: tollLabel(tollEstimated), type: "money", value: initialToll, placeholder: "0,00", plainLabel: true });
   act.openForm({
     title: trip ? "Rediger kjøretur" : "Ny kjøretur",
     intro: trip ? "Lagret som utgift i regnskapet" : undefined,
@@ -4470,17 +4484,26 @@ const mileageForm = (pid, trip) => {
     after: [preview],
     submitLabel: "Lagre tur",
     onChange: (inputs) => {
+      if (inputs.toll) {
+        tollLabelEl ??= inputs.toll.closest("[data-field]")?.querySelector(".pt-field-label") ?? null;
+        // A hand edit is never «beregnet» (toll_estimated = false).
+        if (tollEstimated && inputs.toll.value !== initialToll) tollEstimated = false;
+        if (tollLabelEl) tollLabelEl.textContent = tollLabel(tollEstimated);
+      }
       const rate = rateFor(inputs.date?.value);
       const meters = act.mileageMeters(inputs.km?.value);
       const amount = rate && meters ? act.mileageAmountMinor(meters, rate.orePerKm) : null;
-      preview.textContent = amount == null ? "" : `Beløp: ${money(amount)} (${act.orePerKmText(rate.orePerKm)} kr/km)`;
+      const toll = inputs.toll && tollSettings.includeTolls ? tollInputMinor(inputs.toll.value).minor ?? 0 : 0;
+      preview.textContent = amount == null ? "" : `Beløp: ${money(amount + toll)} (${act.orePerKmText(rate.orePerKm)} kr/km${toll ? ` + ${TOLL_TEXT.title.toLowerCase()}` : ""})`;
     },
     onSubmit: async (v) => {
       const meters = act.mileageMeters(v.km);
       if (!meters) return "Skriv inn kilometer mellom 0,1 og 2000.";
       if (!rateFor(v.date)) return "Ingen offisiell kilometresats for dette året.";
+      if (tollShown && tollSettings.includeTolls && !tollInputMinor(v.toll).valid) return TOLL_TEXT.invalid;
       const values = { date: v.date, meters, purpose: v.purpose, from: v.from, to: v.to };
-      const res = trip ? await act.correctMileageTrip(trip.id, values, requestId) : await act.createMileageTrip(pid, values, requestId);
+      const tolls = tollParams({ settings: tollSettings, input: v.toll ?? "", estimated: tollEstimated, correcting: !!trip });
+      const res = trip ? await act.correctMileageTrip(trip.id, values, requestId, tolls) : await act.createMileageTrip(pid, values, requestId, tolls);
       if (res.error) return trip ? "Kunne ikke oppdatere turen." : "Kunne ikke lagre turen.";
       mileageState.year = Number(v.date.slice(0, 4));
       refresh(trip ? "Turen er oppdatert." : "Turen er lagret.");
@@ -4494,10 +4517,13 @@ const mileagePage = async (pid) => {
   const year = mileageState.year ?? thisYear;
   const back = h("a", "pt-back", "‹ Økonomi");
   back.href = "#okonomi";
-  const [res, zone] = await Promise.all([
+  const [res, zone, tollRes] = await Promise.all([
     cached(`mileage:${pid}:${year}`, () => act.listMileageTrips(pid, `${year}-01-01`, `${year + 1}-01-01`)),
     cached("tiltakssone", () => act.taxResidenceInTiltakssone(state.user.id)),
+    isManager(pid) ? cachedOk("tollsettings", () => act.mileageTollSettings()) : null,
   ]);
+  // Settings errors never block Kjørebok: the defaults are used and a short note is shown.
+  const tollSettings = tollRes && !tollRes.error ? tollSettingsFrom(tollRes.data) : { ...DEFAULT_TOLL_SETTINGS };
   const tiltakssone = zone === true;
   const head = card("Kjøregodtgjørelse", "car");
   head.append(h("p", "pt-muted", "Registrer kjøring i forbindelse med utleie, og få oversikt over fradragene dine."));
@@ -4516,14 +4542,16 @@ const mileagePage = async (pid) => {
   const { el: yearPicker, input: select } = act.customSelect({ label: "År", options: years, value: String(year), floating: true });
   select.addEventListener("change", () => { mileageState.year = Number(select.value); render(); });
   yearLabel.append(h("span", "pt-field-label", "År"), yearPicker);
-  head.append(actionsRow(toggle, isManager(pid) ? button("Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid)) : null), info, yearLabel);
+  head.append(actionsRow(toggle, isManager(pid) ? button("Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid, null, tollSettings)) : null), info, yearLabel);
   if (res.error) {
     head.append(inline("Kunne ikke laste kjøreboka."));
     return [back, head];
   }
   const trips = [...(res.data ?? [])].sort((a, b) => b.trip_date.localeCompare(a.trip_date) || String(b.created_at).localeCompare(String(a.created_at)));
   const meters = trips.reduce((a, t) => a + Number(t.distance_meters), 0);
-  const deduction = trips.reduce((a, t) => a + Number(t.amount_minor ?? 0), 0);
+  // MileageLedger.summary: deduction = kilometerfradrag + bompenger.
+  const breakdown = tollBreakdown(trips);
+  const deduction = breakdown.totalMinor;
   const bps = act.SET_ASIDE_BPS[year]?.[tiltakssone ? 1 : 0];
   const rateLabel = bps ? `${act.percentText(bps)}${tiltakssone ? " (tiltakssonen)" : ""}` : null;
   const grid = h("section", "pt-kpis");
@@ -4544,14 +4572,101 @@ const mileagePage = async (pid) => {
       const li = h("li", "pt-row");
       const main = h("div", "pt-row-main");
       const route = [act.displayPlace(t.from_place), act.displayPlace(t.to_place)].filter(Boolean).join(" – ");
-      main.append(h("strong", null, route || t.purpose || "Kjøretur"), h("span", null, [dateText(t.trip_date), t.purpose, `${act.kilometerText(t.distance_meters)} km`].filter(Boolean).join(" · ")));
-      li.append(icon("car", "pt-icon-circle is-tax"), main, h("span", "pt-amount is-expense", `−${money(t.amount_minor)}`));
-      if (isManager(pid)) li.append(button("Rediger", "pt-btn-soft pt-btn-small", () => mileageForm(pid, t)));
+      const toll = tripTollMinor(t);
+      main.append(h("strong", null, route || t.purpose || "Kjøretur"), h("span", null, [dateText(t.trip_date), t.purpose, `${act.kilometerText(t.distance_meters)} km`, toll > 0 ? `${TOLL_TEXT.title} ${money(toll)}` : null].filter(Boolean).join(" · ")));
+      li.append(icon("car", "pt-icon-circle is-tax"), main, h("span", "pt-amount is-expense", `−${money(tripTotalMinor(t))}`));
+      if (isManager(pid)) li.append(button("Rediger", "pt-btn-soft pt-btn-small", () => mileageForm(pid, t, tollSettings)));
       ul.append(li);
     }
     list.append(ul);
   }
-  return [back, head, grid, list];
+  // «Kilometerfradrag», «Bompenger» (only with an amount) and «Sum fradrag».
+  const sums = h("section", "pt-card pt-toll-summary");
+  sums.dataset.testid = "mileage.tolls.summary";
+  const sumRow = (label, value, cls = null) => {
+    const row = h("div", cls ? `pt-toll-sum-row ${cls}` : "pt-toll-sum-row");
+    row.append(h("span", null, label), h("span", "pt-toll-sum-value", value));
+    return row;
+  };
+  sums.append(sumRow(TOLL_TEXT.kilometerDeduction, money(breakdown.kilometerMinor)));
+  if (breakdown.tollMinor > 0) sums.append(sumRow(TOLL_TEXT.title, money(breakdown.tollMinor)));
+  sums.append(sumRow(TOLL_TEXT.total, money(breakdown.totalMinor), "is-total"));
+  const out = [back, head, grid, sums];
+  if (isManager(pid)) out.push(mileageTollSettingsCard(tollSettings, tollRes?.error ? TOLL_TEXT.settingsError : null));
+  out.push(list);
+  return out;
+};
+
+// MileageView.tollSettingsCard: «Biltype» Fossil/Elbil, «Bruker AutoPASS-brikke», «Ta med bompenger».
+// Each change is saved right away with set_mileage_toll_settings; a failure restores the controls.
+const mileageTollSettingsCard = (initial, initialError) => {
+  let current = { ...initial };
+  let saving = false;
+  const c = card(TOLL_TEXT.settings, "car");
+  c.dataset.testid = "mileage.tolls.settings";
+  const status = h("p", "pt-muted pt-toll-error", initialError ?? "");
+  status.hidden = !initialError;
+  status.setAttribute("role", "status");
+  const typeLabel = h("p", "pt-field-label", TOLL_TEXT.vehicleType);
+  typeLabel.id = "pt-toll-vehicle-label";
+  const segmented = h("div", "pt-segmented");
+  segmented.setAttribute("role", "radiogroup");
+  segmented.setAttribute("aria-labelledby", typeLabel.id);
+  segmented.dataset.testid = "mileage.tolls.vehicleType";
+  const segments = [["fossil", TOLL_TEXT.fossil], ["electric", TOLL_TEXT.electric]].map(([value, text]) => {
+    const b = h("button", "pt-segment", text);
+    b.type = "button";
+    b.setAttribute("role", "radio");
+    b.dataset.value = value;
+    b.addEventListener("click", () => { if (current.vehicleType !== value) save({ ...current, vehicleType: value }); });
+    segmented.append(b);
+    return b;
+  });
+  const switchRow = (text, key, testid) => {
+    const row = h("label", "pt-switch-row pt-toll-switch");
+    const input = h("input", "pt-check pt-switch");
+    input.type = "checkbox";
+    input.setAttribute("role", "switch");
+    input.dataset.testid = testid;
+    input.addEventListener("change", () => save({ ...current, [key]: input.checked }));
+    row.append(h("span", "pt-toll-switch-label", text), input);
+    return { row, input, key };
+  };
+  const autopass = switchRow(TOLL_TEXT.autopass, "usesAutopass", "mileage.tolls.autopass");
+  const include = switchRow(TOLL_TEXT.include, "includeTolls", "mileage.tolls.include");
+  const sync = () => {
+    for (const b of segments) {
+      const on = b.dataset.value === current.vehicleType;
+      b.classList.toggle("is-selected", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+      b.disabled = saving;
+    }
+    for (const s of [autopass, include]) {
+      s.input.checked = !!current[s.key];
+      s.input.disabled = saving;
+    }
+  };
+  const save = async (next) => {
+    if (saving) return;
+    saving = true;
+    status.hidden = true;
+    sync();
+    const res = await act.saveMileageTollSettings(tollSettingsParams(next));
+    saving = false;
+    if (res.error) {
+      status.textContent = TOLL_TEXT.settingsError;
+      status.hidden = false;
+    } else {
+      current = tollSettingsFrom(res.data);
+      // The page's forms read the same object, so «Legg til tur» uses the new settings right away.
+      Object.assign(initial, current);
+      state.cache.set("tollsettings", Promise.resolve({ data: res.data, error: null }));
+    }
+    sync();
+  };
+  c.append(typeLabel, segmented, autopass.row, include.row, status);
+  sync();
+  return c;
 };
 
 // Møbler og inventar (iOS AssetView). Items are loaded for every managed property so the

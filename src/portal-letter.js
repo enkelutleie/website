@@ -219,12 +219,12 @@ export function letterPdf(blocks, { logo = null, title = "Dokument" } = {}) {
         y -= h;
         ops.push(`${LINE} RG 0.25 w ${n(MARGIN)} ${n(y + 1)} m ${n(PAGE_W - MARGIN)} ${n(y + 1)} l S`);
       }
-      if (b.sum) {
+      for (const sum of [b.sum, ...(b.extraSums ?? [])].filter(Boolean)) {
         ensure(24);
         y -= 2;
         ops.push(`${SOFT} rg ${n(MARGIN)} ${n(y - 20)} ${n(contentW)} 20 re f`);
-        ops.push(text(pdfText(b.sum[0]), MARGIN + 6, y - 13.5, 9.5, true, INK));
-        const v = pdfText(b.sum[1]);
+        ops.push(text(pdfText(sum[0]), MARGIN + 6, y - 13.5, 9.5, true, INK));
+        const v = pdfText(sum[1]);
         ops.push(text(v, PAGE_W - MARGIN - 4 - width(v, 9.5, true), y - 13.5, 9.5, true, INK));
         y -= 24;
       }
