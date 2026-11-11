@@ -529,8 +529,10 @@ test.describe("portal", () => {
     await expect(page.getByText("Bompengene er et estimat og kan avvike litt fra AutoPASS-fakturaen, og bompenger som er med i kjøreboken, skal ikke føres under Utgifter i tillegg.", { exact: false })).toBeVisible();
     const settings = await openTollSettings(page);
     await expect(settings.getByRole("heading", { name: "Innstillinger for kjørebok" })).toBeVisible();
-    await expect(settings.getByText("Bompenger", { exact: true })).toBeVisible();
-    await expect(settings.getByText("Velg biltype og hvilke bompenge-opplysninger som skal tas med.")).toBeVisible();
+    await expect(settings.getByText("Kjøreturinnstillinger", { exact: true })).toBeVisible();
+    await expect(settings.getByText("Endringer her vil gjelde for neste registrerte kjøretur. Tidligere turer påvirkes ikke, men kan redigeres manuelt.")).toBeVisible();
+    await expect(settings.getByText("Bompenger", { exact: true })).toHaveCount(0);
+    await expect(settings.locator(".pt-toll-settings-head .pt-icon-circle svg")).toHaveCount(1);
     await expect(settings.getByText("Biltype", { exact: true })).toBeVisible();
     await expect(settings.getByRole("radio", { name: "Fossil" })).toHaveAttribute("aria-checked", "true");
     await expect(settings.getByRole("radio", { name: "Elbil" })).toHaveAttribute("aria-checked", "false");

@@ -682,10 +682,12 @@ svg { flex: none; }
 .pt-mileage-settings { margin: auto; }
 .pt-toll-settings { display: flex; flex-direction: column; gap: var(--space-s); }
 .pt-toll-settings-head { display: flex; align-items: center; gap: var(--space-m); margin-bottom: var(--space-s); }
+.pt-toll-settings-head .pt-icon-circle { flex: none; }
 .pt-toll-settings-text { display: flex; flex-direction: column; gap: 2px; }
 .pt-toll-settings-text p { margin: 0; }
 .pt-toll-settings .pt-segmented { display: flex; }
 .pt-toll-settings .pt-segment { flex: 1; }
+.pt-toll-settings .pt-segment.is-selected { color: var(--brand); }
 .pt-toll-switches { display: flex; flex-direction: column; margin-top: var(--space-s); }
 .pt-mileage-add { margin-top: 0; }
 .pt-toll-switch { justify-content: space-between; cursor: pointer; padding: 10px 0; }
