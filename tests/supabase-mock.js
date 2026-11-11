@@ -402,6 +402,10 @@ function respond(url, req, body, options) {
   if (url.pathname.includes("/functions/v1/contract-pdf")) {
     return json(200, { pdf_base64: PDF, filename: "utkast.pdf" });
   }
+  if (url.pathname.includes("/functions/v1/mileage-route") && options.mileageRoute) {
+    const r = typeof options.mileageRoute === "function" ? options.mileageRoute(body) : options.mileageRoute;
+    return json(r.status ?? 200, r.body);
+  }
   if (url.pathname.includes("/functions/v1/")) return json(200, { ok: true });
   if (options.handover && url.pathname.includes("/storage/v1/object/") && url.pathname.includes("/property-images/handover/")) {
     const path = decodeURIComponent(url.pathname.split("/property-images/")[1]);
@@ -474,7 +478,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),

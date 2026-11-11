@@ -13,6 +13,7 @@ import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
 import { createBellWaker } from "./portal-bell-wake.js";
 import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
+import { routeComposer, ROUTE_TEXT } from "./portal-mileage-route.js";
 import { DEFAULT_TOLL_SETTINGS, showsTollField, tollBreakdown, tollInputMinor, tollLabel, tollParams, tollSettingsFrom, tollSettingsParams, TOLL_TEXT, tripTollMinor, tripTotalMinor } from "./portal-mileage-tolls.js";
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
@@ -4463,26 +4464,82 @@ const annualPage = async (pid) => {
   return out;
 };
 
-// MileageComposerView: manual kilometers (the app can also measure the route on the map).
-// iOS #1613: «Bompenger (beregnet)» / «Bompenger» after Kilometer. The portal has no map
-// coordinates, so it cannot ask mileage-route for an estimate: a stored estimate is shown as
-// «beregnet» until it is changed by hand, and a new amount is typed in.
+// MileageComposerView (iOS #1613/#1614). Kilometer and «Bompenger (beregnet)» are filled from
+// Edge mileage-route v11 with the typed addresses (portal-mileage-route.js); both stay editable.
+// A hand-typed km or toll is never overwritten, and a hand edit is «Bompenger» (not «beregnet»).
 const mileageForm = (pid, trip, tollSettings = DEFAULT_TOLL_SETTINGS) => {
   const requestId = crypto.randomUUID();
   const preview = h("p", "pt-muted");
   const tollShown = showsTollField(tollSettings, trip);
-  const initialToll = trip && tripTollMinor(trip) != null ? act.kronerOf(tripTollMinor(trip)) : "";
-  let tollEstimated = trip?.toll_estimated === true && tripTollMinor(trip) != null;
-  let tollLabelEl = null;
+  let wired = false;
+  let refs = null;
   const rateFor = (date) => act.MILEAGE_RATES[Number(String(date || "").slice(0, 4))];
   const fields = [
     { name: "date", label: "Dato", type: "date", value: trip?.trip_date ?? todayISO(), required: true },
     { name: "from", label: "Fra-adresse", value: trip?.from_place ?? "", placeholder: "F.eks. hjemmeadresse", required: true, requiredMessage: "Skriv inn fra-adresse." },
     { name: "to", label: "Til-adresse", value: trip?.to_place ?? "", placeholder: "F.eks. Karlsrudveien 12, Oslo", required: true, requiredMessage: "Skriv inn til-adresse." },
-    { name: "purpose", label: "Formål", type: "textarea", value: trip?.purpose ?? "", maxLength: 200, placeholder: "F.eks. visning av leilighet, kjøp av materialer", required: true, requiredMessage: "Skriv inn formål." },
-    { name: "km", label: "Kilometer", value: trip ? act.kilometerText(trip.distance_meters) : "", placeholder: "F.eks. 25,5", required: true, requiredMessage: "Skriv inn kilometer." },
+    { name: "km", label: "Kilometer", value: trip ? act.kilometerText(trip.distance_meters) : "", placeholder: "F.eks. 25,5", required: true, requiredMessage: "Skriv inn kilometer.", help: ROUTE_TEXT.kmHint },
   ];
-  if (tollShown) fields.push({ name: "toll", label: tollLabel(tollEstimated), type: "money", value: initialToll, placeholder: "0,00", plainLabel: true });
+  const route = routeComposer({
+    trip, settings: tollSettings, estimate: act.estimateMileageRoute, kmText: act.kilometerText, tollText: act.kronerOf,
+    onUpdate: () => paint(),
+  });
+  if (tollShown) fields.push({ name: "toll", label: tollLabel(route.state.tollEstimated), type: "money", value: route.state.toll, placeholder: "0,00", plainLabel: true });
+  fields.push({ name: "purpose", label: "Formål", type: "textarea", value: trip?.purpose ?? "", maxLength: 200, placeholder: "F.eks. visning av leilighet, kjøp av materialer", required: true, requiredMessage: "Skriv inn formål." });
+  const updatePreview = () => {
+    if (!refs) return;
+    const { inputs } = refs;
+    const rate = rateFor(inputs.date?.value);
+    const meters = act.mileageMeters(inputs.km?.value);
+    const amount = rate && meters ? act.mileageAmountMinor(meters, rate.orePerKm) : null;
+    const toll = inputs.toll && tollSettings.includeTolls ? tollInputMinor(inputs.toll.value).minor ?? 0 : 0;
+    preview.textContent = amount == null ? "" : `Beløp: ${money(amount + toll)} (${act.orePerKmText(rate.orePerKm)} kr/km${toll ? ` + ${TOLL_TEXT.title.toLowerCase()}` : ""})`;
+  };
+  // Writes the composer state into the form (km, toll, label, «Beregner avstand…», errors).
+  function paint() {
+    if (!refs) return;
+    const { inputs, status, tollLabelEl, fieldError } = refs;
+    const st = route.state;
+    if (inputs.km.value !== st.km) inputs.km.value = st.km;
+    if (inputs.toll && inputs.toll.value !== st.toll) inputs.toll.value = st.toll;
+    if (tollLabelEl) tollLabelEl.textContent = tollLabel(st.tollEstimated);
+    const general = st.loading ? ROUTE_TEXT.loading : st.error && !st.error.field ? st.error.text : "";
+    status.textContent = general;
+    status.hidden = !general;
+    status.classList.toggle("is-error", !st.loading && !!st.error);
+    for (const name of ["from", "to"]) {
+      const msg = !st.loading && st.error?.field === `${name}_address` ? st.error.text : "";
+      fieldError[name].textContent = msg;
+      fieldError[name].hidden = !msg;
+      if (msg) inputs[name].setAttribute("aria-invalid", "true");
+      else inputs[name].removeAttribute("aria-invalid");
+    }
+    updatePreview();
+  }
+  const wire = (inputs) => {
+    const wrapOf = (name) => inputs[name]?.closest("[data-field]") ?? null;
+    const status = h("span", "pt-field-help pt-route-status");
+    status.setAttribute("role", "status");
+    status.dataset.testid = "mileage.distance.status";
+    status.hidden = true;
+    wrapOf("km")?.append(status);
+    const fieldError = {};
+    for (const name of ["from", "to"]) {
+      const el = h("span", "pt-field-help is-error");
+      el.dataset.testid = `mileage.${name}.error`;
+      el.setAttribute("role", "alert");
+      el.hidden = true;
+      wrapOf(name)?.append(el);
+      fieldError[name] = el;
+    }
+    const tollLabelEl = inputs.toll ? wrapOf("toll")?.querySelector(".pt-field-label") ?? null : null;
+    refs = { inputs, status, tollLabelEl, fieldError };
+    inputs.from.addEventListener("input", () => { route.editFrom(inputs.from.value); paint(); });
+    inputs.to.addEventListener("input", () => { route.editTo(inputs.to.value); paint(); });
+    inputs.km.addEventListener("input", () => { route.editKm(inputs.km.value); paint(); });
+    inputs.toll?.addEventListener("input", () => { route.editToll(inputs.toll.value); paint(); });
+    inputs.km.closest("dialog")?.addEventListener("close", () => route.cancel());
+  };
   act.openForm({
     title: trip ? "Rediger kjøretur" : "Ny kjøretur",
     intro: trip ? "Lagret som utgift i regnskapet" : undefined,
@@ -4490,17 +4547,8 @@ const mileageForm = (pid, trip, tollSettings = DEFAULT_TOLL_SETTINGS) => {
     after: [preview],
     submitLabel: "Lagre tur",
     onChange: (inputs) => {
-      if (inputs.toll) {
-        tollLabelEl ??= inputs.toll.closest("[data-field]")?.querySelector(".pt-field-label") ?? null;
-        // A hand edit is never «beregnet» (toll_estimated = false).
-        if (tollEstimated && inputs.toll.value !== initialToll) tollEstimated = false;
-        if (tollLabelEl) tollLabelEl.textContent = tollLabel(tollEstimated);
-      }
-      const rate = rateFor(inputs.date?.value);
-      const meters = act.mileageMeters(inputs.km?.value);
-      const amount = rate && meters ? act.mileageAmountMinor(meters, rate.orePerKm) : null;
-      const toll = inputs.toll && tollSettings.includeTolls ? tollInputMinor(inputs.toll.value).minor ?? 0 : 0;
-      preview.textContent = amount == null ? "" : `Beløp: ${money(amount + toll)} (${act.orePerKmText(rate.orePerKm)} kr/km${toll ? ` + ${TOLL_TEXT.title.toLowerCase()}` : ""})`;
+      if (!wired) { wired = true; wire(inputs); }
+      updatePreview();
     },
     onSubmit: async (v) => {
       const meters = act.mileageMeters(v.km);
@@ -4508,9 +4556,10 @@ const mileageForm = (pid, trip, tollSettings = DEFAULT_TOLL_SETTINGS) => {
       if (!rateFor(v.date)) return "Ingen offisiell kilometresats for dette året.";
       if (tollShown && tollSettings.includeTolls && !tollInputMinor(v.toll).valid) return TOLL_TEXT.invalid;
       const values = { date: v.date, meters, purpose: v.purpose, from: v.from, to: v.to };
-      const tolls = tollParams({ settings: tollSettings, input: v.toll ?? "", estimated: tollEstimated, correcting: !!trip });
+      const tolls = tollParams({ settings: tollSettings, input: v.toll ?? "", estimated: route.state.tollEstimated, correcting: !!trip });
       const res = trip ? await act.correctMileageTrip(trip.id, values, requestId, tolls) : await act.createMileageTrip(pid, values, requestId, tolls);
       if (res.error) return trip ? "Kunne ikke oppdatere turen." : "Kunne ikke lagre turen.";
+      route.cancel();
       mileageState.year = Number(v.date.slice(0, 4));
       refresh(trip ? "Turen er oppdatert." : "Turen er lagret.");
       return null;

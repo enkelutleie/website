@@ -556,15 +556,30 @@ async function functionErrorDetails(error) {
   const context = error?.context;
   let status = typeof context?.status === "number" ? context.status : null;
   let code = null;
+  let field = null;
   if (context && typeof context.json === "function") {
     try {
       const body = await (typeof context.clone === "function" ? context.clone() : context).json();
       if (typeof body?.error === "string") code = body.error;
+      if (typeof body?.field === "string") field = body.field;
     } catch { /* body was empty or not JSON */ }
   } else if (typeof context?.error === "string") {
     code = context.error;
   }
-  return { code, status, name: error?.name ?? "", message: error?.message ?? "" };
+  return { code, field, status, name: error?.name ?? "", message: error?.message ?? "" };
+}
+
+// Read-only Edge mileage-route v11 (address mode): distance and, with tolls: true, the toll
+// estimate for free-text addresses. The user's JWT is sent by the shared client; nothing is stored.
+export async function estimateMileageRoute(body) {
+  try {
+    const { data, error } = await supabase.functions.invoke("mileage-route", { body });
+    if (error) return { failure: await functionErrorDetails(error) };
+    if (!data || typeof data !== "object") return { failure: { code: null } };
+    return { data };
+  } catch (err) {
+    return { failure: await functionErrorDetails(err) };
+  }
 }
 
 // Logged-in read of the deployed finn-listing function. The user's JWT is sent
