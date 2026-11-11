@@ -3267,22 +3267,28 @@ const hoDepositStatus = (d) => {
   if (s === "open" || s === "declined") return ["Pågår", " is-warning"];
   return ["Uenighet", " is-danger"];
 };
-const hoReloadPage = async (message) => {
+// hash: open another page after reloading (the hashchange renders it), e.g. the hub.
+const hoReloadPage = async (message, hash = null) => {
   for (const key of [...state.cache.keys()]) {
     if (key.startsWith("ho:") || key.startsWith("rte-") || key.startsWith("ho-items:") || key.startsWith("ho-comments:") || key.startsWith("ho-photos:")) state.cache.delete(key);
   }
-  await render();
+  if (hash && location.hash !== hash) location.hash = hash;
+  else await render();
   if (message) act.toast(message);
 };
-const hoRun = async (res, errorOf, message) => {
+const hoRun = async (res, errorOf, message, hash = null) => {
   const err = errorOf(res);
   if (err) {
     act.toast(err);
     return false;
   }
-  await hoReloadPage(message);
+  await hoReloadPage(message, hash);
   return true;
 };
+// DEPOSIT_SETTLEMENT_NAV_AFTER_SEND (iOS #1611): after a successful send (first or again after
+// changed claims) the landlord lands on «Inn- og utflytting» for the same property and tenancy
+// (hoTenancyId is kept). A failed send stays on the settlement page.
+const HO_HUB = "#inn-utflytting";
 
 const hoConditionChip = (item) => {
   const tone = { ok: " is-success", note: " is-warning", damage: " is-danger" }[item.condition] ?? "";
@@ -3788,11 +3794,11 @@ const hoDepositPage = async (p, t, d) => {
     buttons.push(button(claims.length ? "Send krav til leietaker" : "Godkjenn og send til leietaker", "pt-btn-primary", async () => {
       if (!claims.length) {
         const ok = await act.confirmAction({ title: "Godkjenn og send til leietaker", text: "Hele depositumet tilbakebetales uten krav.", confirmLabel: "Godkjenn", destructive: false });
-        if (ok) hoRun(await act.approveDepositFullRefund(snap.id), act.depositError, "Utflyttingen er godkjent uten krav.");
+        if (ok) hoRun(await act.approveDepositFullRefund(snap.id), act.depositError, "Utflyttingen er godkjent uten krav.", HO_HUB);
         return;
       }
       const ok = await act.confirmAction({ title: "Send krav til leietaker", text: "Leietaker kan godta eller bestride kravene.", confirmLabel: "Send", destructive: false });
-      if (ok) hoRun(await act.submitDepositClaims(snap.id), act.depositError, "Kravene er sendt til leietaker.");
+      if (ok) hoRun(await act.submitDepositClaims(snap.id), act.depositError, "Kravene er sendt til leietaker.", HO_HUB);
     }));
     if (claims.length < act.DEPOSIT_CLAIM_LIMIT) buttons.push(button("Legg til krav", "pt-btn-secondary", () => hoClaimForm(snap)));
   }
