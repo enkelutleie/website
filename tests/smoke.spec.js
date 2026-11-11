@@ -239,6 +239,9 @@ test.describe("portal", () => {
     await expect(page.getByText("Solgt eller utrangert")).toHaveCount(0);
     await expect(page.getByText("Møbelhistorikk")).toHaveCount(0);
     await expect(page.getByText("avhendet")).toHaveCount(0);
+    // The list card has no «Registrerte møbler» heading (iOS/Android parity), but keeps its content.
+    await expect(page.getByText("Registrerte møbler")).toHaveCount(0);
+    await expect(page.getByText("Estimater er til din egen planlegging. Det er ikke skatteråd og ikke skattemelding.")).toBeVisible();
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await page.getByRole("link", { name: /Årsoppgave/ }).click();
     await expect(page.getByRole("heading", { name: "Årsoppgave" })).toBeVisible();

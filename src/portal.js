@@ -4775,7 +4775,7 @@ const assetsPage = async (pid) => {
   head.append(actionsRow(toggle, isManager(pid) ? button("Legg til møbel eller inventar", "pt-btn-primary pt-btn-small", () => assetForm(pid, data)) : null), info, yearLabel);
   const view = inv.yearView(data.items, year, data.elections);
   const cards = view.outlooks.map((o) => saldoCard(o, data));
-  const list = card("Registrerte møbler", "sofa");
+  const list = h("section", "pt-card");
   const shown = data.items.filter((i) => view.rows[i.id]);
   const showProperty = new Set(data.items.map((i) => i.propertyId)).size > 1;
   if (!shown.length) list.append(inline("Ingen møbler eller inventar registrert."));
