@@ -1992,7 +1992,7 @@ export async function commentPhotoUrl(storagePath) {
   return file.error ? null : dataUrlOf(file.data);
 }
 
-const CALENDAR_COLUMNS = "id, property_id, tenancy_id, maintenance_request_id, title, description, item_type, category, starts_at, due_at, ends_at, all_day, visibility, status, tenant_response, tenant_response_comment, tenant_responded_at";
+const CALENDAR_COLUMNS = "id, property_id, tenancy_id, maintenance_request_id, title, description, item_type, category, starts_at, due_at, ends_at, all_day, visibility, status, tenant_response, tenant_response_comment, tenant_responded_at, requires_response";
 
 // Planned visit (MaintenanceView.scheduleSection): one calendar event, no deadline.
 export const maintenanceCalendarItems = (requestId) =>
@@ -2047,6 +2047,7 @@ export async function calendarItemWithAccess(itemId, knownList = null) {
   if (!row) return res;
   const item = { ...res.data };
   if (typeof row.can_respond === "boolean") item.can_respond = row.can_respond;
+  if (typeof row.requires_response === "boolean") item.requires_response = row.requires_response;
   if (typeof row.maintenance_request_readable === "boolean") {
     item.maintenance_request_readable = row.maintenance_request_readable;
     if (!row.maintenance_request_readable) item.maintenance_request_id = null;

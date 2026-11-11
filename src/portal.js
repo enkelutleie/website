@@ -312,8 +312,11 @@ const kpis = async (pid) => {
 // SharedPropertyCalendarAccess (iOS #1521). The list RPC sends can_respond and
 // maintenance_request_readable. Without them (table read, or before the migration) the
 // caller's own active tenancies decide, which is the same as before the shared calendar.
+// TENANT_UPCOMING_NO_RESPONSE (iOS #1607): only requires_response === true asks for a reply.
+// Missing, null and false are an info event: shown, but without reply buttons or waiting status.
+const calendarRequiresResponse = (item) => item?.requires_response === true;
 const calendarCanRespond = (item, manager) => {
-  if (manager || item.status !== "active") return false;
+  if (manager || item.status !== "active" || !calendarRequiresResponse(item)) return false;
   if (typeof item.can_respond === "boolean") return item.can_respond;
   return false;
 };
@@ -387,8 +390,8 @@ const calendarDetail = async (itemId, requestId) => {
     c.append(h("p", "pt-muted", "Bare utleiere ser denne hendelsen, så ingen leietaker trenger å godkjenne den. Velg «Rediger» for å dele den med leietakeren."));
   }
   const summary = shared && !item.maintenance_request_id ? groupSummaries(await calendarRoomRows(pid)).get(item.id) : null;
-  if (shared && summary && !summary.requiresResponse) {
-    c.append(responseBox("is-info", ROOM_TEXT.info));
+  if (shared && ((summary && !summary.requiresResponse) || (!summary && !calendarRequiresResponse(item)))) {
+    if (!item.maintenance_request_id) c.append(responseBox("is-info", ROOM_TEXT.info));
   } else if (shared && summary?.showsProgress) {
     c.append(calendarRoomProgress(item, summary));
   } else if (shared) {
@@ -537,7 +540,7 @@ const calendarUpcoming = (items, now, today) => items
 // awaitsTenantResponse (iOS): shared, active and not answered. The badge only shows when the
 // property has a tenancy with an active tenant who can answer; otherwise the item shows normally.
 const calendarAwaitsTenant = (i, hasTenant) =>
-  hasTenant && i.visibility === "tenant_shared" && i.status === "active" && !i.tenant_response && i.requires_response !== false;
+  hasTenant && i.visibility === "tenant_shared" && i.status === "active" && !i.tenant_response && calendarRequiresResponse(i);
 // calendarDisplayDate (iOS): «13. okt. 2026 kl. 23:36», date only for all-day items.
 const calendarWhen = (i) => {
   const d = calendarItemDate(i);
@@ -1882,7 +1885,7 @@ const calendarForm = async (pid, item) => {
   const summary = item && roomRows ? groupSummaries(roomRows).get(item.id) ?? null : null;
   const offersSwitch = showsRequiresToggle({ isMaintenance: linked, visibility: item ? item.visibility : "tenant_shared", hasActiveTenant: hasTenant })
     && (!item || (item.status === "active" && roomRows !== null));
-  const initialRequires = summary ? summary.requiresResponse : true;
+  const initialRequires = summary ? summary.requiresResponse : item ? calendarRequiresResponse(item) : true;
   // «Hvem skal svare?» (CALENDAR_ROOM_PICKER_ENABLED): bofellesskap with two named rooms. Rows
   // read «Rom N – Navn» from profile names and manual residents (never e-mail or 11 digits).
   let rooms = [];
@@ -2962,7 +2965,7 @@ const maintenanceDetail = async (pid, rid) => {
         overdue ? "Forfalt" : item.status === "completed" ? "Fullført" : "Aktiv"));
       row.append(pills);
       if (overdue && manager) row.append(h("p", "pt-mt-followup", "Vedlikeholdssaken trenger oppfølging. Den planlagte datoen har passert."));
-      const shared = !!item.tenancy_id && item.status === "active";
+      const shared = !!item.tenancy_id && item.status === "active" && calendarRequiresResponse(item);
       if (shared && manager) {
         const resp = st.responses.get(item.id);
         const decision = resp?.decision ?? item.tenant_response;
