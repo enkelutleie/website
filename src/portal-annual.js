@@ -133,6 +133,9 @@ export function buildReport(input) {
   const incomeMinor = incomeEntries.reduce((a, e) => a + e.amountMinor, 0);
   const expenseMinor = expenseEntries.reduce((a, e) => a + e.amountMinor, 0);
   const drivingMeters = trips.reduce((a, t) => a + Number(t.distance_meters), 0);
+  // iOS #1613: kilometerfradrag (amount_minor) and bompenger are documented beside the distance.
+  const kilometerDeductionMinor = trips.reduce((a, t) => a + Number(t.amount_minor ?? 0), 0);
+  const tollAmountMinor = trips.reduce((a, t) => a + (t.toll_amount_minor == null ? 0 : Number(t.toll_amount_minor)), 0);
   return {
     year,
     landlordName: input.landlordName || "–", propertyTitle: input.propertyTitle || "–",
@@ -144,10 +147,19 @@ export function buildReport(input) {
       purpose: [String(t.purpose ?? "").trim(), input.driverNames?.[t.driver_user_id ?? t.created_by] ?? ""].filter(Boolean).join(" · "),
       meters: Number(t.distance_meters),
     })),
-    summary: { incomeMinor, expenseMinor, differenceMinor: incomeMinor - expenseMinor, drivingMeters },
+    summary: {
+      incomeMinor, expenseMinor, differenceMinor: incomeMinor - expenseMinor, drivingMeters,
+      kilometerDeductionMinor, tollAmountMinor, drivingDeductionMinor: kilometerDeductionMinor + tollAmountMinor,
+    },
     supplementsFailed: Boolean(input.supplementsFailed),
   };
 }
+// AnnualReportPDF.mileageSection: «Kilometerfradrag», «Bompenger» (only with an amount), «Sum fradrag».
+export const drivingSums = (r) => [
+  ["Kilometerfradrag", kronerText(r.summary.kilometerDeductionMinor ?? 0)],
+  ...((r.summary.tollAmountMinor ?? 0) > 0 ? [["Bompenger", kronerText(r.summary.tollAmountMinor)]] : []),
+  ["Sum fradrag", kronerText(r.summary.drivingDeductionMinor ?? 0)],
+];
 export const isEmpty = (r) => !r.incomes.length && !r.expenses.length && !r.trips.length && !r.furniture.length;
 
 // AnnualReportPDF layout as letter blocks (tables with sum rows).
@@ -185,6 +197,7 @@ export function reportBlocks(r) {
     columns: [{ label: "Dato", w: 62 }, { label: "Fra → til", w: 150 }, { label: "Formål", w: 0 }, { label: "Km", w: 60, align: right }],
     rows: r.trips.map((t) => [t.dateText, t.route, t.purpose, kmText(t.meters)]),
     sum: ["Sum kjøring", kmText(r.summary.drivingMeters)],
+    extraSums: drivingSums(r),
   });
   blocks.push({
     type: "table", title: `${n++}  Oppsummering`,

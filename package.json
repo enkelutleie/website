@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/tenancy-listing.test.js src/finn-import.test.js src/oslo-time.test.js src/paged.test.js tests/privacy-export.test.js tests/explain.test.js src/portal-load.test.js src/portal-cache.test.js src/lease-term.test.js src/portal-sign.test.js src/portal-inventory.test.js src/portal-sign-refresh.test.js src/portal-calendar-live.test.js src/portal-co-invite-accept.test.js src/portal-transaction-title.test.js src/portal-own-home.test.js src/portal-bell-wake.test.js src/portal-checklist-photos.test.js src/portal-ready-to-end.test.js src/portal-calendar-rooms.test.js",
+    "test": "node --test src/tenancy-listing.test.js src/finn-import.test.js src/oslo-time.test.js src/paged.test.js tests/privacy-export.test.js tests/explain.test.js src/portal-load.test.js src/portal-cache.test.js src/lease-term.test.js src/portal-sign.test.js src/portal-inventory.test.js src/portal-sign-refresh.test.js src/portal-calendar-live.test.js src/portal-co-invite-accept.test.js src/portal-transaction-title.test.js src/portal-own-home.test.js src/portal-bell-wake.test.js src/portal-checklist-photos.test.js src/portal-ready-to-end.test.js src/portal-calendar-rooms.test.js src/portal-mileage-tolls.test.js",
     "test:smoke": "playwright test",
     "preview": "vite preview",
     "og": "python3 scripts/generate-og-image.py"

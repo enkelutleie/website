@@ -151,7 +151,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
       // A custom listbox is not a labelable element, so its row is a div (clicks on options must not hit a label).
       const wrap = h(choice ? "div" : "label", check ? "pt-field pt-field-check" : "pt-field");
       wrap.dataset.field = f.name;
-      if (!check) wrap.append(h("span", "pt-field-label", f.label + (f.required ? "" : " (valgfritt)")));
+      if (!check) wrap.append(h("span", "pt-field-label", f.label + (f.required || f.plainLabel ? "" : " (valgfritt)")));
       let input;
       let picker = null;
       if (choice) {
@@ -2783,18 +2783,23 @@ const tripPayload = (v) => ({
   requested_to_place: storedPlaceText(v.to),
 });
 // The server replays the same trip for the same client request id (safe retry).
-export async function createMileageTrip(propertyId, v, clientRequestId) {
+// iOS #1613: tolls ride along as requested_toll_amount_minor / requested_toll_estimated (see
+// portal-mileage-tolls.js tollParams). Without them (tolls = {}) the calls are as before.
+export async function createMileageTrip(propertyId, v, clientRequestId, tolls = {}) {
   const { data, error } = await supabase.rpc("create_mileage_trip", {
-    requested_property_id: propertyId, ...tripPayload(v), requested_client_request_id: clientRequestId,
+    requested_property_id: propertyId, ...tripPayload(v), requested_client_request_id: clientRequestId, ...tolls,
   });
   return error ? { error } : { data: first(data) };
 }
-export async function correctMileageTrip(tripId, v, clientRequestId) {
+export async function correctMileageTrip(tripId, v, clientRequestId, tolls = {}) {
   const { data, error } = await supabase.rpc("correct_mileage_trip", {
-    requested_trip_id: tripId, ...tripPayload(v), requested_client_request_id: clientRequestId,
+    requested_trip_id: tripId, ...tripPayload(v), requested_client_request_id: clientRequestId, ...tolls,
   });
   return error ? { error } : { data: first(data) };
 }
+// Per-landlord toll settings (biltype, AutoPASS, «Ta med bompenger»). Errors never block Kjørebok.
+export const mileageTollSettings = () => supabase.rpc("get_mileage_toll_settings");
+export const saveMileageTollSettings = (params) => supabase.rpc("set_mileage_toll_settings", params);
 // ProfileRepository: tax_residence_tiltakssone picks 18,5 % instead of 22 %.
 export async function taxResidenceInTiltakssone(userId) {
   const { data } = await ownProfile(userId);
