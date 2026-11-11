@@ -4695,8 +4695,8 @@ const mileageTollSettingsSection = (initial, note) => {
   c.dataset.testid = "mileage.tolls.settings";
   const sectionHead = h("div", "pt-toll-settings-head");
   const headText = h("div", "pt-toll-settings-text");
-  headText.append(h("strong", null, TOLL_TEXT.settings), h("p", "pt-muted", TOLL_TEXT.settingsSubtitle));
-  sectionHead.append(icon("tollGate"), headText);
+  headText.append(h("strong", null, TOLL_TEXT.sectionTitle), h("p", "pt-muted", TOLL_TEXT.settingsSubtitle));
+  sectionHead.append(icon("cog"), headText);
   const status = h("p", "pt-muted pt-toll-error", initialError ?? "");
   status.hidden = !initialError;
   status.setAttribute("role", "status");

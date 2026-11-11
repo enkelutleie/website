@@ -4,7 +4,8 @@
 export const TOLL_TEXT = {
   settings: "Bompenger",
   settingsTitle: "Innstillinger for kjørebok",
-  settingsSubtitle: "Velg biltype og hvilke bompenge-opplysninger som skal tas med.",
+  sectionTitle: "Kjøreturinnstillinger",
+  settingsSubtitle: "Endringer her vil gjelde for neste registrerte kjøretur. Tidligere turer påvirkes ikke, men kan redigeres manuelt.",
   vehicleType: "Biltype",
   fossil: "Fossil",
   electric: "Elbil",
