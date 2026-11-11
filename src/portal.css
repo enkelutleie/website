@@ -669,10 +669,6 @@ svg { flex: none; }
 .pt-tx-recurring svg { width: 12px; height: 12px; stroke-width: 2.4; }
 
 /* Kjørebok bompenger (iOS #1613). */
-.pt-toll-summary { display: flex; flex-direction: column; gap: 10px; }
-.pt-toll-sum-row { display: flex; justify-content: space-between; gap: var(--space-m); font-size: var(--fs-subheadline); color: var(--ink); }
-.pt-toll-sum-value { font-variant-numeric: tabular-nums; }
-.pt-toll-sum-row.is-total { border-top: 1px solid var(--brand-border); padding-top: 10px; font-weight: 600; }
 .pt-toll-switch { justify-content: space-between; cursor: pointer; padding: 10px 0; }
 .pt-toll-switch-label { color: var(--ink); }
 .pt-toll-error { margin: 0; }
