@@ -113,3 +113,44 @@ export const proposeTimes = (item, startIso, allDay) => {
   }
   return { requested_starts_at: startIso, requested_due_at: null, requested_ends_at: ends, requested_all_day: allDay };
 };
+
+// «Krever svar fra leietaker» as one card (iOS #1602, CALENDAR_REQUIRE_RESPONSE_SECTION_ANDROID_PARITY).
+export const RR_TEXT = {
+  title: "Krever svar fra leietaker",
+  subtitle: "Leietakere må godkjenne eller avslå hendelsen.",
+  who: "Hvem skal svare?",
+  all: "Alle leietakere",
+  select: "Velg leietakere",
+  legacyRooms: (rooms) => `Gjelder bare: ${rooms.join(", ")}`,
+};
+
+const NATIONAL_ID = (s) => s.replace(/\D/g, "").length === 11 && /^[\d -]+$/.test(s);
+// Profile names and manual residents only: never an e-mail, an 11-digit string or «Registrert leietaker».
+export const respondentNames = (names) => {
+  const out = [];
+  for (const raw of names ?? []) {
+    const t = typeof raw === "string" ? raw.trim() : "";
+    if (!t || t.includes("@") || NATIONAL_ID(t) || t.toLowerCase() === "registrert leietaker" || out.includes(t)) continue;
+    out.push(t);
+  }
+  return out;
+};
+// «Rom 1 – Kari Nordmann, Ola Nordmann», or just the room.
+export const respondentLine = (room, names) => {
+  const list = respondentNames(names);
+  return list.length ? `${room} – ${list.join(", ")}` : room;
+};
+
+/**
+ * CalendarRequireResponseForm.mapping.
+ * shown: the switch is offered (not maintenance, not «Kun for utleiere», a tenant exists).
+ * picker: «Hvem skal svare?» is offered. legacyRooms: saved rooms on an event without reply.
+ * → { requiresResponse, audience: null | [tenancy ids], valid }
+ */
+export const requireResponseMapping = ({ shown, on, picker, mode, selected, legacyRooms = null }) => {
+  if (!shown) return { requiresResponse: true, audience: null, valid: true };
+  if (!on) return { requiresResponse: false, audience: legacyRooms?.length ? [...legacyRooms].sort() : null, valid: true };
+  if (!picker || mode !== "select") return { requiresResponse: true, audience: null, valid: true };
+  const ids = [...(selected ?? [])].sort();
+  return { requiresResponse: true, audience: ids.length ? ids : null, valid: ids.length > 0 };
+};

@@ -29,6 +29,7 @@ export const ICONS = {
   net: s('<circle cx="12" cy="12" r="9"/><path d="M8 10h8M8 14h8"/>'),
   tax: s('<circle cx="12" cy="12" r="9"/><path d="M9 15l6-6M9.5 9.5h.01M14.5 14.5h.01"/>'),
   check: s('<path d="m5 12 4.5 4.5L19 7"/>'),
+  checkBubble: s('<path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m8 10.5 2.5 2.5L16 8"/>'),
   wifi: s('<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>'),
   fuse: s('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M13 7l-3 5h4l-3 5"/>'),
   drop: s('<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z"/>'),

@@ -125,6 +125,15 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
     const body = h("div", "pt-form");
     const inputs = {};
     for (const f of fields) {
+      // A caller-built control (f.el) in the field order; it owns its own value.
+      if (f.type === "element") {
+        const wrap = h("div", "pt-field pt-field-element");
+        wrap.dataset.field = f.name;
+        wrap.append(f.el);
+        if (f.hidden) wrap.hidden = true;
+        body.append(wrap);
+        continue;
+      }
       // A heading with help text for the checkboxes after it (no input of its own).
       if (f.type === "legend") {
         const wrap = h("div", "pt-field pt-field-legend");
@@ -234,7 +243,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         status.hidden = true;
         const values = {};
         for (const f of fields) {
-          if (f.type === "legend") continue;
+          if (f.type === "legend" || f.type === "element") continue;
           const input = inputs[f.name];
           const hidden = input.closest(".pt-field").hidden;
           values[f.name] = f.type === "file" ? (f.multiple ? [...(input.files ?? [])] : input.files?.[0] ?? null)

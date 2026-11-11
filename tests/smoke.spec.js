@@ -380,31 +380,86 @@ test.describe("portal", () => {
     await dialog.getByLabel("Dato").fill("2026-11-20");
     return dialog;
   };
-  test("«Krever svar fra leietaker» is on by default and maps to requires_response (iOS #1600)", async ({ page }) => {
+  // iOS #1602: one «Krever svar fra leietaker» card; «Hvem skal svare?» appears when it is on.
+  const rrCard = (dialog) => ({
+    toggle: dialog.getByRole("switch", { name: /Krever svar fra leietaker/ }),
+    who: dialog.getByText("Hvem skal svare?", { exact: true }),
+    all: dialog.getByTestId("calendar.form.respondents.all"),
+    select: dialog.getByTestId("calendar.form.respondents.select"),
+    room: (id) => dialog.getByTestId(`calendar.form.room.${id.toUpperCase()}`),
+  });
+  const createBody = (writes) => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))?.body;
+  test("«Krever svar fra leietaker» is one card, on by default with «Alle leietakere» (iOS #1602)", async ({ page }) => {
     const { writes, errors } = await openPortal(page, { handover: readyToEndTables() });
     const dialog = await newEventDialog(page);
-    const toggle = dialog.getByRole("switch", { name: /Krever svar fra leietaker/ });
-    await expect(toggle).toBeChecked();
-    await expect(dialog.getByText("Leietakeren får svarknapper. Slå av for en ren informasjonshendelse.")).toBeVisible();
-    // Bofellesskap with three named rooms: «Gjelder» shows, «Alle rom» is the default.
-    await expect(dialog.getByText("Gjelder", { exact: true })).toBeVisible();
-    await expect(dialog.getByRole("checkbox", { name: "Alle rom" })).toBeChecked();
+    const card = rrCard(dialog);
+    await expect(card.toggle).toBeChecked();
+    await expect(dialog.getByText("Leietakere må godkjenne eller avslå hendelsen.")).toBeVisible();
+    await expect(card.who).toBeVisible();
+    await expect(card.all).toBeChecked();
+    await expect(card.select).not.toBeChecked();
+    await expect(dialog.locator(".pt-rr-option.is-selected")).toHaveText("Alle leietakere");
+    await expect(card.room(READY_A)).toBeHidden();
+    // The old «Gjelder» picker is gone, and there is no native select.
+    await expect(dialog.getByText("Gjelder", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("checkbox", { name: "Alle rom" })).toHaveCount(0);
     await expect(page.locator("select")).toHaveCount(0);
-    await toggle.click();
-    await expect(toggle).not.toBeChecked();
+    // Off hides the rest of the card and sends false for the whole home.
+    await card.toggle.click();
+    await expect(card.toggle).not.toBeChecked();
+    await expect(card.who).toBeHidden();
+    await expect(card.all).toBeHidden();
     await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
-    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))).toBeTruthy();
-    const body = writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2")).body;
+    await expect.poll(() => createBody(writes)).toBeTruthy();
+    const body = createBody(writes);
     expect(body.requested_requires_response).toBe(false);
     expect(body.requested_audience_tenancy_ids).toBeNull();
     expect(body.requested_shared_with_property).toBe(true);
     expect(writes.some((w) => w.path.endsWith("/rpc/create_calendar_item"))).toBe(false);
     expect(writes.some((w) => /calendar_item_audience|calendar_item_room_responses/.test(w.path) && !w.path.includes("/rpc/"))).toBe(false);
-    // Maintenance hides the switch.
+    // Maintenance hides the whole card (forced on).
     await page.getByRole("button", { name: "+ Ny hendelse" }).click();
     const again = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny hendelse" }) });
     await again.getByText("Merk som vedlikeholdssak").click();
-    await expect(again.getByRole("switch", { name: /Krever svar/ })).toBeHidden();
+    await expect(rrCard(again).toggle).toBeHidden();
+    await expect(again.getByText("Krever svar fra leietaker")).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+
+  test("on with «Alle leietakere» sends true for the whole home (iOS #1602)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: readyToEndTables() });
+    const dialog = await newEventDialog(page);
+    await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
+    await expect.poll(() => createBody(writes)).toBeTruthy();
+    expect(createBody(writes).requested_requires_response).toBe(true);
+    expect(createBody(writes).requested_audience_tenancy_ids).toBeNull();
+    expect(errors).toEqual([]);
+  });
+
+  test("«Velg leietakere» lists «Rom N – Navn», needs one room, and sends the chosen tenancies (iOS #1602)", async ({ page }) => {
+    const tables = readyToEndTables();
+    tables.manual_occupants = [{ id: "a0a0a0a0-0000-4000-8000-0000000000c1", property_id: PROPERTY_ID, tenancy_id: READY_C, display_name: "Per Hansen", phone: null, party_role: "tenant", claimed_user_id: null }];
+    const { writes, errors } = await openPortal(page, { handover: tables });
+    const dialog = await newEventDialog(page);
+    const card = rrCard(dialog);
+    await card.select.click();
+    await expect(card.select).toBeChecked();
+    await expect(dialog.locator(".pt-rr-option.is-selected")).toHaveText("Velg leietakere");
+    const rows = dialog.locator(".pt-rr-room");
+    await expect(rows).toHaveText(["Rom 1 – Kari Nordmann, Ola Nordmann", "Rom 2", "Rom 3 – Per Hansen"]);
+    await expect(dialog.getByText(/@/)).toHaveCount(0);
+    await expect(dialog.getByText("12345678901")).toHaveCount(0);
+    const save = dialog.getByRole("button", { name: "Legg i kalenderen" });
+    await expect(save).toBeDisabled();
+    await card.room(READY_C).click();
+    await card.room(READY_A).click();
+    await expect(save).toBeEnabled();
+    await card.room(READY_A).click();
+    await card.room(READY_A).click();
+    await save.click();
+    await expect.poll(() => createBody(writes)).toBeTruthy();
+    expect(createBody(writes).requested_audience_tenancy_ids).toEqual([READY_A, READY_C].sort());
+    expect(createBody(writes).requested_requires_response).toBe(true);
     expect(errors).toEqual([]);
   });
 
@@ -476,49 +531,26 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  // iOS #1601: «Gjelder» is on.
-  const roomPicker = (dialog) => ({
-    all: dialog.getByRole("checkbox", { name: "Alle rom" }),
-    room: (n) => dialog.getByRole("checkbox", { name: `Rom ${n}`, exact: true }),
-  });
-  test("«Gjelder» defaults to «Alle rom» and sends the chosen rooms to create_calendar_item_v2 (iOS #1601)", async ({ page }) => {
-    const { writes, errors } = await openPortal(page, { handover: readyToEndTables() });
-    const dialog = await newEventDialog(page);
-    await expect(dialog.getByText("Velg hvilke rom som ser hendelsen. Alle rom gjelder også rom du legger til senere.")).toBeVisible();
-    const pick = roomPicker(dialog);
-    await expect(pick.all).toBeChecked();
-    await expect(pick.room(1)).toBeHidden();
-    await pick.all.click();
-    await expect(pick.room(1)).toBeVisible();
-    await expect(pick.room(2)).toBeVisible();
-    await expect(pick.room(3)).toBeVisible();
-    await pick.room(3).click();
-    await pick.room(1).click();
-    await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
-    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))).toBeTruthy();
-    const body = writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2")).body;
-    expect(body.requested_audience_tenancy_ids).toEqual([READY_A, READY_C].sort());
-    expect(body.requested_requires_response).toBe(true);
-    expect(errors).toEqual([]);
-  });
-
   for (const [name, options] of [["a regular home", {}], ["a bofellesskap with one named room", { handover: readyToEndTables({ count: 1 }) }]]) {
-    test(`«Gjelder» is hidden for ${name} (iOS #1601)`, async ({ page }) => {
+    test(`the card is only the switch for ${name} (iOS #1602)`, async ({ page }) => {
       const { writes } = await openPortal(page, options);
       const dialog = await newEventDialog(page);
-      await expect(dialog.getByRole("switch", { name: /Krever svar/ })).toBeVisible();
-      await expect(dialog.getByText("Gjelder", { exact: true })).toHaveCount(0);
-      await expect(dialog.getByRole("checkbox", { name: "Alle rom" })).toHaveCount(0);
+      const card = rrCard(dialog);
+      await expect(card.toggle).toBeVisible();
+      await expect(card.toggle).toBeChecked();
+      await expect(card.who).toHaveCount(0);
+      await expect(card.select).toHaveCount(0);
       await dialog.getByRole("button", { name: "Legg i kalenderen" }).click();
-      await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))).toBeTruthy();
-      expect(writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2")).body.requested_audience_tenancy_ids).toBeNull();
+      await expect.poll(() => createBody(writes)).toBeTruthy();
+      expect(createBody(writes).requested_audience_tenancy_ids).toBeNull();
+      expect(createBody(writes).requested_requires_response).toBe(true);
     });
   }
 
   // A saved two-room event in the shared fixture: rows on READY_A and READY_B.
-  const savedRoomEvent = () => {
+  const savedRoomEvent = ({ requiresResponse = true } = {}) => {
     const shared = readyToEndTables();
-    const cal = roomCalendarTables();
+    const cal = roomCalendarTables({ requiresResponse });
     const ids = [READY_A, READY_B];
     const rows = cal.rpc.list_calendar_item_responses_v2.slice(0, 2).map((r, i) => ({
       ...r, tenancy_id: ids[i], unit_label: `Rom ${i + 1}`, decision: null, comment: null,
@@ -531,14 +563,15 @@ test.describe("portal", () => {
     await page.getByRole("button", { name: "Rediger", exact: true }).click();
     return page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Endre hendelse" }) });
   };
-  test("Endre hendelse keeps saved rooms and sends a room change through update_calendar_item_audience (iOS #1601)", async ({ page }) => {
+  test("Endre hendelse keeps saved rooms and sends a room change through update_calendar_item_audience (iOS #1602)", async ({ page }) => {
     const { writes, errors } = await openPortal(page, { handover: savedRoomEvent() });
     let dialog = await openEdit(page);
-    let pick = roomPicker(dialog);
-    await expect(pick.all).not.toBeChecked();
-    await expect(pick.room(1)).toBeChecked();
-    await expect(pick.room(2)).toBeChecked();
-    await expect(pick.room(3)).not.toBeChecked();
+    let card = rrCard(dialog);
+    await expect(card.toggle).toBeChecked();
+    await expect(card.select).toBeChecked();
+    await expect(card.room(READY_A)).toBeChecked();
+    await expect(card.room(READY_B)).toBeChecked();
+    await expect(card.room(READY_C)).not.toBeChecked();
     // A title change alone keeps the rooms: no audience call.
     await dialog.getByLabel("Tittel").fill("Felles vask og rydding");
     await dialog.getByRole("button", { name: "Lagre endringer" }).click();
@@ -546,8 +579,14 @@ test.describe("portal", () => {
     await expect(dialog).toHaveCount(0);
     expect(writes.some((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBe(false);
     dialog = await openEdit(page);
-    pick = roomPicker(dialog);
-    await pick.room(3).click();
+    card = rrCard(dialog);
+    // No room selected: «Lagre endringer» is disabled.
+    await card.room(READY_A).click();
+    await card.room(READY_B).click();
+    await expect(dialog.getByRole("button", { name: "Lagre endringer" })).toBeDisabled();
+    await card.room(READY_A).click();
+    await card.room(READY_B).click();
+    await card.room(READY_C).click();
     await dialog.getByRole("button", { name: "Lagre endringer" }).click();
     await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBeTruthy();
     expect(writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience")).body).toEqual({
@@ -557,10 +596,38 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
+  test("a legacy info event for some rooms shows «Gjelder bare» and keeps its rooms when saved off (iOS #1602)", async ({ page }) => {
+    const { writes, errors } = await openPortal(page, { handover: savedRoomEvent({ requiresResponse: false }) });
+    let dialog = await openEdit(page);
+    let card = rrCard(dialog);
+    await expect(card.toggle).not.toBeChecked();
+    await expect(dialog.getByText("Gjelder bare: Rom 1, Rom 2")).toBeVisible();
+    await expect(card.who).toBeHidden();
+    await dialog.getByLabel("Tittel").fill("Felles vask og rydding");
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item"))).toBeTruthy();
+    await expect(dialog).toHaveCount(0);
+    expect(writes.some((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBe(false);
+    // Turning it on preselects «Velg leietakere» with the same rooms.
+    dialog = await openEdit(page);
+    card = rrCard(dialog);
+    await card.toggle.click();
+    await expect(dialog.getByText("Gjelder bare: Rom 1, Rom 2")).toBeHidden();
+    await expect(card.select).toBeChecked();
+    await expect(card.room(READY_A)).toBeChecked();
+    await expect(card.room(READY_B)).toBeChecked();
+    await dialog.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBeTruthy();
+    expect(writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience")).body).toEqual({
+      requested_calendar_item_id: ROOM_EVENT_ID, requested_audience_tenancy_ids: [READY_A, READY_B].sort(), requested_requires_response: true,
+    });
+    expect(errors).toEqual([]);
+  });
+
   test("a missing update_calendar_item_audience still saves the edit (iOS #1600 fallback)", async ({ page }) => {
     const { writes, errors } = await openPortal(page, { handover: savedRoomEvent(), missingRpc: ["update_calendar_item_audience"] });
     const dialog = await openEdit(page);
-    await roomPicker(dialog).all.click();
+    await rrCard(dialog).all.click();
     await dialog.getByRole("button", { name: "Lagre endringer" }).click();
     await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/update_calendar_item_audience"))).toBeTruthy();
     await expect(dialog).toHaveCount(0);
