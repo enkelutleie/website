@@ -602,6 +602,104 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
+  // iOS #1614: mileage-route v11 with free-text addresses fills km and «Bompenger (beregnet)».
+  const routeCalls = (writes) => writes.filter((w) => w.path.endsWith("/functions/v1/mileage-route"));
+  const ROUTE_OK = { body: { distanceMeters: 15234, durationSeconds: 900, resolved: {}, toll_included: true, toll_amount_minor: 3360, toll_estimated: true } };
+  const newTrip = async (page) => {
+    await page.getByRole("button", { name: "Legg til tur" }).click();
+    return page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny kjøretur" }) });
+  };
+
+  test("Ny kjøretur fills Kilometer and «Bompenger (beregnet)» from mileage-route and saves it as beregnet (iOS #1614)", async ({ page }) => {
+    const { writes, errors } = await openMileage(page, { mileageRoute: ROUTE_OK });
+    const dialog = await newTrip(page);
+    await expect(dialog.getByText("Fylles automatisk eller manuelt.")).toBeVisible();
+    await dialog.getByLabel("Fra-adresse").fill("Oslo S");
+    await dialog.getByLabel("Til-adresse").fill("Sandvika");
+    await expect(dialog.getByLabel("Kilometer")).toHaveValue("15,2");
+    await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("33,60");
+    expect(routeCalls(writes)).toHaveLength(1);
+    expect(routeCalls(writes)[0].body).toEqual({ from_address: "Oslo S", to_address: "Sandvika", tolls: true, vehicle_type: "fossil", uses_autopass: true });
+    await dialog.getByLabel("Formål").fill("Visning");
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_distance_meters: 15200, requested_toll_amount_minor: 3360, requested_toll_estimated: true });
+    expect(errors).toEqual([]);
+  });
+
+  test("a hand-typed toll or km stays when the estimate comes, and the toll becomes «Bompenger» (iOS #1614)", async ({ page }) => {
+    const { writes, errors } = await openMileage(page, { mileageRoute: ROUTE_OK, delayRpc: { "mileage-route": 600 } });
+    const dialog = await newTrip(page);
+    await dialog.getByLabel("Fra-adresse").fill("Oslo S");
+    await dialog.getByLabel("Til-adresse").fill("Sandvika");
+    await expect(dialog.getByText("Beregner avstand…")).toBeVisible();
+    await dialog.getByLabel("Kilometer").fill("18");
+    await dialog.getByLabel("Bompenger", { exact: true }).fill("40");
+    await expect(dialog.getByText("Beregner avstand…")).toHaveCount(0);
+    await expect(dialog.getByLabel("Kilometer")).toHaveValue("18");
+    await expect(dialog.getByLabel("Bompenger", { exact: true })).toHaveValue("40");
+    await dialog.getByLabel("Formål").fill("Visning");
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_distance_meters: 18000, requested_toll_amount_minor: 4000, requested_toll_estimated: false });
+    expect(errors).toEqual([]);
+  });
+
+  test("editing «Bompenger (beregnet)» from the estimate makes it «Bompenger» (iOS #1614)", async ({ page }) => {
+    const { errors } = await openMileage(page, { mileageRoute: ROUTE_OK });
+    const dialog = await newTrip(page);
+    await dialog.getByLabel("Fra-adresse").fill("Oslo S");
+    await dialog.getByLabel("Til-adresse").fill("Sandvika");
+    await dialog.getByLabel("Bompenger (beregnet)").fill("35");
+    await expect(dialog.getByLabel("Bompenger", { exact: true })).toHaveValue("35");
+    await expect(dialog.getByText("Bompenger (beregnet)")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
+  test("address_not_found shows a message at that address, and km can still be typed and saved (iOS #1614)", async ({ page }) => {
+    const { writes, errors } = await openMileage(page, { mileageRoute: { status: 404, body: { error: "address_not_found", field: "to_address" } } });
+    const dialog = await newTrip(page);
+    await dialog.getByLabel("Fra-adresse").fill("Oslo S");
+    await dialog.getByLabel("Til-adresse").fill("Xyzzyveien 999");
+    await expect(dialog.getByTestId("mileage.to.error")).toHaveText("Fant ikke til-adressen. Sjekk adressen, eller skriv km selv.");
+    await expect(dialog.getByLabel("Til-adresse")).toHaveAttribute("aria-invalid", "true");
+    await expect(dialog.getByTestId("mileage.from.error")).toBeHidden();
+    await expect(dialog.getByLabel("Bompenger", { exact: true })).toHaveValue("");
+    await dialog.getByLabel("Kilometer").fill("12");
+    await expect(dialog.getByTestId("mileage.to.error")).toBeHidden();
+    await dialog.getByLabel("Formål").fill("Visning");
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_distance_meters: 12000, requested_toll_amount_minor: null });
+    expect(errors).toEqual([]);
+  });
+
+  test("a failed mileage-route says «Kunne ikke beregne avstand — skriv km selv» (iOS #1614)", async ({ page }) => {
+    const { errors } = await openMileage(page, { mileageRoute: { status: 502, body: { error: "upstream_error" } } });
+    const dialog = await newTrip(page);
+    await dialog.getByLabel("Fra-adresse").fill("Oslo S");
+    await dialog.getByLabel("Til-adresse").fill("Sandvika");
+    await expect(dialog.getByTestId("mileage.distance.status")).toHaveText("Kunne ikke beregne avstand — skriv km selv");
+    await dialog.getByLabel("Kilometer").fill("12");
+    await expect(dialog.getByTestId("mileage.distance.status")).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+
+  test("Rediger kjøretur keeps the stored km and toll with no lookup until the address changes (iOS #1614)", async ({ page }) => {
+    const { writes, errors } = await openMileage(page, { mileageRoute: ROUTE_OK });
+    await page.locator("li.pt-row").filter({ hasText: "Bomveien 2" }).getByRole("button", { name: "Rediger" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    await expect(dialog.getByLabel("Kilometer")).toHaveValue("20");
+    await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("33,60");
+    await page.waitForTimeout(500);
+    expect(routeCalls(writes)).toHaveLength(0);
+    await dialog.getByLabel("Til-adresse").fill("Sandvika");
+    await expect(dialog.getByLabel("Kilometer")).toHaveValue("15,2");
+    await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("33,60");
+    expect(routeCalls(writes)).toHaveLength(1);
+    expect(errors).toEqual([]);
+  });
+
   test("toll settings save right away; a failed save says so and keeps the old choice (iOS #1613)", async ({ page }) => {
     const { writes, errors } = await openMileage(page, { rpc: { set_mileage_toll_settings: [{ vehicle_type: "electric", uses_autopass: true, include_tolls: true }] } });
     const settings = page.getByTestId("mileage.tolls.settings");
