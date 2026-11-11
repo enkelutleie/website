@@ -661,3 +661,9 @@ svg { flex: none; }
 .pt-rr-rooms { display: flex; flex-direction: column; border: 1px solid var(--brand-border); border-radius: 12px; overflow: hidden; }
 .pt-rr-room { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; color: var(--ink); }
 .pt-rr-room + .pt-rr-room { border-top: 1px solid var(--brand-border); }
+
+/* Recurring transaction capsule (iOS #1606, RECURRING_TX_ICON_ANDROID_PARITY): 32×22, radius 11, brandSoft, 12px secondaryInk arrows. */
+.pt-tx-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pt-tx-title strong { min-width: 0; }
+.pt-row-main .pt-tx-recurring { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 22px; border-radius: 11px; background: var(--brand-soft); color: var(--secondary-ink); }
+.pt-tx-recurring svg { width: 12px; height: 12px; stroke-width: 2.4; }
