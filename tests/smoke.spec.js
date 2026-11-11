@@ -374,6 +374,38 @@ test.describe("portal", () => {
     expect(saved.body.address_line1).toBeTruthy();
   });
 
+  // Kjørebok and Møbler og inventar: «Les mer» opens the info, «Vis mindre» at its bottom closes it.
+  for (const [link, heading] of [[/Kjørebok/, "Kjøregodtgjørelse"], [/Møbler og inventar/, "Møbler og inventar"]]) {
+    test(`«${heading}» info has a «Vis mindre» button at the bottom`, async ({ page }) => {
+      const { errors } = await openPortal(page);
+      await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+      await page.getByRole("link", { name: link }).click();
+      const head = page.locator(".pt-card").filter({ has: page.getByRole("heading", { name: heading }) });
+      const info = head.locator(".pt-mileage-info");
+      const top = head.getByRole("button", { name: "Les mer" });
+      await expect(info).toBeHidden();
+      await top.click();
+      await expect(info).toBeVisible();
+      await expect(head.getByRole("button", { name: "Les mer" })).toHaveCount(0);
+      await expect(head.getByRole("button", { name: "Skjul" })).toHaveCount(0);
+      // Two «Vis mindre»: the top toggle and the last element of the open text.
+      await expect(head.getByRole("button", { name: "Vis mindre" })).toHaveCount(2);
+      const bottom = info.locator(":scope > :last-child");
+      await expect(bottom).toHaveText("Vis mindre");
+      await expect(bottom).toHaveRole("button");
+      await bottom.click();
+      await expect(info).toBeHidden();
+      await expect(head.getByRole("button", { name: "Les mer" })).toBeVisible();
+      await expect(head.getByRole("button", { name: "Vis mindre" })).toHaveCount(0);
+      // The top toggle still works after closing from the bottom.
+      await head.getByRole("button", { name: "Les mer" }).click();
+      await expect(info).toBeVisible();
+      await info.getByRole("button", { name: "Vis mindre" }).click();
+      await expect(info).toBeHidden();
+      expect(errors).toEqual([]);
+    });
+  }
+
   // iOS #1600: calendar per room.
   const newEventDialog = async (page) => {
     await page.getByRole("link", { name: "Kalender", exact: true }).click();

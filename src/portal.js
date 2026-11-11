@@ -4238,6 +4238,21 @@ For å ha god dokumentasjon registrerer du dato, hvor du kjørte fra og til, hvo
 Greit å vite
 Reglene kan være annerledes dersom utleien din regnes som næringsvirksomhet. Beregningene i Enkel Utleie er derfor veiledende, og det er Skatteetatens regler som avgjør hva du faktisk har krav på.`;
 const mileageState = { year: null, infoOpen: false };
+// «Les mer» / «Vis mindre» for an info block (Kjørebok, Møbler og inventar). The top toggle and a
+// «Vis mindre» button at the bottom of the open text stay in sync with st.infoOpen.
+const infoToggle = (info, st) => {
+  const label = () => (st.infoOpen ? "Vis mindre" : "Les mer");
+  const set = (open) => {
+    st.infoOpen = open;
+    info.hidden = !open;
+    toggle.textContent = label();
+  };
+  const toggle = button(label(), "pt-btn-soft pt-btn-small", () => set(!st.infoOpen));
+  const bottom = button("Vis mindre", "pt-btn-soft pt-btn-small pt-info-less", () => set(false));
+  info.append(bottom);
+  info.hidden = !st.infoOpen;
+  return toggle;
+};
 
 const economyTiles = () => {
   const tiles = h("section", "pt-tiles");
@@ -4480,11 +4495,7 @@ const mileagePage = async (pid) => {
     h("p", "pt-prewrap", MILEAGE_INFO),
   );
   if (act.STATE_CAR_ALLOWANCE[year]) info.append(h("p", "pt-muted", `Statens kjøregodtgjørelse er ${act.orePerKmText(act.STATE_CAR_ALLOWANCE[year])} kr/km i ${year}. Den brukes ikke her.`));
-  const toggle = button(mileageState.infoOpen ? "Skjul" : "Les mer", "pt-btn-soft pt-btn-small", () => {
-    mileageState.infoOpen = !mileageState.infoOpen;
-    info.hidden = !mileageState.infoOpen;
-    toggle.textContent = mileageState.infoOpen ? "Skjul" : "Les mer";
-  });
+  const toggle = infoToggle(info, mileageState);
   const yearLabel = h("div", "pt-field pt-filter");
   const years = [];
   for (let y = thisYear; y >= Math.min(year, thisYear - 2); y--) years.push([String(y), String(y)]);
@@ -4756,11 +4767,7 @@ const assetsPage = async (pid) => {
       info.append(ul);
     } else info.append(h(tag === "muted" ? "p" : tag, tag === "muted" ? "pt-muted" : null, text));
   }
-  const toggle = button(assetState.infoOpen ? "Vis mindre" : "Les mer", "pt-btn-soft pt-btn-small", () => {
-    assetState.infoOpen = !assetState.infoOpen;
-    info.hidden = !assetState.infoOpen;
-    toggle.textContent = assetState.infoOpen ? "Vis mindre" : "Les mer";
-  });
+  const toggle = infoToggle(info, assetState);
   if (data.error) {
     head.append(actionsRow(toggle), info, inline("Kunne ikke laste eiendeler."));
     return [back, head];
