@@ -438,6 +438,37 @@ test.describe("portal", () => {
     }
   });
 
+  // iOS #1606 (RECURRING_TX_ICON): a post with series_id gets a «Gjentagende» capsule after its title.
+  test("recurring transactions show a «Gjentagende» capsule, one-off posts do not (iOS #1606)", async ({ page }) => {
+    const tx = (id, type, description, series) => ({
+      id, property_id: PROPERTY_ID, transaction_type: type, category: type === "income" ? "rent" : "other_expense", legacy_category: null,
+      amount_minor: 100_000, transaction_date: "2026-11-01", series_id: series, series_occurrence_date: series ? "2026-11-01" : null,
+      description, counterparty: null, maintenance_request_id: null, updated_at: "2026-11-01T10:00:00Z", voided_at: null,
+    });
+    const requests = [];
+    const { errors } = await openPortal(page, { requests, handover: { financial_transactions: [
+      tx("71000000-0000-4000-8000-000000000001", "income", "Husleie fast", "5e000000-0000-4000-8000-000000000001"),
+      tx("71000000-0000-4000-8000-000000000002", "expense", "Strøm fast", "5e000000-0000-4000-8000-000000000002"),
+      tx("71000000-0000-4000-8000-000000000003", "expense", "Maling engang", null),
+    ] } });
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    const row = (text) => page.locator("li.pt-row").filter({ hasText: text });
+    for (const text of ["Husleie fast", "Strøm fast"]) {
+      const badge = row(text).getByRole("img", { name: "Gjentagende" });
+      await expect(badge).toBeVisible();
+      await expect(badge).toHaveAttribute("title", "Gjentagende");
+      // Right after the title, on the same row.
+      await expect(row(text).locator(".pt-tx-title > strong + .pt-tx-recurring")).toHaveCount(1);
+      const box = await badge.boundingBox();
+      expect([Math.round(box.width), Math.round(box.height)]).toEqual([32, 22]);
+    }
+    await expect(row("Maling engang")).toBeVisible();
+    await expect(row("Maling engang").getByRole("img", { name: "Gjentagende" })).toHaveCount(0);
+    await expect(page.getByTestId("economy.transaction.recurring")).toHaveCount(2);
+    expect(requests.some((r) => r.path.endsWith("/financial_transactions") && /\bseries_id\b/.test(r.select ?? ""))).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
   // iOS #1600: calendar per room.
   const newEventDialog = async (page) => {
     await page.getByRole("link", { name: "Kalender", exact: true }).click();

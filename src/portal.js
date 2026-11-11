@@ -181,7 +181,7 @@ const transactions = (pid) =>
   cached(`tx:${pid}`, async () => {
     const yearStart = `${osloYear()}-01-01`;
     return supabase.from("financial_transactions")
-      .select("id, transaction_type, category, legacy_category, amount_minor, transaction_date, series_occurrence_date, description, counterparty, maintenance_request_id, updated_at")
+      .select("id, transaction_type, category, legacy_category, amount_minor, transaction_date, series_id, series_occurrence_date, description, counterparty, maintenance_request_id, updated_at")
       // As in the app (#1468): future-dated posts (e.g. a recurring series) are not shown yet.
       .eq("property_id", pid).is("voided_at", null).gte("transaction_date", yearStart).lte("transaction_date", todayISO())
       .order("transaction_date", { ascending: false }).limit(1000);
@@ -988,7 +988,18 @@ const transactionRow = (pid, r, docIds = []) => {
   const category = mileage ? null : act.categoryTitle(r);
   const title = mileage ? mileage.purpose || "Kjørebok" : transactionListTitle(r, txCategoryName(r));
   const sub = mileage ? [`${act.kilometerText(mileage.meters)} km`, dateText(r.transaction_date)] : [dateText(r.transaction_date), category];
-  main.append(h("strong", null, title), h("span", null, sub.join(" · ")));
+  // iOS #1606 (RECURRING_TX_ICON): a post from a series gets a small capsule right after its title.
+  const titleRow = h("div", "pt-tx-title");
+  titleRow.append(h("strong", null, title));
+  if (r.series_id != null) {
+    const badge = icon("repeat", "pt-tx-recurring");
+    badge.setAttribute("role", "img");
+    badge.setAttribute("aria-label", "Gjentagende");
+    badge.title = "Gjentagende";
+    badge.dataset.testid = "economy.transaction.recurring";
+    titleRow.append(badge);
+  }
+  main.append(titleRow, h("span", null, sub.join(" · ")));
   if (mileage) main.append(h("span", "pt-chip", "Kjørebok"));
   li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
     h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
