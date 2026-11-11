@@ -188,12 +188,37 @@ export function handoverTables(options = {}) {
 }
 // Calendar per room (iOS #1600): one shared event for three rooms.
 export const ROOM_EVENT_ID = "e9e9e9e9-e9e9-49e9-89e9-e9e9e9e9e9e9";
+// iOS #1607: three shared events with requires_response true, false and null (older payload).
+// No v2 room rows, so only the item's own flag decides whether a reply is asked for.
+export const RR_TRUE_ID = "c7c7c7c7-0000-4000-8000-000000000001";
+export const RR_FALSE_ID = "c7c7c7c7-0000-4000-8000-000000000002";
+export const RR_NULL_ID = "c7c7c7c7-0000-4000-8000-000000000003";
+export function requiresResponseTables() {
+  const base = {
+    property_id: PROPERTY_ID, tenancy_id: null, maintenance_request_id: null, description: null, item_type: "event",
+    category: "other", due_at: null, ends_at: null, all_day: false, visibility: "tenant_shared", status: "active",
+    tenant_response: null, tenant_response_comment: null, tenant_responded_at: null,
+  };
+  const items = [
+    { ...base, id: RR_TRUE_ID, title: "Røykvarslertest", starts_at: "2026-11-21T09:00:00Z", requires_response: true },
+    { ...base, id: RR_FALSE_ID, title: "Vannet stenges", starts_at: "2026-11-22T09:00:00Z", requires_response: false },
+    { ...base, id: RR_NULL_ID, title: "Søppeltømming", starts_at: "2026-11-23T09:00:00Z", requires_response: null },
+  ];
+  const shared = readyToEndTables();
+  return {
+    ...shared,
+    property_calendar_items: items,
+    rpc: { ...shared.rpc, list_calendar_items_for_property: items, list_calendar_item_responses: [], list_calendar_item_responses_v2: [] },
+  };
+}
+
 export function roomCalendarTables({ requiresResponse = true } = {}) {
   const item = {
     id: ROOM_EVENT_ID, property_id: PROPERTY_ID, tenancy_id: null, maintenance_request_id: null, title: "Felles vask",
     description: null, item_type: "event", category: "other", starts_at: "2026-11-20T09:00:00Z", due_at: null,
     ends_at: "2026-11-20T10:30:00Z", all_day: false, visibility: "tenant_shared", status: "active",
     tenant_response: "declined", tenant_response_comment: "Passer ikke", tenant_responded_at: "2026-11-10T10:00:00Z",
+    requires_response: requiresResponse,
   };
   const counts = requiresResponse
     ? { accepted_count: 1, declined_count: 1, unanswered_count: 1, recipient_count: 3 }

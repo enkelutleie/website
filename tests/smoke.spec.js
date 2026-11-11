@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -405,6 +405,38 @@ test.describe("portal", () => {
       expect(errors).toEqual([]);
     });
   }
+
+  // iOS #1607 (TENANT_UPCOMING_NO_RESPONSE): only requires_response === true waits for a reply.
+  test("null and false are info events: listed, but without waiting status (iOS #1607)", async ({ page }) => {
+    const { errors } = await openPortal(page, { handover: requiresResponseTables() });
+    await page.getByRole("link", { name: "Kalender", exact: true }).click();
+    const cardFor = (title) => page.locator(`a[href$="${title}"]`);
+    for (const id of [RR_TRUE_ID, RR_FALSE_ID, RR_NULL_ID]) await expect(cardFor(id).first()).toBeVisible();
+    await expect(cardFor(RR_TRUE_ID).first()).toContainText("Venter på godkjenning");
+    await expect(cardFor(RR_FALSE_ID).first()).not.toContainText("Venter på godkjenning");
+    await expect(cardFor(RR_NULL_ID).first()).not.toContainText("Venter på godkjenning");
+    await expect(page.getByText("Venter på godkjenning")).toHaveCount(1);
+    for (const [id, waits] of [[RR_TRUE_ID, true], [RR_FALSE_ID, false], [RR_NULL_ID, false]]) {
+      await page.goto(`/portal/#kalender/${id}`);
+      await expect(page.getByRole("button", { name: "Rediger", exact: true })).toBeVisible();
+      await expect(page.getByText("Venter på svar fra leietaker")).toHaveCount(waits ? 1 : 0);
+      await expect(page.getByText("Dette er informasjon. Ingen svar trengs.")).toHaveCount(waits ? 0 : 1);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  test("Endre hendelse starts «Krever svar» from requires_response === true (iOS #1607)", async ({ page }) => {
+    await openPortal(page, { handover: requiresResponseTables() });
+    for (const [id, on] of [[RR_TRUE_ID, true], [RR_FALSE_ID, false], [RR_NULL_ID, false]]) {
+      await page.goto(`/portal/#kalender/${id}`);
+      await page.getByRole("button", { name: "Rediger", exact: true }).click();
+      const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Endre hendelse" }) });
+      const toggle = dialog.getByRole("switch", { name: /Krever svar fra leietaker/ });
+      if (on) await expect(toggle).toBeChecked(); else await expect(toggle).not.toBeChecked();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+    }
+  });
 
   // iOS #1600: calendar per room.
   const newEventDialog = async (page) => {

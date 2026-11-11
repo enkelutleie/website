@@ -70,7 +70,8 @@ export const groupSummaries = (rows) => {
   for (const [id, list] of by) {
     const rooms = [...list].sort((a, b) => natural(String(a.unit_label ?? "").trim(), String(b.unit_label ?? "").trim()) || String(a.tenancy_id).localeCompare(String(b.tenancy_id)));
     const first = rooms[0];
-    const requiresResponse = first.requires_response !== false;
+    // TENANT_UPCOMING_NO_RESPONSE: only true asks for a reply; missing, null and false are info.
+    const requiresResponse = first.requires_response === true;
     const recipients = first.recipient_count ?? 0;
     const declined = first.declined_count ?? 0;
     const showsProgress = requiresResponse && recipients > 1;

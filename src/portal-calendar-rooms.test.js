@@ -66,6 +66,16 @@ test("summaries: counts, sorted rooms, progress only for more than one recipient
   assert.equal(acceptedCountText(1, 3), "1 av 3 har godtatt");
 });
 
+test("only requires_response === true asks for a reply; null, missing and false are info (iOS #1607)", () => {
+  for (const extra of [{ requires_response: null }, { requires_response: undefined }, { requires_response: false }, { requires_response: "true" }]) {
+    const s = groupSummaries([row("n", "t1", "Rom 1", null, { ...extra, recipient_count: 2 })]).get("n");
+    assert.deepEqual([s.requiresResponse, s.showsProgress, s.canPropose], [false, false, false]);
+  }
+  assert.equal(groupSummaries([row("y", "t1", "Rom 1", null, { recipient_count: 2 })]).get("y").requiresResponse, true);
+  const [info] = overlayManager([{ id: "n", tenant_response: "accepted", requires_response: null }], [row("n", "t1", "Rom 1", null, { requires_response: null })]);
+  assert.deepEqual([info.requires_response, info.tenant_response], [false, null]);
+});
+
 test("manager overlay: info clears answer, a partial decline is not a decline, maintenance untouched, null keeps legacy", () => {
   const items = [
     { id: "i", tenant_response: "declined" },
