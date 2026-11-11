@@ -3,6 +3,8 @@
 
 export const TOLL_TEXT = {
   settings: "Bompenger",
+  settingsTitle: "Innstillinger for kjørebok",
+  settingsSubtitle: "Velg biltype og hvilke bompenge-opplysninger som skal tas med.",
   vehicleType: "Biltype",
   fossil: "Fossil",
   electric: "Elbil",
