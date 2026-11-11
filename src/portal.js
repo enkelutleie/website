@@ -4591,16 +4591,33 @@ const mileagePage = async (pid) => {
   );
   if (act.STATE_CAR_ALLOWANCE[year]) info.append(h("p", "pt-muted", `Statens kjøregodtgjørelse er ${act.orePerKmText(act.STATE_CAR_ALLOWANCE[year])} kr/km i ${year}. Den brukes ikke her.`));
   const toggle = infoToggle(info, mileageState);
-  const yearLabel = h("div", "pt-field pt-filter");
+  // Magnus 2026-11-11 sketch: header row = year pill «2026 ⌄» + round gear (Innstillinger for kjørebok).
+  const toolbar = h("div", "pt-mileage-toolbar");
   const years = [];
   for (let y = thisYear; y >= Math.min(year, thisYear - 2); y--) years.push([String(y), String(y)]);
   const { el: yearPicker, input: select } = act.customSelect({ label: "År", options: years, value: String(year), floating: true });
   select.addEventListener("change", () => { mileageState.year = Number(select.value); render(); });
-  yearLabel.append(h("span", "pt-field-label", "År"), yearPicker);
-  head.append(actionsRow(toggle, isManager(pid) ? button("Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid, null, tollSettings)) : null), info, yearLabel);
+  const yearWrap = h("div", "pt-mileage-year");
+  yearWrap.append(yearPicker);
+  toolbar.append(yearWrap);
+  if (isManager(pid)) {
+    const gear = h("button", "pt-round-btn");
+    gear.type = "button";
+    gear.innerHTML = ICONS.cog;
+    gear.setAttribute("aria-label", TOLL_TEXT.settingsTitle);
+    gear.setAttribute("aria-haspopup", "dialog");
+    gear.dataset.testid = "mileage.settings.open";
+    // A failed settings read shows its note in the modal until a save succeeds.
+    const note = { error: tollRes?.error ? TOLL_TEXT.settingsError : null };
+    gear.addEventListener("click", () => openMileageSettings(tollSettings, note, gear));
+    toolbar.append(gear);
+  }
+  head.append(actionsRow(toggle), info);
+  const addRow = isManager(pid) ? actionsRow(button("+ Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid, null, tollSettings))) : null;
+  addRow?.classList.add("pt-mileage-add");
   if (res.error) {
     head.append(inline("Kunne ikke laste kjøreboka."));
-    return [back, head];
+    return [back, toolbar, head];
   }
   const trips = [...(res.data ?? [])].sort((a, b) => b.trip_date.localeCompare(a.trip_date) || String(b.created_at).localeCompare(String(a.created_at)));
   const meters = trips.reduce((a, t) => a + Number(t.distance_meters), 0);
@@ -4635,20 +4652,51 @@ const mileagePage = async (pid) => {
     }
     list.append(ul);
   }
-  // Magnus 2026-11-11: no separate Kilometerfradrag/Sum fradrag card; «Fradragsgrunnlag» above is km + bompenger.
-  const out = [back, head, grid];
-  if (isManager(pid)) out.push(mileageTollSettingsCard(tollSettings, tollRes?.error ? TOLL_TEXT.settingsError : null));
-  out.push(list);
-  return out;
+  // Magnus 2026-11-11: no Kilometerfradrag/Sum fradrag card («Fradragsgrunnlag» is km + bompenger) and
+  // no Bompenger card; the settings open from the gear. Order: info, three cards, «+ Legg til tur», «Alle turer».
+  return [back, toolbar, head, grid, addRow, list].filter(Boolean);
 };
 
-// MileageView.tollSettingsCard: «Biltype» Fossil/Elbil, «Bruker AutoPASS-brikke», «Ta med bompenger».
+// The gear's modal: «Innstillinger for kjørebok» with the Bompenger section. A native modal dialog
+// (showModal keeps focus inside); Esc or the round X closes it, and focus returns to the gear.
+const openMileageSettings = (settings, note, opener) => {
+  const dialog = h("dialog", "pt-modal pt-mileage-settings");
+  const box = h("div", "pt-modal-card");
+  const head = h("div", "pt-modal-head");
+  const title = h("h2", null, TOLL_TEXT.settingsTitle);
+  title.id = "pt-mileage-settings-title";
+  dialog.setAttribute("aria-labelledby", title.id);
+  const close = h("button", "pt-round-btn pt-modal-x");
+  close.type = "button";
+  close.innerHTML = ICONS.close;
+  close.setAttribute("aria-label", "Lukk");
+  head.append(title, close);
+  box.append(head, mileageTollSettingsSection(settings, note));
+  dialog.append(box);
+  document.body.append(dialog);
+  const done = () => {
+    if (dialog.open) dialog.close();
+    dialog.remove();
+    opener?.focus();
+  };
+  close.addEventListener("click", done);
+  dialog.addEventListener("cancel", (e) => { e.preventDefault(); done(); });
+  dialog.showModal();
+  close.focus();
+};
+
+// MileageView.tollSettingsCard (now in the gear's modal): «Biltype» Fossil/Elbil, «Bruker AutoPASS-brikke», «Ta med bompenger».
 // Each change is saved right away with set_mileage_toll_settings; a failure restores the controls.
-const mileageTollSettingsCard = (initial, initialError) => {
+const mileageTollSettingsSection = (initial, note) => {
+  const initialError = note.error;
   let current = { ...initial };
   let saving = false;
-  const c = card(TOLL_TEXT.settings, "car");
+  const c = h("section", "pt-toll-settings");
   c.dataset.testid = "mileage.tolls.settings";
+  const sectionHead = h("div", "pt-toll-settings-head");
+  const headText = h("div", "pt-toll-settings-text");
+  headText.append(h("strong", null, TOLL_TEXT.settings), h("p", "pt-muted", TOLL_TEXT.settingsSubtitle));
+  sectionHead.append(icon("tollGate"), headText);
   const status = h("p", "pt-muted pt-toll-error", initialError ?? "");
   status.hidden = !initialError;
   status.setAttribute("role", "status");
@@ -4703,13 +4751,16 @@ const mileageTollSettingsCard = (initial, initialError) => {
       status.hidden = false;
     } else {
       current = tollSettingsFrom(res.data);
+      note.error = null;
       // The page's forms read the same object, so «Legg til tur» uses the new settings right away.
       Object.assign(initial, current);
       state.cache.set("tollsettings", Promise.resolve({ data: res.data, error: null }));
     }
     sync();
   };
-  c.append(typeLabel, segmented, autopass.row, include.row, status);
+  const switches = h("div", "pt-toll-switches");
+  switches.append(autopass.row, include.row);
+  c.append(sectionHead, typeLabel, segmented, switches, status);
   sync();
   return c;
 };
