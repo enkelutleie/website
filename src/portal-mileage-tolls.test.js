@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_TOLL_SETTINGS, showsTollField, tollBreakdown, tollInputMinor, tollLabel, tollParams,
-  tollSettingsFrom, TOLL_TEXT, NEW_TRIP_TOLL_OPTIONS, tripTollMinor, tripTotalMinor,
+  tollSettingsFrom, TOLL_TEXT, NEW_TRIP_TOLL_OPTIONS, tripTollOptionsFrom, tripTollPrefParams, tripTollMinor, tripTotalMinor,
 } from "./portal-mileage-tolls.js";
 
 test("settings: defaults fossil, AutoPASS and include tolls; RPC row is mapped", () => {
@@ -61,4 +61,16 @@ test("årsoppgave: Kilometerfradrag, Bompenger only with an amount, Sum fradrag;
   assert.equal(values.Bompenger, "33,60 kr");
   assert.equal(values["Sum fradrag"], "173,60 kr");
   assert.deepEqual(sums([trip("t3", 7000, undefined)]).extraSums.map((s) => s[0]), ["Kilometerfradrag", "Sum fradrag"]);
+});
+
+test("per-trip choices (iOS #1619): stored values, null falls back to fossil/on/on, all three sent", () => {
+  assert.deepEqual(tripTollOptionsFrom(null), { vehicleType: "fossil", usesAutopass: true, includeTolls: true });
+  assert.deepEqual(tripTollOptionsFrom({ vehicle_type: null, uses_autopass: null, include_tolls: null }), { vehicleType: "fossil", usesAutopass: true, includeTolls: true });
+  assert.deepEqual(tripTollOptionsFrom({ vehicle_type: "electric", uses_autopass: false, include_tolls: false }), { vehicleType: "electric", usesAutopass: false, includeTolls: false });
+  assert.deepEqual(tripTollOptionsFrom({ vehicle_type: "diesel" }).vehicleType, "fossil");
+  assert.deepEqual(tripTollPrefParams({ vehicleType: "electric", usesAutopass: false, includeTolls: false }), {
+    requested_vehicle_type: "electric", requested_uses_autopass: false, requested_include_tolls: false,
+  });
+  assert.deepEqual(tripTollPrefParams(NEW_TRIP_TOLL_OPTIONS), { requested_vehicle_type: "fossil", requested_uses_autopass: true, requested_include_tolls: true });
+  assert.equal(TOLL_TEXT.tripOptionsTitle, "Innstillinger for kjørebok");
 });

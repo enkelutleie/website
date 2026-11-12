@@ -3,6 +3,7 @@
 
 export const TOLL_TEXT = {
   settings: "Bompenger",
+  tripOptionsTitle: "Innstillinger for kjørebok",
   tripOptionsSubtitle: "Disse valgene fylles inn automatisk for hver kjøretur, men kan endres ved behov.",
   vehicleType: "Biltype",
   fossil: "Fossil",
@@ -22,6 +23,20 @@ export const TOLL_MAX_MINOR = 1_000_000;
 export const DEFAULT_TOLL_SETTINGS = Object.freeze({ vehicleType: "fossil", usesAutopass: true, includeTolls: true });
 // Magnus 2026-11-12: every «Ny kjøretur» starts with these, whatever was chosen last time.
 export const NEW_TRIP_TOLL_OPTIONS = DEFAULT_TOLL_SETTINGS;
+
+// iOS #1619 (MILEAGE_TRIP_TOLL_PREFERENCES): a trip's own choices; each null/missing field on older
+// trips falls back to fossil / AutoPASS on / tolls on. vehicle_type is "fossil" or "electric".
+export const tripTollOptionsFrom = (trip) => ({
+  vehicleType: trip?.vehicle_type === "electric" ? "electric" : "fossil",
+  usesAutopass: trip?.uses_autopass !== false,
+  includeTolls: trip?.include_tolls !== false,
+});
+// The form always sends all three explicitly (create and correct).
+export const tripTollPrefParams = (o) => ({
+  requested_vehicle_type: o.vehicleType === "electric" ? "electric" : "fossil",
+  requested_uses_autopass: o.usesAutopass !== false,
+  requested_include_tolls: o.includeTolls !== false,
+});
 
 // get_/set_mileage_toll_settings return a list; a missing row or odd values fall back to defaults.
 export const tollSettingsFrom = (data) => {

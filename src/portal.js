@@ -15,7 +15,7 @@ import { transactionListTone } from "./portal-transaction-tone.js";
 import { createBellWaker } from "./portal-bell-wake.js";
 import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
 import { routeComposer, ROUTE_TEXT } from "./portal-mileage-route.js";
-import { DEFAULT_TOLL_SETTINGS, NEW_TRIP_TOLL_OPTIONS, showsTollField, tollBreakdown, tollInputMinor, tollLabel, tollParams, tollSettingsFrom, TOLL_TEXT, tripTollMinor, tripTotalMinor } from "./portal-mileage-tolls.js";
+import { tollBreakdown, tollInputMinor, tollLabel, tollParams, TOLL_TEXT, tripTollMinor, tripTollOptionsFrom, tripTollPrefParams, tripTotalMinor } from "./portal-mileage-tolls.js";
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
@@ -4469,13 +4469,14 @@ const annualPage = async (pid) => {
 // MileageComposerView (iOS #1613/#1614). Kilometer and «Bompenger (beregnet)» are filled from
 // Edge mileage-route v11 with the typed addresses (portal-mileage-route.js); both stay editable.
 // A hand-typed km or toll is never overwritten, and a hand edit is «Bompenger» (not «beregnet»).
-const mileageForm = (pid, trip, savedSettings = DEFAULT_TOLL_SETTINGS) => {
+const mileageForm = (pid, trip) => {
   const requestId = crypto.randomUUID();
   const preview = h("p", "pt-muted");
-  // A new trip gets its own options (Fossil, AutoPASS, tolls on); an edit keeps the saved settings,
-  // since trips store no vehicle type or AutoPASS of their own.
-  const tollSettings = trip ? savedSettings : { ...NEW_TRIP_TOLL_OPTIONS };
-  const tollShown = trip ? showsTollField(tollSettings, trip) : true;
+  // iOS #1619: each trip has its own Biltype / AutoPASS / «Ta med bompenger». A new trip starts as
+  // fossil / on / on; an edit starts from the trip's stored values (null → fossil / on / on).
+  // get_/set_mileage_toll_settings are not used.
+  const tollSettings = tripTollOptionsFrom(trip);
+  const tollShown = true;
   let showField = null;
   let wired = false;
   let refs = null;
@@ -4550,7 +4551,7 @@ const mileageForm = (pid, trip, savedSettings = DEFAULT_TOLL_SETTINGS) => {
     title: trip ? "Rediger kjøretur" : "Ny kjøretur",
     intro: trip ? "Lagret som utgift i regnskapet" : undefined,
     fields,
-    after: trip ? [preview] : [preview, tripTollOptions(tollSettings, () => {
+    after: [preview, h("div", "pt-trip-options-rule"), tripTollOptions(tollSettings, () => {
       showField?.("toll", tollSettings.includeTolls);
       route.optionsChanged();
       paint();
@@ -4567,7 +4568,7 @@ const mileageForm = (pid, trip, savedSettings = DEFAULT_TOLL_SETTINGS) => {
       if (!rateFor(v.date)) return "Ingen offisiell kilometresats for dette året.";
       if (tollShown && tollSettings.includeTolls && !tollInputMinor(v.toll).valid) return TOLL_TEXT.invalid;
       const values = { date: v.date, meters, purpose: v.purpose, from: v.from, to: v.to };
-      const tolls = tollParams({ settings: tollSettings, input: v.toll ?? "", estimated: route.state.tollEstimated, correcting: !!trip });
+      const tolls = { ...tollParams({ settings: tollSettings, input: v.toll ?? "", estimated: route.state.tollEstimated, correcting: !!trip }), ...tripTollPrefParams(tollSettings) };
       const res = trip ? await act.correctMileageTrip(trip.id, values, requestId, tolls) : await act.createMileageTrip(pid, values, requestId, tolls);
       if (res.error) return trip ? "Kunne ikke oppdatere turen." : "Kunne ikke lagre turen.";
       route.cancel();
@@ -4583,13 +4584,10 @@ const mileagePage = async (pid) => {
   const year = mileageState.year ?? thisYear;
   const back = h("a", "pt-back", "‹ Økonomi");
   back.href = "#okonomi";
-  const [res, zone, tollRes] = await Promise.all([
+  const [res, zone] = await Promise.all([
     cached(`mileage:${pid}:${year}`, () => act.listMileageTrips(pid, `${year}-01-01`, `${year + 1}-01-01`)),
     cached("tiltakssone", () => act.taxResidenceInTiltakssone(state.user.id)),
-    isManager(pid) ? cachedOk("tollsettings", () => act.mileageTollSettings()) : null,
   ]);
-  // Settings errors never block Kjørebok: the defaults are used and a short note is shown.
-  const tollSettings = tollRes && !tollRes.error ? tollSettingsFrom(tollRes.data) : { ...DEFAULT_TOLL_SETTINGS };
   const tiltakssone = zone === true;
   const head = card("Kjøregodtgjørelse", "car");
   head.append(h("p", "pt-muted", "Registrer kjøring i forbindelse med utleie, og få oversikt over fradragene dine."));
@@ -4612,7 +4610,7 @@ const mileagePage = async (pid) => {
   yearWrap.append(yearPicker);
   toolbar.append(yearWrap);
   head.append(actionsRow(toggle), info);
-  const addRow = isManager(pid) ? actionsRow(button("+ Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid, null, tollSettings))) : null;
+  const addRow = isManager(pid) ? actionsRow(button("+ Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid, null))) : null;
   addRow?.classList.add("pt-mileage-add");
   if (res.error) {
     head.append(inline("Kunne ikke laste kjøreboka."));
@@ -4646,7 +4644,7 @@ const mileagePage = async (pid) => {
       const toll = tripTollMinor(t);
       main.append(h("strong", null, route || t.purpose || "Kjøretur"), h("span", null, [dateText(t.trip_date), t.purpose, `${act.kilometerText(t.distance_meters)} km`, toll > 0 ? `${TOLL_TEXT.title} ${money(toll)}` : null].filter(Boolean).join(" · ")));
       li.append(icon("car", "pt-icon-circle is-tax"), main, h("span", "pt-amount is-expense", `−${money(tripTotalMinor(t))}`));
-      if (isManager(pid)) li.append(button("Rediger", "pt-btn-soft pt-btn-small", () => mileageForm(pid, t, tollSettings)));
+      if (isManager(pid)) li.append(button("Rediger", "pt-btn-soft pt-btn-small", () => mileageForm(pid, t)));
       ul.append(li);
     }
     list.append(ul);
@@ -4656,13 +4654,13 @@ const mileagePage = async (pid) => {
   return [back, toolbar, head, grid, addRow, list].filter(Boolean);
 };
 
-// Magnus 2026-11-12: «Ny kjøretur» ends with a light-blue card of options for this trip only:
-// «Biltype» Fossil | Elbil, «Bruker AutoPASS-brikke», «Ta med bompenger». They start as Fossil / on / on,
-// feed the mileage-route estimate and the toll field, and are never saved as defaults.
+// iOS #1619: «Ny kjøretur» and «Rediger kjøretur» end with a thin rule and a light-blue card «Innstillinger for
+// kjørebok»: «Biltype» Fossil | Elbil, «Bruker AutoPASS-brikke», «Ta med bompenger». They belong to this trip only,
+// feed the mileage-route estimate and the toll field, and are saved with the trip (never as defaults).
 const tripTollOptions = (options, onChange) => {
   const c = h("section", "pt-trip-options");
   c.dataset.testid = "mileage.trip.options";
-  c.append(h("p", "pt-muted pt-trip-options-text", TOLL_TEXT.tripOptionsSubtitle));
+  c.append(h("strong", "pt-trip-options-title", TOLL_TEXT.tripOptionsTitle), h("p", "pt-muted pt-trip-options-text", TOLL_TEXT.tripOptionsSubtitle));
   const typeLabel = h("p", "pt-field-label", TOLL_TEXT.vehicleType);
   typeLabel.id = `pt-trip-vehicle-${Math.random().toString(36).slice(2, 8)}`;
   const segmented = h("div", "pt-segmented");
