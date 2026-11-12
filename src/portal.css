@@ -250,6 +250,8 @@ svg { flex: none; }
 .pt-amount { font-weight: 600; font-variant-numeric: tabular-nums; }
 .pt-amount.is-income { color: var(--success); }
 .pt-amount.is-expense { color: var(--danger); }
+.pt-amount.is-tax { color: var(--tax); }
+.pt-amount.is-warning { color: var(--warning); }
 
 /* Table */
 .pt-table-wrap { overflow-x: auto; }

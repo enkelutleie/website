@@ -11,6 +11,7 @@ import { createFinnImport } from "./portal-finn.js";
 import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
 import { transactionListTitle } from "./portal-transaction-title.js";
+import { transactionListTone } from "./portal-transaction-tone.js";
 import { createBellWaker } from "./portal-bell-wake.js";
 import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
 import { routeComposer, ROUTE_TEXT } from "./portal-mileage-route.js";
@@ -1003,8 +1004,9 @@ const transactionRow = (pid, r, docIds = []) => {
   }
   main.append(titleRow, h("span", null, sub.join(" · ")));
   if (mileage) main.append(h("span", "pt-chip", "Kjørebok"));
-  li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${inc ? "is-success" : "is-danger"}`), main,
-    h("span", `pt-amount ${inc ? "is-income" : "is-expense"}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
+  const tone = transactionListTone(r);
+  li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${tone.icon}`), main,
+    h("span", `pt-amount ${tone.amount}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
   if (docIds.length) main.append(h("span", "pt-chip is-success", "Kvittering knyttet"));
   if (isManager(pid) && mileage) {
     // The trip owns this expense: it is changed in the mileage log, as in the app.
@@ -4285,7 +4287,7 @@ const economyTiles = () => {
   tile.append(icon("car", "pt-icon-circle is-tax"), h("strong", null, "Kjørebok"), h("p", null, "Logg turer. Beløpet blir en utgift i regnskapet."));
   const furniture = h("a", "pt-tile pt-tile-link");
   furniture.href = "#okonomi/mobler";
-  furniture.append(icon("sofa", "pt-icon-circle is-tax"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
+  furniture.append(icon("sofa", "pt-icon-circle is-warning"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
   const report = h("a", "pt-tile pt-tile-link");
   report.href = "#okonomi/arsoppgave";
   report.append(icon("doc", "pt-icon-circle is-tax"), h("strong", null, "Årsoppgave"), h("p", null, "Dokumentasjon av leieinntekter og utgifter"));
