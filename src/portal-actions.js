@@ -2814,7 +2814,6 @@ export async function correctMileageTrip(tripId, v, clientRequestId, tolls = {})
 }
 // Per-landlord toll settings (biltype, AutoPASS, «Ta med bompenger»). Errors never block Kjørebok.
 export const mileageTollSettings = () => supabase.rpc("get_mileage_toll_settings");
-export const saveMileageTollSettings = (params) => supabase.rpc("set_mileage_toll_settings", params);
 // ProfileRepository: tax_residence_tiltakssone picks 18,5 % instead of 22 %.
 export async function taxResidenceInTiltakssone(userId) {
   const { data } = await ownProfile(userId);

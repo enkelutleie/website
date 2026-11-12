@@ -154,3 +154,41 @@ test("out-of-range distance asks for km by hand", async () => {
   await answer({ data: { distanceMeters: 50 } });
   assert.deepEqual(c.state.error, { field: null, text: ROUTE_TEXT.unavailable });
 });
+
+test("trip options: a change re-asks for the toll with the new biltype, keeps km, and never touches a typed toll", async () => {
+  const opts = { vehicleType: "fossil", usesAutopass: true, includeTolls: true };
+  const { c, calls, flush, answer } = harness({ settings: opts });
+  c.editFrom("Oslo S"); c.editTo("Sandvika");
+  await flush();
+  await answer(ok);
+  opts.vehicleType = "electric";
+  c.optionsChanged();
+  assert.equal(c.state.toll, "");
+  assert.equal(c.state.km, "15,2");
+  await flush();
+  assert.equal(calls.at(-1).vehicle_type, "electric");
+  await answer({ data: { distanceMeters: 15234, toll_included: true, toll_amount_minor: 1300, toll_estimated: true } });
+  assert.equal(c.state.toll, "13,00");
+  opts.includeTolls = false;
+  c.optionsChanged();
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.equal(c.state.toll, "");
+  opts.includeTolls = true;
+  c.optionsChanged();
+  c.editToll("50");
+  opts.usesAutopass = false;
+  c.optionsChanged();
+  assert.equal(c.state.toll, "50");
+});
+
+test("an answer that arrives after «Ta med bompenger» was turned off fills no toll", async () => {
+  const opts = { vehicleType: "fossil", usesAutopass: true, includeTolls: true };
+  const { c, flush, answer } = harness({ settings: opts });
+  c.editFrom("Oslo S"); c.editTo("Sandvika");
+  await flush();
+  opts.includeTolls = false; // without optionsChanged: the guard still holds
+  await answer(ok);
+  assert.equal(c.state.toll, "");
+  assert.equal(c.state.km, "15,2");
+});

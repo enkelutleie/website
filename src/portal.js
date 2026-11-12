@@ -14,7 +14,7 @@ import { transactionListTitle } from "./portal-transaction-title.js";
 import { createBellWaker } from "./portal-bell-wake.js";
 import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
 import { routeComposer, ROUTE_TEXT } from "./portal-mileage-route.js";
-import { DEFAULT_TOLL_SETTINGS, showsTollField, tollBreakdown, tollInputMinor, tollLabel, tollParams, tollSettingsFrom, tollSettingsParams, TOLL_TEXT, tripTollMinor, tripTotalMinor } from "./portal-mileage-tolls.js";
+import { DEFAULT_TOLL_SETTINGS, NEW_TRIP_TOLL_OPTIONS, showsTollField, tollBreakdown, tollInputMinor, tollLabel, tollParams, tollSettingsFrom, TOLL_TEXT, tripTollMinor, tripTotalMinor } from "./portal-mileage-tolls.js";
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
@@ -4467,10 +4467,14 @@ const annualPage = async (pid) => {
 // MileageComposerView (iOS #1613/#1614). Kilometer and «Bompenger (beregnet)» are filled from
 // Edge mileage-route v11 with the typed addresses (portal-mileage-route.js); both stay editable.
 // A hand-typed km or toll is never overwritten, and a hand edit is «Bompenger» (not «beregnet»).
-const mileageForm = (pid, trip, tollSettings = DEFAULT_TOLL_SETTINGS) => {
+const mileageForm = (pid, trip, savedSettings = DEFAULT_TOLL_SETTINGS) => {
   const requestId = crypto.randomUUID();
   const preview = h("p", "pt-muted");
-  const tollShown = showsTollField(tollSettings, trip);
+  // A new trip gets its own options (Fossil, AutoPASS, tolls on); an edit keeps the saved settings,
+  // since trips store no vehicle type or AutoPASS of their own.
+  const tollSettings = trip ? savedSettings : { ...NEW_TRIP_TOLL_OPTIONS };
+  const tollShown = trip ? showsTollField(tollSettings, trip) : true;
+  let showField = null;
   let wired = false;
   let refs = null;
   const rateFor = (date) => act.MILEAGE_RATES[Number(String(date || "").slice(0, 4))];
@@ -4484,7 +4488,7 @@ const mileageForm = (pid, trip, tollSettings = DEFAULT_TOLL_SETTINGS) => {
     trip, settings: tollSettings, estimate: act.estimateMileageRoute, kmText: act.kilometerText, tollText: act.kronerOf,
     onUpdate: () => paint(),
   });
-  if (tollShown) fields.push({ name: "toll", label: tollLabel(route.state.tollEstimated), type: "money", value: route.state.toll, placeholder: "0,00", plainLabel: true });
+  if (tollShown) fields.push({ name: "toll", label: tollLabel(route.state.tollEstimated), type: "money", value: route.state.toll, placeholder: "0,00", plainLabel: true, hidden: !tollSettings.includeTolls });
   fields.push({ name: "purpose", label: "Formål", type: "textarea", value: trip?.purpose ?? "", maxLength: 200, placeholder: "F.eks. visning av leilighet, kjøp av materialer", required: true, requiredMessage: "Skriv inn formål." });
   const updatePreview = () => {
     if (!refs) return;
@@ -4544,9 +4548,14 @@ const mileageForm = (pid, trip, tollSettings = DEFAULT_TOLL_SETTINGS) => {
     title: trip ? "Rediger kjøretur" : "Ny kjøretur",
     intro: trip ? "Lagret som utgift i regnskapet" : undefined,
     fields,
-    after: [preview],
+    after: trip ? [preview] : [preview, tripTollOptions(tollSettings, () => {
+      showField?.("toll", tollSettings.includeTolls);
+      route.optionsChanged();
+      paint();
+    })],
     submitLabel: "Lagre tur",
-    onChange: (inputs) => {
+    onChange: (inputs, show) => {
+      showField = show;
       if (!wired) { wired = true; wire(inputs); }
       updatePreview();
     },
@@ -4600,18 +4609,6 @@ const mileagePage = async (pid) => {
   const yearWrap = h("div", "pt-mileage-year");
   yearWrap.append(yearPicker);
   toolbar.append(yearWrap);
-  if (isManager(pid)) {
-    const gear = h("button", "pt-round-btn");
-    gear.type = "button";
-    gear.innerHTML = ICONS.cog;
-    gear.setAttribute("aria-label", TOLL_TEXT.settingsTitle);
-    gear.setAttribute("aria-haspopup", "dialog");
-    gear.dataset.testid = "mileage.settings.open";
-    // A failed settings read shows its note in the modal until a save succeeds.
-    const note = { error: tollRes?.error ? TOLL_TEXT.settingsError : null };
-    gear.addEventListener("click", () => openMileageSettings(tollSettings, note, gear));
-    toolbar.append(gear);
-  }
   head.append(actionsRow(toggle), info);
   const addRow = isManager(pid) ? actionsRow(button("+ Legg til tur", "pt-btn-primary pt-btn-small", () => mileageForm(pid, null, tollSettings))) : null;
   addRow?.classList.add("pt-mileage-add");
@@ -4652,55 +4649,20 @@ const mileagePage = async (pid) => {
     }
     list.append(ul);
   }
-  // Magnus 2026-11-11: no Kilometerfradrag/Sum fradrag card («Fradragsgrunnlag» is km + bompenger) and
-  // no Bompenger card; the settings open from the gear. Order: info, three cards, «+ Legg til tur», «Alle turer».
+  // Magnus 2026-11-11/12: no Kilometerfradrag/Sum fradrag card («Fradragsgrunnlag» is km + bompenger), no
+  // Bompenger card and no gear; the options are per trip in «Ny kjøretur». Order: info, cards, «+ Legg til tur», «Alle turer».
   return [back, toolbar, head, grid, addRow, list].filter(Boolean);
 };
 
-// The gear's modal: «Innstillinger for kjørebok» with the Bompenger section. A native modal dialog
-// (showModal keeps focus inside); Esc or the round X closes it, and focus returns to the gear.
-const openMileageSettings = (settings, note, opener) => {
-  const dialog = h("dialog", "pt-modal pt-mileage-settings");
-  const box = h("div", "pt-modal-card");
-  const head = h("div", "pt-modal-head");
-  const title = h("h2", null, TOLL_TEXT.settingsTitle);
-  title.id = "pt-mileage-settings-title";
-  dialog.setAttribute("aria-labelledby", title.id);
-  const close = h("button", "pt-round-btn pt-modal-x");
-  close.type = "button";
-  close.innerHTML = ICONS.close;
-  close.setAttribute("aria-label", "Lukk");
-  head.append(title, close);
-  box.append(head, mileageTollSettingsSection(settings, note));
-  dialog.append(box);
-  document.body.append(dialog);
-  const done = () => {
-    if (dialog.open) dialog.close();
-    dialog.remove();
-    opener?.focus();
-  };
-  close.addEventListener("click", done);
-  dialog.addEventListener("cancel", (e) => { e.preventDefault(); done(); });
-  dialog.showModal();
-  close.focus();
-};
-
-// MileageView.tollSettingsCard (now in the gear's modal): «Biltype» Fossil/Elbil, «Bruker AutoPASS-brikke», «Ta med bompenger».
-// Each change is saved right away with set_mileage_toll_settings; a failure restores the controls.
-const mileageTollSettingsSection = (initial, note) => {
-  const initialError = note.error;
-  let current = { ...initial };
-  let saving = false;
-  const c = h("section", "pt-toll-settings");
-  c.dataset.testid = "mileage.tolls.settings";
-  const sectionHead = h("div", "pt-toll-settings-head");
-  const headText = h("p", "pt-muted pt-toll-settings-text", TOLL_TEXT.settingsSubtitle);
-  sectionHead.append(icon("cog"), headText);
-  const status = h("p", "pt-muted pt-toll-error", initialError ?? "");
-  status.hidden = !initialError;
-  status.setAttribute("role", "status");
+// Magnus 2026-11-12: «Ny kjøretur» ends with a light-blue card of options for this trip only:
+// «Biltype» Fossil | Elbil, «Bruker AutoPASS-brikke», «Ta med bompenger». They start as Fossil / on / on,
+// feed the mileage-route estimate and the toll field, and are never saved as defaults.
+const tripTollOptions = (options, onChange) => {
+  const c = h("section", "pt-trip-options");
+  c.dataset.testid = "mileage.trip.options";
+  c.append(h("p", "pt-muted pt-trip-options-text", TOLL_TEXT.tripOptionsSubtitle));
   const typeLabel = h("p", "pt-field-label", TOLL_TEXT.vehicleType);
-  typeLabel.id = "pt-toll-vehicle-label";
+  typeLabel.id = `pt-trip-vehicle-${Math.random().toString(36).slice(2, 8)}`;
   const segmented = h("div", "pt-segmented");
   segmented.setAttribute("role", "radiogroup");
   segmented.setAttribute("aria-labelledby", typeLabel.id);
@@ -4710,7 +4672,12 @@ const mileageTollSettingsSection = (initial, note) => {
     b.type = "button";
     b.setAttribute("role", "radio");
     b.dataset.value = value;
-    b.addEventListener("click", () => { if (current.vehicleType !== value) save({ ...current, vehicleType: value }); });
+    b.addEventListener("click", () => {
+      if (options.vehicleType === value) return;
+      options.vehicleType = value;
+      sync();
+      onChange();
+    });
     segmented.append(b);
     return b;
   });
@@ -4720,46 +4687,21 @@ const mileageTollSettingsSection = (initial, note) => {
     input.type = "checkbox";
     input.setAttribute("role", "switch");
     input.dataset.testid = testid;
-    input.addEventListener("change", () => save({ ...current, [key]: input.checked }));
+    input.checked = !!options[key];
+    input.addEventListener("change", () => { options[key] = input.checked; onChange(); });
     row.append(h("span", "pt-toll-switch-label", text), input);
-    return { row, input, key };
+    return row;
   };
-  const autopass = switchRow(TOLL_TEXT.autopass, "usesAutopass", "mileage.tolls.autopass");
-  const include = switchRow(TOLL_TEXT.include, "includeTolls", "mileage.tolls.include");
   const sync = () => {
     for (const b of segments) {
-      const on = b.dataset.value === current.vehicleType;
+      const on = b.dataset.value === options.vehicleType;
       b.classList.toggle("is-selected", on);
       b.setAttribute("aria-checked", on ? "true" : "false");
-      b.disabled = saving;
     }
-    for (const s of [autopass, include]) {
-      s.input.checked = !!current[s.key];
-      s.input.disabled = saving;
-    }
-  };
-  const save = async (next) => {
-    if (saving) return;
-    saving = true;
-    status.hidden = true;
-    sync();
-    const res = await act.saveMileageTollSettings(tollSettingsParams(next));
-    saving = false;
-    if (res.error) {
-      status.textContent = TOLL_TEXT.settingsError;
-      status.hidden = false;
-    } else {
-      current = tollSettingsFrom(res.data);
-      note.error = null;
-      // The page's forms read the same object, so «Legg til tur» uses the new settings right away.
-      Object.assign(initial, current);
-      state.cache.set("tollsettings", Promise.resolve({ data: res.data, error: null }));
-    }
-    sync();
   };
   const switches = h("div", "pt-toll-switches");
-  switches.append(autopass.row, include.row);
-  c.append(sectionHead, typeLabel, segmented, switches, status);
+  switches.append(switchRow(TOLL_TEXT.autopass, "usesAutopass", "mileage.tolls.autopass"), switchRow(TOLL_TEXT.include, "includeTolls", "mileage.tolls.include"));
+  c.append(typeLabel, segmented, switches);
   sync();
   return c;
 };

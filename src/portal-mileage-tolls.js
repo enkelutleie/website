@@ -3,8 +3,7 @@
 
 export const TOLL_TEXT = {
   settings: "Bompenger",
-  settingsTitle: "Innstillinger for kjørebok",
-  settingsSubtitle: "Endringer her vil gjelde for neste registrerte kjøretur. Tidligere turer påvirkes ikke, men kan redigeres manuelt.",
+  tripOptionsSubtitle: "Disse valgene fylles inn automatisk for hver kjøretur, men kan endres ved behov.",
   vehicleType: "Biltype",
   fossil: "Fossil",
   electric: "Elbil",
@@ -14,7 +13,6 @@ export const TOLL_TEXT = {
   estimated: "Bompenger (beregnet)",
   kilometerDeduction: "Kilometerfradrag",
   total: "Sum fradrag",
-  settingsError: "Kunne ikke oppdatere bompengeinnstillingene. Prøv igjen.",
   invalid: "Bompenger må være mellom 0 og 10 000 kr.",
   info: "Bompengene er et estimat og kan avvike litt fra AutoPASS-fakturaen, og bompenger som er med i kjøreboken, skal ikke føres under Utgifter i tillegg.",
 };
@@ -22,6 +20,8 @@ export const TOLL_TEXT = {
 export const TOLL_MAX_MINOR = 1_000_000;
 // Per landlord; fossil, AutoPASS and «Ta med bompenger» on by default.
 export const DEFAULT_TOLL_SETTINGS = Object.freeze({ vehicleType: "fossil", usesAutopass: true, includeTolls: true });
+// Magnus 2026-11-12: every «Ny kjøretur» starts with these, whatever was chosen last time.
+export const NEW_TRIP_TOLL_OPTIONS = DEFAULT_TOLL_SETTINGS;
 
 // get_/set_mileage_toll_settings return a list; a missing row or odd values fall back to defaults.
 export const tollSettingsFrom = (data) => {
@@ -33,11 +33,6 @@ export const tollSettingsFrom = (data) => {
     includeTolls: row.include_tolls !== false,
   };
 };
-export const tollSettingsParams = (s) => ({
-  requested_vehicle_type: s.vehicleType === "electric" ? "electric" : "fossil",
-  requested_uses_autopass: s.usesAutopass !== false,
-  requested_include_tolls: s.includeTolls !== false,
-});
 
 // «33,60» → 3360. Blank is null (no tolls); anything else must be 0–10 000 kr with at most two decimals.
 export const tollInputMinor = (text) => {

@@ -114,7 +114,7 @@ export function routeComposer({ trip = null, settings, estimate, kmText, tollTex
       return;
     }
     // The toll fills only while still not typed by hand (a late answer never overwrites it).
-    if (wantsToll && !tollManual) {
+    if (wantsToll && !tollManual && settings.includeTolls) {
       state.toll = out.toll ? tollText(out.toll.minor) : "";
       state.tollEstimated = !!out.toll?.estimated;
     }
@@ -141,6 +141,18 @@ export function routeComposer({ trip = null, settings, estimate, kmText, tollTex
     editTo(value) { invalidate(); state.to = value; schedule(); },
     editKm(value) { state.km = value; kmManual = true; kmAutomatic = false; state.error = null; },
     editToll(value) { tollManual = true; state.toll = value; state.tollEstimated = false; },
+    // The trip's own Biltype / AutoPASS / «Ta med bompenger» changed: drop the old estimate and ask
+    // again (unless the toll was typed by hand, or tolls are off). The km is kept.
+    optionsChanged() {
+      if (tollManual) return;
+      generation += 1;
+      if (timer != null) clearTimer(timer);
+      timer = null;
+      state.loading = false;
+      state.toll = "";
+      state.tollEstimated = false;
+      if (settings.includeTolls) schedule();
+    },
     cancel() { generation += 1; if (timer != null) clearTimer(timer); timer = null; state.loading = false; },
     get kmAutomatic() { return kmAutomatic; },
     get tollManual() { return tollManual; },
