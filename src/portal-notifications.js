@@ -55,7 +55,7 @@ const T = {
   "maintenance.created": "Ny vedlikeholdssak",
   "maintenance.reopened": "Vedlikeholdssaken er åpnet igjen",
   "maintenance.resolved": "Vedlikeholdssaken er løst",
-  "maintenance.scheduleChanged": "Utleier har foreslått en dato. Venter på godkjenning.",
+  "maintenance.scheduleChanged": "Det er satt en dato for vedlikehold i boligen.",
   "maintenance.scheduleChanged.shared": "Det er satt en dato for vedlikehold i boligen.",
   "maintenance.scheduleChanged.title": "Ny dato for vedlikehold",
   "maintenance.status": "Status endret til %@",
