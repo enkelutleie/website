@@ -663,7 +663,7 @@ test.describe("portal", () => {
     await dialog.getByLabel("Formål").fill("Visning");
     await dialog.getByRole("button", { name: "Lagre tur" }).click();
     await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
-    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_distance_meters: 15200, requested_toll_amount_minor: 3360, requested_toll_estimated: true });
+    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_distance_meters: 15200, requested_toll_amount_minor: 3360, requested_toll_estimated: true, requested_vehicle_type: "fossil", requested_uses_autopass: true, requested_include_tolls: true });
     expect(errors).toEqual([]);
   });
 
@@ -750,6 +750,7 @@ test.describe("portal", () => {
     const opts = optionsOf(dialog);
     await expect(opts).toBeVisible();
     await expect(opts).toContainText("Disse valgene fylles inn automatisk for hver kjøretur, men kan endres ved behov.");
+    await expect(opts.getByText("Innstillinger for kjørebok", { exact: true })).toBeVisible();
     await expect(opts.getByText("Biltype", { exact: true })).toBeVisible();
     await expect(opts.getByRole("radio", { name: "Fossil" })).toHaveAttribute("aria-checked", "true");
     await expect(opts.getByRole("radio", { name: "Elbil" })).toHaveAttribute("aria-checked", "false");
@@ -778,7 +779,7 @@ test.describe("portal", () => {
     await dialog.getByLabel("Formål").fill("Visning");
     await dialog.getByRole("button", { name: "Lagre tur" }).click();
     await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
-    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_toll_amount_minor: 1300, requested_toll_estimated: true });
+    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_toll_amount_minor: 1300, requested_toll_estimated: true, requested_vehicle_type: "electric", requested_uses_autopass: false, requested_include_tolls: true });
     expect(writes.some((w) => w.path.endsWith("/rpc/set_mileage_toll_settings"))).toBe(false);
     dialog = await newTrip(page);
     await expect(optionsOf(dialog).getByRole("radio", { name: "Fossil" })).toHaveAttribute("aria-checked", "true");
@@ -814,7 +815,7 @@ test.describe("portal", () => {
     await expect(dialog.getByText(/Beløp: .*\(.*kr\/km\)$/)).toBeVisible();
     await dialog.getByRole("button", { name: "Lagre tur" }).click();
     await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
-    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_toll_amount_minor: null, requested_toll_estimated: null });
+    expect(rpcBody(writes, "create_mileage_trip")).toMatchObject({ requested_toll_amount_minor: null, requested_toll_estimated: null, requested_vehicle_type: "fossil", requested_uses_autopass: true, requested_include_tolls: false });
     expect(writes.some((w) => w.path.endsWith("/rpc/set_mileage_toll_settings"))).toBe(false);
     expect(errors).toEqual([]);
   });
@@ -833,18 +834,63 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  test("Rediger kjøretur has no trip options card (trips store no biltype/AutoPASS)", async ({ page }) => {
-    await openMileage(page);
+  test("Rediger kjøretur shows the trip's own stored choices and sends them back with correct_mileage_trip (iOS #1619)", async ({ page }) => {
+    const ELECTRIC_ID = "7a000000-0000-4000-8000-000000000003";
+    const { writes, errors } = await openMileage(page, {
+      mileageRoute: ROUTE_BY_TYPE,
+      rpc: { list_mileage_trips: [...tollTrips(), tollTrip(ELECTRIC_ID, { to_place: "Elveien 4", vehicle_type: "electric", uses_autopass: false, include_tolls: true, toll_amount_minor: 1300, toll_estimated: true })] },
+    });
+    await page.locator("li.pt-row").filter({ hasText: "Elveien 4" }).getByRole("button", { name: "Rediger" }).click();
+    let dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    let opts = optionsOf(dialog);
+    await expect(opts.getByText("Innstillinger for kjørebok", { exact: true })).toBeVisible();
+    await expect(opts.getByRole("radio", { name: "Elbil" })).toHaveAttribute("aria-checked", "true");
+    await expect(opts.getByRole("switch", { name: "Bruker AutoPASS-brikke" })).not.toBeChecked();
+    await expect(opts.getByRole("switch", { name: "Ta med bompenger" })).toBeChecked();
+    await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("13,00");
+    await page.waitForTimeout(450);
+    expect(routeCalls(writes)).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "correct_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "correct_mileage_trip")).toMatchObject({
+      requested_trip_id: ELECTRIC_ID, requested_toll_amount_minor: 1300, requested_toll_estimated: true,
+      requested_vehicle_type: "electric", requested_uses_autopass: false, requested_include_tolls: true,
+    });
+    // An older trip with null choices opens as fossil / on / on, and a change re-estimates for that trip.
+    await page.goto("/portal/#okonomi/kjorebok");
     await page.locator("li.pt-row").filter({ hasText: "Bomveien 2" }).getByRole("button", { name: "Rediger" }).click();
-    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
-    await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("33,60");
-    await expect(optionsOf(dialog)).toHaveCount(0);
+    dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    opts = optionsOf(dialog);
+    await expect(opts.getByRole("radio", { name: "Fossil" })).toHaveAttribute("aria-checked", "true");
+    await expect(opts.getByRole("switch", { name: "Bruker AutoPASS-brikke" })).toBeChecked();
+    await expect(opts.getByRole("switch", { name: "Ta med bompenger" })).toBeChecked();
+    await opts.getByRole("radio", { name: "Elbil" }).click();
+    await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("13,00");
+    expect(routeCalls(writes).at(-1).body).toMatchObject({ from_address: "Hjemme", to_address: "Bomveien 2", tolls: true, vehicle_type: "electric" });
+    await expect(dialog.getByLabel("Kilometer")).toHaveValue("20");
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "correct_mileage_trip")?.requested_trip_id).toBe(TOLL_ID);
+    expect(rpcBody(writes, "correct_mileage_trip")).toMatchObject({ requested_vehicle_type: "electric", requested_uses_autopass: true, requested_include_tolls: true, requested_toll_amount_minor: 1300 });
+    expect(writes.some((w) => w.path.endsWith("/rpc/set_mileage_toll_settings"))).toBe(false);
+    expect(errors).toEqual([]);
   });
 
-  test("a failed toll settings read does not block Kjørebok (iOS #1613)", async ({ page }) => {
-    const { errors } = await openMileage(page, { fail: ["get_mileage_toll_settings"] });
-    await expect(page.locator("li.pt-row").filter({ hasText: "Bomveien 2" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Legg til tur" })).toBeEnabled();
+  test("Rediger with «Ta med bompenger» off sends include_tolls=false and clears the toll (iOS #1619)", async ({ page }) => {
+    const { writes } = await openMileage(page);
+    await page.locator("li.pt-row").filter({ hasText: "Bomveien 2" }).getByRole("button", { name: "Rediger" }).click();
+    const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    await optionsOf(dialog).getByRole("switch", { name: "Ta med bompenger" }).click();
+    await expect(dialog.getByLabel(/^Bompenger/)).toBeHidden();
+    await dialog.getByRole("button", { name: "Lagre tur" }).click();
+    await expect.poll(() => rpcBody(writes, "correct_mileage_trip")).toBeTruthy();
+    expect(rpcBody(writes, "correct_mileage_trip")).toMatchObject({ requested_include_tolls: false, requested_toll_amount_minor: 0, requested_toll_estimated: false, requested_vehicle_type: "fossil", requested_uses_autopass: true });
+  });
+
+  test("Kjørebok never reads or writes the global toll settings (iOS #1619)", async ({ page }) => {
+    const requests = [];
+    const { errors } = await openMileage(page, { requests });
+    await newTrip(page);
+    expect(requests.some((r) => r.path.includes("mileage_toll_settings"))).toBe(false);
     expect(errors).toEqual([]);
   });
 

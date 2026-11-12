@@ -674,6 +674,8 @@ svg { flex: none; }
 .pt-mileage-toolbar { display: flex; align-items: center; gap: var(--space-s); }
 .pt-mileage-year { width: 9rem; }
 .pt-trip-options { display: flex; flex-direction: column; gap: var(--space-s); background: var(--brand-soft); border-radius: var(--radius-md); padding: 16px; }
+.pt-trip-options-rule { height: 1px; background: var(--brand-border); }
+.pt-trip-options-title { font-size: var(--fs-subheadline); font-weight: 700; color: var(--ink); }
 .pt-trip-options-text { margin: 0; }
 .pt-trip-options .pt-field-label { margin: var(--space-s) 0 0; }
 .pt-trip-options .pt-segmented { display: flex; }
