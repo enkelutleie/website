@@ -673,26 +673,15 @@ svg { flex: none; }
 /* Kjørebok bompenger (iOS #1613). */
 .pt-mileage-toolbar { display: flex; align-items: center; gap: var(--space-s); }
 .pt-mileage-year { width: 9rem; }
-.pt-round-btn { display: inline-flex; width: 40px; height: 40px; flex: none; align-items: center; justify-content: center; border: 0; padding: 0; border-radius: 50%; background: var(--surface); box-shadow: var(--shadow-light); color: var(--brand); cursor: pointer; font: inherit; }
-.pt-round-btn svg { width: 20px; height: 20px; }
-.pt-round-btn:hover { background: var(--brand-soft); }
-.pt-round-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-.pt-modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-m); }
-.pt-modal-head h2 { margin: 0; }
-.pt-modal-x { width: 32px; height: 32px; background: var(--neutral-fill); color: var(--secondary-ink); box-shadow: none; }
-.pt-modal-x:hover { background: var(--neutral-fill); color: var(--ink); }
-.pt-modal-x svg { width: 16px; height: 16px; }
-.pt-mileage-settings { margin: auto; }
-.pt-toll-settings { display: flex; flex-direction: column; gap: var(--space-s); }
-.pt-toll-settings-head { display: flex; align-items: center; gap: var(--space-m); margin-bottom: var(--space-s); }
-.pt-toll-settings-head .pt-icon-circle { flex: none; }
-.pt-toll-settings-text { margin: 0; }
-.pt-toll-settings .pt-segmented { display: flex; }
-.pt-toll-settings .pt-segment { flex: 1; }
-.pt-toll-settings .pt-segment.is-selected { color: var(--brand); font-weight: 700; }
+.pt-trip-options { display: flex; flex-direction: column; gap: var(--space-s); background: var(--brand-soft); border-radius: var(--radius-md); padding: 16px; }
+.pt-trip-options-text { margin: 0; }
+.pt-trip-options .pt-field-label { margin: var(--space-s) 0 0; }
+.pt-trip-options .pt-segmented { display: flex; }
+.pt-trip-options .pt-segment { flex: 1; }
+.pt-trip-options .pt-segment.is-selected { color: var(--brand); font-weight: 700; }
+.pt-trip-options .pt-switch-row + .pt-switch-row { border-top-color: var(--brand-border); }
 .pt-toll-switches { display: flex; flex-direction: column; margin-top: var(--space-s); }
 .pt-mileage-add { margin-top: 0; }
 .pt-toll-switch { justify-content: space-between; cursor: pointer; padding: 10px 0; }
 .pt-toll-switch-label { color: var(--ink); }
-.pt-toll-error { margin: 0; }
 .pt-toll-switch .pt-check.pt-switch:checked { background: var(--brand); }

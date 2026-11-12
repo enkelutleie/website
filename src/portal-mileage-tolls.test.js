@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_TOLL_SETTINGS, showsTollField, tollBreakdown, tollInputMinor, tollLabel, tollParams,
-  tollSettingsFrom, tollSettingsParams, TOLL_TEXT, tripTollMinor, tripTotalMinor,
+  tollSettingsFrom, TOLL_TEXT, NEW_TRIP_TOLL_OPTIONS, tripTollMinor, tripTotalMinor,
 } from "./portal-mileage-tolls.js";
 
 test("settings: defaults fossil, AutoPASS and include tolls; RPC row is mapped", () => {
@@ -11,9 +11,7 @@ test("settings: defaults fossil, AutoPASS and include tolls; RPC row is mapped",
   assert.deepEqual(tollSettingsFrom(null), DEFAULT_TOLL_SETTINGS);
   assert.deepEqual(tollSettingsFrom([{ vehicle_type: "electric", uses_autopass: false, include_tolls: false }]), { vehicleType: "electric", usesAutopass: false, includeTolls: false });
   assert.deepEqual(tollSettingsFrom({ vehicle_type: "diesel" }), DEFAULT_TOLL_SETTINGS);
-  assert.deepEqual(tollSettingsParams({ vehicleType: "electric", usesAutopass: true, includeTolls: false }), {
-    requested_vehicle_type: "electric", requested_uses_autopass: true, requested_include_tolls: false,
-  });
+  assert.deepEqual(NEW_TRIP_TOLL_OPTIONS, { vehicleType: "fossil", usesAutopass: true, includeTolls: true });
 });
 
 test("toll input: kr text to øre, 0–10 000 kr", () => {
