@@ -471,6 +471,46 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
+  // Per-type colors on «Siste transaksjoner» / «Transaksjoner»: purple, gold, red, green.
+  test("transaction rows color icon and amount by type (Kjørebok, møbler, utgift, inntekt)", async ({ page }) => {
+    const tx = (id, over) => ({
+      id, property_id: PROPERTY_ID, transaction_type: "expense", category: "other_expense", legacy_category: null,
+      amount_minor: 100_000, transaction_date: "2026-11-01", series_id: null, series_occurrence_date: null,
+      description: "Post", counterparty: null, maintenance_request_id: null, updated_at: "2026-11-01T10:00:00Z", voided_at: null,
+      ...over,
+    });
+    const { errors } = await openPortal(page, { handover: { financial_transactions: [
+      tx("81000000-0000-4000-8000-000000000001", { transaction_type: "income", category: "rent", description: "Husleie farge" }),
+      tx("81000000-0000-4000-8000-000000000002", { description: "Maling farge" }),
+      tx("81000000-0000-4000-8000-000000000003", { category: "furnishings_equipment", description: "Sofa farge" }),
+      tx("81000000-0000-4000-8000-000000000004", { category: "other_expense", legacy_category: "furnishings_equipment", description: "Bord farge" }),
+      tx("81000000-0000-4000-8000-000000000005", { description: "Kjørebok · Hjemme – Testveien 1 · Visning · 20 km" }),
+    ] } });
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    const row = (text) => page.locator("li.pt-row").filter({ hasText: text });
+    const rgbOf = async (locator) => locator.evaluate((el) => getComputedStyle(el).color);
+    await expect(row("Husleie farge").locator(".pt-icon-circle")).toHaveClass(/is-success/);
+    await expect(row("Husleie farge").locator(".pt-amount")).toHaveClass(/is-income/);
+    expect(await rgbOf(row("Husleie farge").locator(".pt-amount"))).toBe("rgb(52, 199, 89)");
+    await expect(row("Maling farge").locator(".pt-icon-circle")).toHaveClass(/is-danger/);
+    await expect(row("Maling farge").locator(".pt-amount")).toHaveClass(/is-expense/);
+    expect(await rgbOf(row("Maling farge").locator(".pt-amount"))).toBe("rgb(255, 59, 48)");
+    for (const text of ["Sofa farge", "Bord farge"]) {
+      await expect(row(text).locator(".pt-icon-circle")).toHaveClass(/is-warning/);
+      await expect(row(text).locator(".pt-amount")).toHaveClass(/is-warning/);
+      expect(await rgbOf(row(text).locator(".pt-amount"))).toBe("rgb(255, 149, 0)");
+    }
+    const trip = row("Visning");
+    await expect(trip).toContainText("Kjørebok");
+    await expect(trip.locator(".pt-icon-circle")).toHaveClass(/is-tax/);
+    await expect(trip.locator(".pt-amount")).toHaveClass(/is-tax/);
+    expect(await rgbOf(trip.locator(".pt-amount"))).toBe("rgb(175, 82, 222)");
+    const furnitureTile = page.locator("a.pt-tile-link").filter({ hasText: "Møbler og inventar" });
+    await expect(furnitureTile.locator(".pt-icon-circle")).toHaveClass(/is-warning/);
+    expect(await rgbOf(furnitureTile.locator(".pt-icon-circle"))).toBe("rgb(255, 149, 0)");
+    expect(errors).toEqual([]);
+  });
+
   const furnitureAsset = (id, name) => ({
       id, property_id: PROPERTY_ID, name, item_kind: "loose_inventory", category: "furnishings", purchase_date: "2026-03-01",
       purchase_amount_minor: 1_500_000, useful_life_years: 5, life_under_three_years: false, counts_for_taxable_rental: true,
