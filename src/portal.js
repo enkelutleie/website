@@ -24,6 +24,7 @@ import * as hbCopy from "./portal-handbook-copy.js";
 import { manualOccupantsFor, OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 import { overviewShowsEvent } from "./portal-calendar-window.js";
+import { chatTitle, groupCounterpartCount, joinRosterNames, matchChatDestination, messagesForTenancy, showsSenderNames } from "./portal-chat.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
 // and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
@@ -2238,15 +2239,13 @@ const chatTime = (iso) => {
   if (day === yesterday) return `I går ${time}`;
   return `${d.toLocaleDateString("nb-NO", { day: "numeric", month: "short", timeZone: "Europe/Oslo" })} ${time}`;
 };
-const joinNames = (people) => {
-  const names = people.map((p) => p.display_name?.trim() || p.email?.trim()).filter(Boolean);
-  return names.length ? names.join(", ") : null;
-};
-// Who is on the other side of each row: tenants from tenancy_members + list_linked_profile_contacts
-// (SupabaseChatListPeopleRemote). The portal is landlord-only, so tenant chats are never listed.
+// Who is on the other side of each row: every accepted tenant on that tenancy
+// (tenancy_members + list_linked_profile_contacts). A new sender does not replace the others.
+// The portal is landlord-only, so tenant chats are never listed.
 async function chatPeople(convs) {
   const labels = new Map();
   const tenantPresent = new Map();
+  const rosterCounts = new Map();
   const managed = convs.filter((c) => c.role_snapshot !== "tenant" && !c.is_property_chat);
   if (managed.length) {
     const tenancyIds = [...new Set(managed.map((c) => c.tenancy_id))].sort();
@@ -2257,15 +2256,18 @@ async function chatPeople(convs) {
     const byUser = new Map(contacts.map((c) => [c.user_id, c]));
     for (const c of managed) {
       const people = rows.filter((m) => m.tenancy_id === c.tenancy_id).map((m) => byUser.get(m.user_id) ?? {});
-      if (!members.error) tenantPresent.set(c.conversation_id, people.length > 0);
-      const name = joinNames(people);
+      if (!members.error) {
+        tenantPresent.set(c.conversation_id, people.length > 0);
+        rosterCounts.set(c.conversation_id, people.length);
+      }
+      const name = joinRosterNames(people);
       if (name) labels.set(c.conversation_id, name);
     }
   }
-  return { labels, tenantPresent };
+  return { labels, tenantPresent, rosterCounts };
 }
 
-async function chatPage() {
+async function chatPage(destinationConversationId, destinationTenancyId) {
   const token = renderToken;
   // Provision is idempotent. A successful call covers the rest of the session; refresh clears it.
   if (state.cache.get("chats-provisioned") !== true) {
@@ -2290,9 +2292,17 @@ async function chatPage() {
       c.counterpart_avatars = avatarsByConversation.get(c.conversation_id);
     }
   }
-  const { labels, tenantPresent } = await chatPeople(convs);
+  const { labels, tenantPresent, rosterCounts } = await chatPeople(convs);
   if (token !== renderToken) return [];
-  const titleOf = (c) => (c.is_property_chat ? "Alle i boligen" : labels.get(c.conversation_id) ?? "Leietaker");
+  const threads = new Map();
+  const cursorMap = new Map();
+  const titleOf = (c) => chatTitle({
+    isPropertyChat: !!c.is_property_chat,
+    rosterName: labels.get(c.conversation_id) ?? null,
+    messages: threads.get(c.conversation_id) ?? [],
+    currentMemberId: c.member_id,
+    currentRole: c.role_snapshot,
+  });
   const placeOf = (c) => [c.property_display_name, c.unit_display_label].filter(Boolean).join(" · ");
   const needsInvite = (c) => !c.is_property_chat && c.conversation_status === "active" && tenantPresent.get(c.conversation_id) === false;
 
@@ -2337,16 +2347,15 @@ async function chatPage() {
     }
   };
 
-  let messages = [];
-  let cursors = [];
   let replyTo = null;
   let pendingFile = null;
   const loadThread = async (c) => {
     const [m, cur] = await Promise.all([act.listChatMessagesBefore(c.conversation_id, null, 50), act.listChatPeerCursors(c.conversation_id)]);
     if (m.error) return false;
-    messages = [...(m.data ?? [])].sort((a, b) => a.sequence_no - b.sequence_no);
-    cursors = cur.data ?? [];
-    const last = messages.at(-1)?.sequence_no;
+    const scoped = messagesForTenancy(m.data, c);
+    threads.set(c.conversation_id, scoped);
+    cursorMap.set(c.conversation_id, cur.data ?? []);
+    const last = scoped.at(-1)?.sequence_no;
     if (last && last > Number(c.last_seen_sequence_no ?? 0)) {
       const seen = await act.advanceChatSeen(c.conversation_id, last);
       if (!seen.error) { c.last_seen_sequence_no = last; c.unread_count = 0; }
@@ -2354,16 +2363,16 @@ async function chatPage() {
     return true;
   };
 
-  const bubble = (c, m, seenSeq) => {
+  const bubble = (c, m, seenSeq, namesOn, threadMessages) => {
     const mine = m.sender_member_id === c.member_id;
     if (m.is_system) return h("p", "pt-chat-system", m.body);
     const row = h("div", `pt-chat-msg ${mine ? "is-mine" : "is-theirs"}`);
     const b = h("div", "pt-bubble");
     const body = act.parseChatBody(m.body);
-    if (!mine) b.append(h("span", "pt-bubble-sender", m.sender_display_name_snapshot));
+    if ((namesOn || !mine) && m.sender_display_name_snapshot) b.append(h("span", "pt-bubble-sender", m.sender_display_name_snapshot));
     if (body.kind === "deleted") b.append(h("em", null, "Meldingen ble slettet"));
     else if (body.kind === "reply") {
-      const target = messages.find((x) => x.message_id === body.replyTo);
+      const target = threadMessages.find((x) => x.message_id === body.replyTo);
       const quoted = target ? act.parseChatBody(target.body) : null;
       b.append(h("span", "pt-bubble-quote", quoted && ["text", "reply"].includes(quoted.kind) ? quoted.text : quoted?.title ?? "Originalmeldingen er ikke tilgjengelig"), h("p", null, body.text));
     } else if (body.kind === "file") {
@@ -2376,7 +2385,7 @@ async function chatPage() {
     } else if (body.kind === "doc") b.append(pdfButton(body.title, "pt-btn-secondary pt-btn-small", () => act.documentPdf(body.documentId)));
     else b.append(h("p", null, body.text));
     const meta = h("span", "pt-bubble-meta", chatTime(m.sent_at));
-    if (mine && seenSeq >= m.sequence_no && m === messages.filter((x) => x.sender_member_id === c.member_id).at(-1)) meta.textContent += " · Sett";
+    if (mine && seenSeq >= m.sequence_no && m === threadMessages.filter((x) => x.sender_member_id === c.member_id).at(-1)) meta.textContent += " · Sett";
     b.append(meta);
     row.append(b);
     const actions = h("div", "pt-chat-msg-actions");
@@ -2457,6 +2466,8 @@ async function chatPage() {
   };
 
   const drawThread = (c, failed = false) => {
+    const messages = threads.get(c.conversation_id) ?? [];
+    const cursors = cursorMap.get(c.conversation_id) ?? [];
     const draft = thread.querySelector(".pt-chat-input")?.value ?? "";
     thread.replaceChildren();
     const head = h("header", "pt-chat-head");
@@ -2470,7 +2481,15 @@ async function chatPage() {
       scroller.append(e);
     }
     const seenSeq = Math.max(0, ...cursors.filter((x) => x.member_id !== c.member_id).map((x) => Number(x.last_seen_sequence_no)));
-    for (const m of messages) scroller.append(bubble(c, m, seenSeq));
+    const namesOn = showsSenderNames({
+      counterpartCount: groupCounterpartCount({
+        rosterCount: rosterCounts.get(c.conversation_id) ?? 0,
+        avatarCount: Array.isArray(c.counterpart_avatars) ? c.counterpart_avatars.length : 0,
+      }),
+      messages,
+      currentMemberId: c.member_id,
+    });
+    for (const m of messages) scroller.append(bubble(c, m, seenSeq, namesOn, messages));
     thread.append(scroller);
     if (c.conversation_status === "closed") thread.append(inline("Leieforholdet er avsluttet. Samtalen kan bare leses."));
     else if (needsInvite(c)) thread.append(inline("Inviter leietakeren for å chatte."));
@@ -2510,9 +2529,19 @@ async function chatPage() {
     drawList();
   };
 
+  const targeted = Boolean(destinationConversationId);
+  const destination = targeted ? matchChatDestination(convs, {
+    conversationId: destinationConversationId,
+    tenancyId: destinationTenancyId || null,
+    propertyId: p?.id ?? null,
+    scope: "manager",
+  }) : null;
   drawList();
-  const first = convs.find((c) => Number(c.unread_count) > 0) ?? convs[0];
-  open(first);
+  if (targeted && !destination) {
+    thread.replaceChildren(inline("Denne samtalen er ikke tilgjengelig for dette leieforholdet."));
+    return [shell];
+  }
+  open(destination ?? convs.find((c) => Number(c.unread_count) > 0) ?? convs[0]);
   return [shell];
 }
 
@@ -5550,7 +5579,7 @@ const PAGES = {
     return [await landlordContractCard(p)];
   },
   dokumenter: documentsPage,
-  async meldinger() { return chatPage(); },
+  async meldinger(sub, extra) { return chatPage(sub, extra); },
   async historikk(sub) {
     const p = property();
     if (!p) return [noProperty()];

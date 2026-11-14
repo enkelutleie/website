@@ -1,3 +1,5 @@
+import { chatDestinationHash } from "./portal-chat.js";
+
 // Bell rows: text and destination, ported from the iOS app (NotificationEventCopy,
 // TenancyTerminatedNotice and NotificationsView.destination(for:)). Pure functions,
 // no DOM and no Supabase, so the same rules can be checked outside the browser.
@@ -245,7 +247,7 @@ export function notificationRoute(n, scope) {
     if (dest === "inspection") return inspectionRoute(n);
     if (dest === "property") return "#oversikt";
     if (dest === "lease_contract") return "#leiekontrakt";
-    if (dest === "chat_conversation") return "#meldinger";
+    if (dest === "chat_conversation") return chatDestinationHash(n);
     if (dest === "deposit_settlement") return "#inn-utflytting/depositum";
   }
   switch (n.source_type) {

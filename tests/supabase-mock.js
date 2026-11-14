@@ -6,6 +6,12 @@ export const PROPERTY_ID = "22222222-2222-4222-8222-222222222222";
 export const PROPERTY_2_ID = "33333333-3333-4333-8333-333333333333";
 export const TENANCY_ID = "44444444-4444-4444-8444-444444444444";
 export const TENANT_ID = "55555555-5555-4555-8555-555555555555";
+export const CO_TENANT_ID = "55555555-5555-4555-8555-555555555556";
+export const PREV_TENANCY_ID = "44444444-4444-4444-8444-44444444aaa1";
+export const PREV_TENANT_ID = "55555555-5555-4555-8555-55555555aaa1";
+export const CUR_CONVERSATION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+export const PREV_CONVERSATION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccc01";
+export const GROUP_CHAT_SECRET = "Gammel hemmelighet fra forrige leieforhold";
 export const MAINTENANCE_ID = "66666666-6666-4666-8666-666666666666";
 
 const b64url = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -353,6 +359,12 @@ function rpcPayload(name, body, options = {}) {
       return pid === PROPERTY_ID ? [historyEntry] : [];
     case "list_my_chat_conversations_v2":
     case "list_my_chat_conversations": {
+      if (options.groupChat) {
+        return [
+          conversation,
+          { ...conversation, conversation_id: PREV_CONVERSATION_ID, tenancy_id: PREV_TENANCY_ID, conversation_status: "closed", is_writable: false, historical_read_eligible: true },
+        ];
+      }
       const second = { ...conversation, conversation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
       const rows = options.omitAvatars ? [conversation, second] : [conversation];
       if (!options.omitAvatars) return rows;
@@ -361,6 +373,28 @@ function rpcPayload(name, body, options = {}) {
         delete copy.counterpart_avatars;
         return copy;
       });
+    }
+    case "list_chat_messages_before": {
+      if (!options.groupChat) return [];
+      const id = body?.requested_conversation_id;
+      const row = (messageId, conv, tenancy, seq, sender, name, role, text, sent) => ({
+        message_id: messageId, conversation_id: conv, tenancy_id: tenancy, property_id: PROPERTY_ID,
+        sequence_no: seq, sender_member_id: sender, sender_display_name_snapshot: name,
+        sender_role_snapshot: role, body: text, sent_at: sent, is_system: false,
+      });
+      if (id === PREV_CONVERSATION_ID) {
+        return [row("11111111-1111-4111-8111-11111111110a", PREV_CONVERSATION_ID, PREV_TENANCY_ID, 1, "per-member", "Per Gammel", "tenant", GROUP_CHAT_SECRET, "2024-06-01T10:00:00Z")];
+      }
+      if (id === conversation.conversation_id) {
+        return [
+          row("11111111-1111-4111-8111-111111111101", conversation.conversation_id, TENANCY_ID, 1, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", "Kari Nordmann", "tenant", "Hei fra Kari", "2026-11-01T10:00:00Z"),
+          row("11111111-1111-4111-8111-111111111102", conversation.conversation_id, TENANCY_ID, 2, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2", "Ola Leietaker", "tenant", "Hei fra Ola", "2026-11-01T11:00:00Z"),
+          row("11111111-1111-4111-8111-111111111103", conversation.conversation_id, TENANCY_ID, 3, conversation.member_id, "Kari Utleier", "owner", "Hei fra utleier", "2026-11-01T12:00:00Z"),
+          row("11111111-1111-4111-8111-11111111110b", PREV_CONVERSATION_ID, PREV_TENANCY_ID, 1, "per-member", "Per Gammel", "tenant", GROUP_CHAT_SECRET, "2024-06-01T10:00:00Z"),
+          { message_id: "11111111-1111-4111-8111-11111111110c", tenancy_id: PREV_TENANCY_ID, property_id: PROPERTY_ID, sequence_no: 2, sender_member_id: "per-member", sender_display_name_snapshot: "Per Gammel", sender_role_snapshot: "tenant", body: GROUP_CHAT_SECRET, sent_at: "2024-06-02T10:00:00Z", is_system: false },
+        ];
+      }
+      return [];
     }
     case "list_chat_counterpart_avatars":
       return [{ user_id: TENANT_ID, avatar_revision: 1 }];
@@ -374,7 +408,12 @@ function rpcPayload(name, body, options = {}) {
         created_at: "2026-11-09T12:00:00Z",
       }];
     case "list_linked_profile_contacts":
-      return [{ user_id: TENANT_ID, display_name: "Ola Leietaker", email: "ola@example.com" }];
+      if (!options.groupChat) return [{ user_id: TENANT_ID, display_name: "Ola Leietaker", email: "ola@example.com" }];
+      return [
+        { user_id: CO_TENANT_ID, display_name: "Kari Nordmann", email: "kari.n@example.com" },
+        { user_id: TENANT_ID, display_name: "Ola Leietaker", email: "ola@example.com" },
+        { user_id: PREV_TENANT_ID, display_name: "Per Gammel", email: "per@example.com" },
+      ].filter((c) => !body?.requested_user_ids || body.requested_user_ids.includes(c.user_id));
     default:
       if (premium === false && name === "get_my_complimentary_access") return false;
       return [];
@@ -438,6 +477,13 @@ function respond(url, req, body, options) {
     }
     if (options.gallery && table === "property_images") source = galleryImageRows();
     if (options.handover && Object.prototype.hasOwnProperty.call(options.handover, table)) source = options.handover[table];
+    if (options.groupChat && table === "tenancy_members") {
+      source = [
+        { id: "kari-member-row", tenancy_id: TENANCY_ID, user_id: CO_TENANT_ID, role: "tenant", invitation_status: "accepted", valid_until: null },
+        ...tables.tenancy_members,
+        { id: "per-member-row", tenancy_id: PREV_TENANCY_ID, user_id: PREV_TENANT_ID, role: "tenant", invitation_status: "accepted", valid_until: null },
+      ];
+    }
     let rows = source.filter((row) => matches(row, url));
     if (options.premium === false && table === "subscription_entitlements") rows = [];
     const wantsObject = (req.headers().accept || "").includes("vnd.pgrst.object");
@@ -478,7 +524,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute, groupChat: options.groupChat,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),

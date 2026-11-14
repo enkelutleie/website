@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID } from "./supabase-mock.js";
+import { CUR_CONVERSATION_ID, GROUP_CHAT_SECRET, handoverImageBytes, handoverTables, installSupabase, PREV_CONVERSATION_ID, PREV_TENANCY_ID, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID, TENANCY_ID } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -1573,6 +1573,38 @@ test.describe("portal", () => {
     const files = requests.filter((entry) => entry.path.includes("profile-avatars"));
     expect(lookups).toHaveLength(2);
     expect(files).toHaveLength(1);
+  });
+
+  test("group chat stays on one tenancy and hides the previous lease", async ({ page }) => {
+    await openPortal(page, { groupChat: true });
+    const secret = page.getByText(GROUP_CHAT_SECRET);
+    const kari = page.getByText("Hei fra Kari");
+    await page.getByRole("link", { name: "Meldinger", exact: true }).click();
+    await expect(page.locator(".pt-chat-head h2")).toHaveText("Kari Nordmann, Ola Leietaker");
+    await expect(page.locator(".pt-chat-msg.is-theirs .pt-bubble-sender")).toHaveText(["Kari Nordmann", "Ola Leietaker"]);
+    await expect(page.locator(".pt-chat-msg.is-mine .pt-bubble-sender")).toHaveText("Kari Utleier");
+    await expect(kari).toBeVisible();
+    await expect(secret).toHaveCount(0);
+
+    await page.getByRole("button", { name: /Per Gammel/ }).click();
+    await expect(page.locator(".pt-chat-head h2")).toHaveText("Per Gammel");
+    await expect(secret).toBeVisible();
+    await expect(kari).toHaveCount(0);
+
+    await page.evaluate((hash) => { location.hash = hash; }, `#meldinger/${CUR_CONVERSATION_ID}/${TENANCY_ID}`);
+    await expect(page.locator(".pt-chat-head h2")).toHaveText("Kari Nordmann, Ola Leietaker");
+    await expect(kari).toBeVisible();
+    await expect(secret).toHaveCount(0);
+
+    await page.evaluate((hash) => { location.hash = hash; }, `#meldinger/${PREV_CONVERSATION_ID}/${TENANCY_ID}`);
+    await expect(page.getByText("Denne samtalen er ikke tilgjengelig for dette leieforholdet.")).toBeVisible();
+    await expect(secret).toHaveCount(0);
+    await expect(kari).toHaveCount(0);
+
+    await page.evaluate((hash) => { location.hash = hash; }, `#meldinger/${PREV_CONVERSATION_ID}/${PREV_TENANCY_ID}`);
+    await expect(page.locator(".pt-chat-head h2")).toHaveText("Per Gammel");
+    await expect(secret).toBeVisible();
+    await expect(kari).toHaveCount(0);
   });
 
   test("gallery images download at most four at a time", async ({ page }) => {
