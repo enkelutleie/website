@@ -317,7 +317,8 @@ const kpis = async (pid) => {
 // caller's own active tenancies decide, which is the same as before the shared calendar.
 // TENANT_UPCOMING_NO_RESPONSE (iOS #1607): only requires_response === true asks for a reply.
 // Missing, null and false are an info event: shown, but without reply buttons or waiting status.
-const calendarRequiresResponse = (item) => item?.requires_response === true;
+// A planned maintenance visit never asks for approval, even on an old row that still has the flag (iOS #1621).
+const calendarRequiresResponse = (item) => item?.requires_response === true && !item?.maintenance_request_id;
 const calendarCanRespond = (item, manager) => {
   if (manager || item.status !== "active" || !calendarRequiresResponse(item)) return false;
   if (typeof item.can_respond === "boolean") return item.can_respond;
@@ -561,10 +562,11 @@ const CALENDAR_UPCOMING_PREVIEW = 3;
 const CALENDAR_UPCOMING_PAGE = 6;
 
 // One row like CalendarItemRow (iOS): icon chip, bold title, badge, subtle date, category line.
-const calendarRow = (i, { now, hasTenant, manager }) => {
+const calendarRow = (i, { now, hasTenant, manager, highlightId }) => {
   const li = h("li");
   const a = h("a", "pt-cal-item");
   a.href = `#kalender/${i.id}`;
+  if (highlightId && i.id === highlightId) a.classList.add("is-highlighted");
   const overdue = calendarIsOverdue(i, now);
   const awaiting = manager && calendarAwaitsTenant(i, hasTenant);
   if (awaiting) a.classList.add("is-awaiting");
@@ -626,7 +628,7 @@ const calendarProposeForm = (item) => {
 // list_calendar_item_responses_v2 rows, or null when it is missing or failed (legacy answers stay).
 const calendarRoomRows = (pid) =>
   cachedOk(`calresp2:${pid}`, () => act.calendarRoomResponses(pid)).then((r) => (r.error ? null : r.data ?? [])).catch(() => null);
-const calendarCard = async (pid, full = false) => {
+const calendarCard = async (pid, full = false, focus = null) => {
   const c = card("Kalender", "calendar");
   const manager = isManager(pid);
   const [res, hasTenant, responses, roomRows] = await Promise.all([
@@ -655,7 +657,7 @@ const calendarCard = async (pid, full = false) => {
   const maxYear = Math.max(here.year + CALENDAR_YEAR_SPAN, ...itemYears);
   const years = [];
   for (let y = minYear; y <= maxYear; y++) years.push(y);
-  const ctx = { now, hasTenant, manager };
+  const ctx = { now, hasTenant, manager, highlightId: focus?.highlightId ?? null };
   const sameDay = (i, y, m, day) => {
     const p = itemOslo(i);
     return !!p && p.year === y && p.month - 1 === m && p.day === day;
@@ -665,6 +667,14 @@ const calendarCard = async (pid, full = false) => {
     return { y: d.getUTCFullYear(), m: d.getUTCMonth() };
   };
   let selected = null; // { y, m, d } after a day is tapped
+  if (focus?.highlightId) {
+    const hit = items.find((i) => i.id === focus.highlightId);
+    const p = hit ? itemOslo(hit) : null;
+    if (p) {
+      calendarView = { y: p.year, m: p.month - 1 };
+      selected = { y: p.year, m: p.month - 1, d: p.day };
+    }
+  }
   let showAll = false;
 
   const monthBox = h("div", "pt-cal-month");
@@ -2980,53 +2990,28 @@ const maintenanceDetail = async (pid, rid) => {
         overdue ? "Forfalt" : item.status === "completed" ? "Fullført" : "Aktiv"));
       row.append(pills);
       if (overdue && manager) row.append(h("p", "pt-mt-followup", "Vedlikeholdssaken trenger oppfølging. Den planlagte datoen har passert."));
-      const shared = !!item.tenancy_id && item.status === "active" && calendarRequiresResponse(item);
-      if (shared && manager) {
-        const resp = st.responses.get(item.id);
-        const decision = resp?.decision ?? item.tenant_response;
-        const comment = resp?.comment ?? item.tenant_response_comment;
-        if (decision === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker"));
-        else if (decision === "declined") {
-          row.append(responseBox("is-danger", "Avslått av leietaker", comment || "Svaret ligger i chatten."));
-          if (!finished()) {
-            const p = localParts(at);
-            const picker = mtPicker("Velg ny dato", p.date, p.time);
-            row.append(picker.wrap, actionsRow(button("Send ny dato til leietaker", "pt-btn-primary pt-btn-small", async (e) => {
-              const next = picker.value();
-              if (!next) return act.toast("Velg dato og klokkeslett.");
-              e.currentTarget.disabled = true;
-              const err = rpcError(await act.rescheduleMaintenanceVisit(item, next));
-              if (err) { e.currentTarget.disabled = false; return act.toast(err); }
-              await loadSchedule();
-              draw();
-              act.toast("Ny dato er sendt til leietaker.");
-            })));
-          }
-        } else row.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på den planlagte datoen ennå."));
-      } else if (calendarCanRespond(item, manager) && !finished()) {
-        if (item.tenant_response === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker"));
-        else if (item.tenant_response === "declined") row.append(responseBox("is-danger", "Avslaget er sendt i chat", item.tenant_response_comment || "Svaret ligger i chatten."));
-        else {
-          row.append(responseBox("is-warning", "Passer denne dagen?", "Godta hendelsen, eller avslå og skriv i chatten hvilken dag som passer bedre."));
-          const respond = async (decision, comment) => {
-            const res = await act.respondToCalendarItem(item.id, decision, comment);
-            if (res.error) return "Svaret kunne ikke sendes";
+      // «Endre tidspunkt» (iOS #1672): same picker as the first save, same calendar row.
+      if (manager && item.status === "active" && !finished()) {
+        const slot = h("div", "pt-mt-reschedule");
+        const openPicker = () => {
+          const p = localParts(at);
+          const picker = mtPicker("Tidspunkt", p.date, p.time);
+          const save = button("Lagre tidspunkt", "pt-btn-primary pt-btn-small", async (e) => {
+            const next = picker.value();
+            if (!next) return act.toast("Velg dato og klokkeslett.");
+            e.currentTarget.disabled = true;
+            const err = rpcError(await act.rescheduleMaintenanceVisit(item, next));
+            if (err) { e.currentTarget.disabled = false; return act.toast(err); }
+            state.cache.delete(`cal:${pid}`);
             await loadSchedule();
             draw();
-            // iOS #1514: accepting a planned maintenance date shows no «Du har godtatt hendelsen».
-            if (decision === "declined") act.toast("Avslaget er sendt i chat");
-            return null;
-          };
-          row.append(actionsRow(
-            button("Godta", "pt-btn-primary pt-btn-small", async () => { const err = await respond("accepted"); if (err) act.toast(err); }),
-            button("Avslå", "pt-btn-secondary pt-btn-small", () => act.openForm({
-              title: "Avslå hendelsen",
-              fields: [{ name: "comment", label: "Kommentar", type: "textarea", rows: 3, maxLength: 1000, placeholder: "Hvilken dag passer bedre?", help: "Kommentaren sendes til utleier i chat, så dere kan avtale en annen dag der." }],
-              submitLabel: "Send avslag",
-              onSubmit: (v) => respond("declined", v.comment),
-            })),
-          ));
-        }
+            act.toast("Tidspunktet er oppdatert.");
+          });
+          slot.replaceChildren(picker.wrap, actionsRow(save, button("Avbryt", "pt-btn-secondary pt-btn-small", () => slot.replaceChildren(change))));
+        };
+        const change = button("Endre tidspunkt", "pt-btn-secondary pt-btn-small", openPicker);
+        slot.append(change);
+        row.append(slot);
       }
       // Title, date, description and category of the planned date (update_calendar_item).
       if (manager && item.status === "active" && !finished()) {
@@ -5458,6 +5443,11 @@ const PAGES = {
     return [intro, tiles];
   },
   async kalender(sub, extra) {
+    // #kalender/vis/<hendelse>: overview with that day selected and the row highlighted.
+    if (sub === "vis") {
+      const p = property();
+      return p ? [await calendarCard(p.id, true, { highlightId: extra })] : [noProperty()];
+    }
     if (sub) return calendarDetail(sub, extra);
     const p = property();
     return p ? [await calendarCard(p.id, true)] : [noProperty()];
@@ -5862,7 +5852,7 @@ const redrawCalendar = async (pid) => {
   const token = renderToken;
   const [id, sub, extra] = calendarRoute();
   const y = window.scrollY;
-  if (id === "kalender" && sub) {
+  if (id === "kalender" && sub && sub !== "vis") {
     if (editingIn(content) || document.querySelector("dialog[open]")) return;
     calendarItems(pid); // the list the detail reuses (one RPC), so it is not asked for twice
     const nodes = await calendarDetail(sub, extra);
@@ -5871,7 +5861,7 @@ const redrawCalendar = async (pid) => {
   } else {
     const old = content.querySelector(`[data-calendar-card="${CSS.escape(pid)}"]`);
     if (!old) return;
-    const next = await calendarCard(pid, old.dataset.calendarFull === "1");
+    const next = await calendarCard(pid, old.dataset.calendarFull === "1", sub === "vis" ? { highlightId: extra } : null);
     if (token !== renderToken || !old.isConnected) return;
     // Keep focus on the same control (e.g. a day or the month arrows) after the swap.
     const focusables = (el) => [...el.querySelectorAll("a[href], button")];
@@ -6072,6 +6062,7 @@ const render = async () => {
   }
   if (token !== renderToken) return;
   content.replaceChildren(...nodes);
+  content.querySelector(".pt-cal-item.is-highlighted")?.scrollIntoView({ block: "center" });
 };
 
 const selectProperty = (id, rerender = true) => {

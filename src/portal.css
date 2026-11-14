@@ -224,6 +224,7 @@ svg { flex: none; }
 .pt-cal-item { display: flex; align-items: flex-start; gap: var(--space-m); padding: 10px 4px; border-radius: var(--radius-sm); color: inherit; text-decoration: none; transition: background-color var(--ease); }
 .pt-cal-item:hover { background: var(--soft-surface); }
 .pt-cal-item.is-awaiting { opacity: .78; }
+.pt-cal-item.is-highlighted { background: var(--brand-soft); }
 .pt-cal-item-icon { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--radius-sm); background: var(--brand-soft); color: var(--brand); }
 .pt-cal-item-icon svg { width: 18px; height: 18px; }
 .pt-cal-item-icon.is-overdue { background: var(--danger-soft); color: var(--danger); }

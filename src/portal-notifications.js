@@ -58,6 +58,7 @@ const T = {
   "maintenance.scheduleChanged": "Det er satt en dato for vedlikehold i boligen.",
   "maintenance.scheduleChanged.shared": "Det er satt en dato for vedlikehold i boligen.",
   "maintenance.scheduleChanged.title": "Ny dato for vedlikehold",
+  "maintenance.rescheduled.title": "Nytt tidspunkt for vedlikehold",
   "maintenance.status": "Status endret til %@",
   "maintenance.comment": "Ny kommentar: %@",
   "maintenance.followUp": "Vedlikeholdssaken trenger oppfølging. Den planlagte datoen har passert.",
@@ -91,9 +92,25 @@ const personName = (raw, fallback) => {
 const isoDay = (value) => /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? "").trim());
 const isBothSigned = (n) => n.notification_type === "lease_contract_tenant_signed" && BOTH_SIGNED_SERVER_TITLES.has((n.title ?? "").trim());
 
+// rescheduled:<UTC ISO> is a moved visit. Anything else, including a bare ISO, is the first date.
+// The case title is never copied into the title or the body.
+const rescheduledAt = (summary) => {
+  const raw = String(summary ?? "").trim();
+  if (!raw.startsWith("rescheduled:")) return null;
+  const d = new Date(raw.slice("rescheduled:".length));
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+const osloStamp = (d) => {
+  const date = new Intl.DateTimeFormat("nb-NO", { timeZone: "Europe/Oslo", day: "numeric", month: "short", year: "numeric" }).format(d);
+  const time = new Intl.DateTimeFormat("nb-NO", { timeZone: "Europe/Oslo", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+  return `${date} kl. ${time}`;
+};
+
 export function notificationTitle(n) {
   const type = n.notification_type;
-  if (type === "maintenance_schedule_changed") return T["maintenance.scheduleChanged.title"];
+  if (type === "maintenance_schedule_changed") {
+    return rescheduledAt(n.summary) ? T["maintenance.rescheduled.title"] : T["maintenance.scheduleChanged.title"];
+  }
   if (type === "lease_contract_change_accepted" && n.summary === "revision") return T["lease.revision.acceptedSigned.title"];
   if (type === "lease_contract_change_requested" && n.summary === "revision") return T["lease.revision.proposed.title"];
   if (type === "lease_contract_awaiting_signature") return T["lease.received.title"];
@@ -122,7 +139,11 @@ export function notificationText(n, scope, reasons = []) {
     case "tenancy_cancelled": return T["tenancy.cancelled"];
     case "maintenance_created": return T["maintenance.created"];
     // iOS #1521: a reader who cannot open the case gets the calendar item, not the approval text.
-    case "maintenance_schedule_changed": return T[n.destination_type === "calendar_item" ? "maintenance.scheduleChanged.shared" : "maintenance.scheduleChanged"];
+    case "maintenance_schedule_changed": {
+      const moved = rescheduledAt(s);
+      if (moved) return `Tidspunktet for vedlikehold i boligen er endret til ${osloStamp(moved)}.`;
+      return T[n.destination_type === "calendar_item" ? "maintenance.scheduleChanged.shared" : "maintenance.scheduleChanged"];
+    }
     case "maintenance_status_changed":
       if (s === "follow_up") return T["maintenance.followUp"];
       return fill("maintenance.status", MAINTENANCE_STATUS[s] ?? "en ny verdi");
@@ -205,10 +226,15 @@ export function notificationRoute(n, scope) {
   if (type === "rent_payment_reported" || type === "tenancy_invitation_accepted") return "#oversikt";
   if (type === "inspection_finalized" && n.summary === "move_out") return "#inn-utflytting/depositum";
   if (scope === "manager" && type === "deposit_settlement_accepted" && n.tenancy_id) return "#inn-utflytting";
-  // Tenant schedule rows name the calendar item in source_id; destination stays the case,
-  // which is opened instead when the item is gone (#kalender/<item>/<case>).
-  if (type === "maintenance_schedule_changed" && scope === "tenant" && n.tenancy_id && dest === "maintenance_request" && did) {
-    return n.source_id ? `#kalender/${n.source_id}/${did}` : `#vedlikehold/${did}`;
+  // maintenance_schedule_changed opens the calendar overview with the visit highlighted
+  // (iOS #1670/#1672). A case landlord still opens the case. An older tenant payload
+  // without source_id still opens the case.
+  if (type === "maintenance_schedule_changed") {
+    const itemId = dest === "calendar_item" ? did : n.source_id;
+    if (scope === "tenant") {
+      if (itemId) return `#kalender/vis/${itemId}`;
+      if (dest === "maintenance_request" && did) return `#vedlikehold/${did}`;
+    } else if (dest === "calendar_item" && did) return `#kalender/vis/${did}`;
   }
   if (DEPOSIT_TYPES.has(type)) return "#inn-utflytting/depositum";
   if (dest === "move_out_process" || MOVE_OUT_TYPES.has(type)) return n.tenancy_id ? "#inn-utflytting/utflytting" : "#oversikt";

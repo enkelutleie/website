@@ -2023,16 +2023,30 @@ export const scheduleMaintenanceVisit = (request, startsAt) =>
     requested_starts_at: iso(startsAt), requested_due_at: null, requested_ends_at: null,
     requested_all_day: false, requested_shared_with_property: false,
   });
-// Reschedule keeps the item and its duration; the server resets the tenant's answer.
+// «Endre tidspunkt» (iOS #1672): the same row, shifted ends_at, event/maintenance, not a new item.
+export function maintenanceRescheduleParams(item, startsAt) {
+  const startIso = iso(startsAt);
+  const start = new Date(startIso);
+  const prevStart = item?.starts_at ? new Date(item.starts_at) : null;
+  const prevEnd = item?.ends_at ? new Date(item.ends_at) : null;
+  const span = prevStart && prevEnd && !Number.isNaN(prevStart.getTime()) && !Number.isNaN(prevEnd.getTime())
+    ? prevEnd.getTime() - prevStart.getTime() : null;
+  const ends = span != null && !Number.isNaN(start.getTime())
+    ? new Date(start.getTime() + span).toISOString().replace(/\.\d{3}Z$/, "Z") : null;
+  return {
+    requested_calendar_item_id: item.id,
+    requested_title: item.title,
+    requested_description: item.description ?? null,
+    requested_item_type: "event",
+    requested_category: "maintenance",
+    requested_starts_at: startIso,
+    requested_due_at: null,
+    requested_ends_at: ends,
+    requested_all_day: false,
+  };
+}
 export function rescheduleMaintenanceVisit(item, startsAt) {
-  const start = new Date(iso(startsAt));
-  const ends = item.ends_at && item.starts_at ? new Date(start.getTime() + (new Date(item.ends_at) - new Date(item.starts_at))) : null;
-  return supabase.rpc("update_calendar_item", {
-    requested_calendar_item_id: item.id, requested_title: item.title, requested_description: item.description,
-    requested_item_type: item.item_type, requested_category: item.category,
-    requested_starts_at: iso(startsAt), requested_due_at: item.due_at,
-    requested_ends_at: ends ? ends.toISOString().replace(/\.\d{3}Z$/, "Z") : null, requested_all_day: item.all_day,
-  });
+  return supabase.rpc("update_calendar_item", maintenanceRescheduleParams(item, startsAt));
 }
 // One calendar item for #kalender/<id> (CalendarView detail). RLS decides who may read it.
 export const calendarItem = (itemId) =>
