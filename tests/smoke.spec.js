@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, HANDOVER_IN_ID, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -472,7 +472,7 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  // Per-type colors on «Siste transaksjoner» / «Transaksjoner»: purple, gold, red, green.
+  // Per-type colors on «Siste transaksjoner» / «Transaksjoner»: blue, yellow, red, green.
   test("transaction rows color icon and amount by type (Kjørebok, møbler, utgift, inntekt)", async ({ page }) => {
     const tx = (id, over) => ({
       id, property_id: PROPERTY_ID, transaction_type: "expense", category: "other_expense", legacy_category: null,
@@ -497,18 +497,21 @@ test.describe("portal", () => {
     await expect(row("Maling farge").locator(".pt-amount")).toHaveClass(/is-expense/);
     expect(await rgbOf(row("Maling farge").locator(".pt-amount"))).toBe("rgb(255, 59, 48)");
     for (const text of ["Sofa farge", "Bord farge"]) {
-      await expect(row(text).locator(".pt-icon-circle")).toHaveClass(/is-warning/);
-      await expect(row(text).locator(".pt-amount")).toHaveClass(/is-warning/);
-      expect(await rgbOf(row(text).locator(".pt-amount"))).toBe("rgb(255, 149, 0)");
+      await expect(row(text).locator(".pt-icon-circle")).toHaveClass(/is-furnishings/);
+      await expect(row(text).locator(".pt-amount")).toHaveClass(/is-furnishings/);
+      expect(await rgbOf(row(text).locator(".pt-amount"))).toBe("rgb(219, 158, 33)");
     }
     const trip = row("Visning");
     await expect(trip).toContainText("Kjørebok");
-    await expect(trip.locator(".pt-icon-circle")).toHaveClass(/is-tax/);
-    await expect(trip.locator(".pt-amount")).toHaveClass(/is-tax/);
-    expect(await rgbOf(trip.locator(".pt-amount"))).toBe("rgb(175, 82, 222)");
+    await expect(trip.locator(".pt-icon-circle")).toHaveClass(/is-mileage/);
+    await expect(trip.locator(".pt-amount")).toHaveClass(/is-mileage/);
+    expect(await rgbOf(trip.locator(".pt-amount"))).toBe("rgb(0, 136, 255)");
     const furnitureTile = page.locator("a.pt-tile-link").filter({ hasText: "Møbler og inventar" });
-    await expect(furnitureTile.locator(".pt-icon-circle")).toHaveClass(/is-warning/);
-    expect(await rgbOf(furnitureTile.locator(".pt-icon-circle"))).toBe("rgb(255, 149, 0)");
+    await expect(furnitureTile.locator(".pt-icon-circle")).toHaveClass(/is-furnishings/);
+    expect(await rgbOf(furnitureTile.locator(".pt-icon-circle"))).toBe("rgb(219, 158, 33)");
+    const mileageTile = page.locator("a.pt-tile-link").filter({ hasText: "Kjørebok" });
+    await expect(mileageTile.locator(".pt-icon-circle")).toHaveClass(/is-mileage/);
+    expect(await rgbOf(mileageTile.locator(".pt-icon-circle"))).toBe("rgb(0, 136, 255)");
     expect(errors).toEqual([]);
   });
 
@@ -660,7 +663,7 @@ test.describe("portal", () => {
     await expect(dialog.getByLabel("Kilometer")).toHaveValue("15,2");
     await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("33,60");
     expect(routeCalls(writes)).toHaveLength(1);
-    expect(routeCalls(writes)[0].body).toEqual({ from_address: "Oslo S", to_address: "Sandvika", tolls: true, vehicle_type: "fossil", uses_autopass: true });
+    expect(routeCalls(writes)[0].body).toEqual({ from_address: "Oslo S", to_address: "Sandvika", tolls: true, include_tolls: true, vehicle_type: "fossil", uses_autopass: true });
     await dialog.getByLabel("Formål").fill("Visning");
     await dialog.getByRole("button", { name: "Lagre tur" }).click();
     await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();
@@ -1356,6 +1359,44 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
+  test("a checklist save merges the other tenant's check and meter instead of replacing the list", async ({ page }) => {
+    const WALLS = "property.detail.handover.moveIn.item.walls";
+    const TAPS = "property.detail.handover.moveIn.item.taps";
+    const marker = (data) => `[[eu-handover:${JSON.stringify(data)}]]`;
+    const tables = handoverTables();
+    const moveIn = tables.inspections.find((row) => row.id === HANDOVER_IN_ID);
+    moveIn.status = "draft";
+    moveIn.finalized_at = null;
+    const item = tables.inspection_items.find((row) => row.inspection_id === HANDOVER_IN_ID);
+    item.note = marker({
+      in: [{ k: WALLS, d: false }, { k: TAPS, d: false }],
+      keys: [{ kind: "frontDoor", issued: 2 }],
+      meters: [{ kind: "electricity", in: "111" }, { kind: "water", in: "222" }],
+    });
+    const freshNote = marker({
+      in: [{ k: WALLS, d: false }, { k: TAPS, d: true, c: "Drypp" }, { t: "Egen flekk", d: true }],
+      keys: [{ kind: "frontDoor", issued: 4 }],
+      meters: [{ kind: "electricity", in: "111" }, { kind: "water", in: "999" }],
+    });
+    const { writes, errors } = await openPortal(page, {
+      handover: tables,
+      handoverFreshItem: { id: item.id, note: freshNote, updated_at: "2026-11-14T11:11:11Z" },
+    });
+    await page.goto("/portal/#inn-utflytting/innflytting");
+    await page.getByRole("checkbox", { name: "Kontroller vegger og gulv for skader" }).click();
+    await expect.poll(() => writes.find((entry) => entry.path.endsWith("/update_inspection_item"))).toBeTruthy();
+    const saved = writes.find((entry) => entry.path.endsWith("/update_inspection_item"));
+    expect(saved.body.expected_updated_at).toBe("2026-11-14T11:11:11Z");
+    const stored = JSON.parse(saved.body.requested_note.slice(saved.body.requested_note.indexOf("{"), saved.body.requested_note.lastIndexOf("}") + 1));
+    expect(stored.in.find((row) => row.k === WALLS).d).toBe(true);
+    expect(stored.in.find((row) => row.k === TAPS)).toMatchObject({ d: true, c: "Drypp" });
+    expect(stored.in.find((row) => row.t === "Egen flekk").d).toBe(true);
+    expect(stored.meters.find((meter) => meter.kind === "water").in).toBe("999");
+    expect(stored.meters.find((meter) => meter.kind === "electricity").in).toBe("111");
+    expect(stored.keys[0].issued).toBe(4);
+    expect(errors).toEqual([]);
+  });
+
   test("own home asks whether you use at least half and sends uses_at_least_half (iOS #1591)", async ({ page }) => {
     const { writes, errors } = await openPortal(page, {
       taxFacts: [{ property_id: PROPERTY_ID, home_use: "own_home", rental_duration: "short_term", uses_at_least_half: null }],
@@ -1399,6 +1440,60 @@ test.describe("portal", () => {
     const missing = page.locator(".pt-tile", { hasText: "Kunne ikke hentes" });
     await expect(missing.first()).toBeVisible();
     await expect(missing.getByRole("button", { name: "Rediger" })).toHaveCount(0);
+  });
+
+  test("boligperm values can be copied, called and mailed", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openPortal(page, {
+      handover: {
+        property_handbook_sections: [
+          { property_id: PROPERTY_ID, section_key: "wifi", is_enabled: true, body: "Nettverk: HjemmeNet\nPassord: hemmelig 123" },
+          { property_id: PROPERTY_ID, section_key: "emergency", is_enabled: true, body: "Vakt: +47 412 34 567\nE-post: vakt@example.no\nRing +47 900 11 223 ved lekkasje." },
+          { property_id: PROPERTY_ID, section_key: "keys_access", is_enabled: true, body: "Portkode: 4321\nAdresse: Testveien 1, 0150 Oslo" },
+        ],
+        property_handbook_settings: [{ property_id: PROPERTY_ID, metering_point_id: "707057500012345678", meter_number: "AB 12" }],
+      },
+    });
+    await page.getByRole("link", { name: "Boligperm", exact: true }).click();
+
+    const wifi = page.locator(".pt-tile", { hasText: "Wi-Fi" });
+    await expect(wifi.getByText("HjemmeNet")).toBeVisible();
+    await expect(wifi.getByText("hemmelig 123")).toBeVisible();
+    await wifi.getByRole("button", { name: "Kopier Passord" }).click();
+    await expect(wifi.getByRole("status").filter({ hasText: "Kopiert" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("hemmelig 123");
+
+    const emergency = page.locator(".pt-tile", { hasText: "Nødinfo" });
+    await expect(emergency.getByText("+47 412 34 567")).toBeVisible();
+    const call = emergency.getByRole("link", { name: "Ring +47 412 34 567" });
+    const sms = emergency.getByRole("link", { name: "Send SMS til +47 412 34 567" });
+    await expect(call).toHaveAttribute("href", "tel:+4741234567");
+    await expect(sms).toHaveAttribute("href", "sms:+4741234567");
+    await expect(emergency.getByRole("link", { name: "vakt@example.no" })).toHaveAttribute("href", "mailto:vakt@example.no");
+    await emergency.getByRole("button", { name: "Kopier E-post" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("vakt@example.no");
+    const inlineCall = emergency.getByRole("link", { name: "Ring +47 900 11 223" });
+    await expect(inlineCall).toHaveAttribute("href", "tel:+4790011223");
+    await expect(emergency.getByRole("link", { name: "Send SMS til +47 900 11 223" })).toHaveAttribute("href", "sms:+4790011223");
+
+    const keys = page.locator(".pt-tile", { hasText: "Nøkler og adgang" });
+    await keys.getByRole("button", { name: "Kopier Portkode" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("4321");
+    await expect(keys.getByRole("link", { name: "Ring 4321" })).toHaveCount(0);
+    await keys.getByRole("button", { name: "Kopier Adresse" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("Testveien 1, 0150 Oslo");
+
+    const power = page.locator(".pt-tile", { hasText: "Strøm" });
+    await expect(power.getByText("707057500012345678")).toBeVisible();
+    await expect(power.getByRole("link", { name: /Ring/ })).toHaveCount(0);
+    await power.getByRole("button", { name: "Kopier Målepunkt-ID" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("707057500012345678");
+    await power.getByRole("button", { name: "Kopier Målernummer" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("AB 12");
+
+    const empty = page.locator(".pt-tile", { hasText: "Stoppekran" });
+    await expect(empty.getByText("Ikke fylt ut")).toBeVisible();
+    await expect(empty.getByRole("button", { name: /Kopier/ })).toHaveCount(0);
   });
 
   test("saving a handbook section does not clear link_url", async ({ page }) => {

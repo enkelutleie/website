@@ -16,6 +16,7 @@ import {
   mapWithLimit,
   shouldClearInspectionReviewDone,
 } from "./portal-cache.js";
+import { handoverRealtimeScope, handoverSocketEvent, handoverWorkingRevision, writeMergedInspectionItem } from "./portal-handover-sync.js";
 
 // One in-memory copy of the reads the property and tenancy cards share.
 // Invalidated after the user's own changes (invalidatePortalReads), never on a timer.
@@ -91,6 +92,16 @@ export const explain = (error) => {
   if (/conflict|stale|expected_updated_at|revision/i.test(msg)) return "Noen har endret dette i mellomtiden. Last siden på nytt og prøv igjen.";
   return "Det gikk ikke. Prøv igjen om litt.";
 };
+
+// Server gate on POST /properties (iOS #1642). The message is the whole token.
+export const PROPERTY_CAP_TEXT = "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+export const PREMIUM_REQUIRED_TEXT = "Du trenger Premium for å opprette en bolig. Aktiver Premium i Enkel Utleie-appen på iPhone.";
+export function propertyCreateError(error) {
+  const blob = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""} ${error?.code || ""}`;
+  if (/\bconsumer_property_cap\b/.test(blob)) return PROPERTY_CAP_TEXT;
+  if (/\bpremium_required\b/.test(blob)) return PREMIUM_REQUIRED_TEXT;
+  return null;
+}
 
 export const minorOf = (text) => {
   const clean = String(text ?? "").replace(/\s|kr/gi, "").replace(",", ".");
@@ -1518,6 +1529,15 @@ export const normalizeMeterNumber = (text) => {
   return v || null;
 };
 export const meterNumberValid = (v) => v == null || v.length <= METER_NUMBER_MAX;
+// iOS #1651: the electricity card is the section text. Empty text still shows stored meter lines.
+export function electricityHandbookText(body, settings) {
+  const text = String(body ?? "").trim();
+  if (text) return text;
+  const lines = [];
+  if (settings?.metering_point_id) lines.push(`Målepunkt-ID: ${settings.metering_point_id}`);
+  if (settings?.meter_number) lines.push(`Målernummer: ${settings.meter_number}`);
+  return lines.join("\n");
+}
 export const saveHandbookElectricity = (propertyId, meteringPointId, meterNumber) =>
   supabase.from("property_handbook_settings").upsert(
     { property_id: propertyId, metering_point_id: meteringPointId, meter_number: meterNumber },
@@ -2023,16 +2043,30 @@ export const scheduleMaintenanceVisit = (request, startsAt) =>
     requested_starts_at: iso(startsAt), requested_due_at: null, requested_ends_at: null,
     requested_all_day: false, requested_shared_with_property: false,
   });
-// Reschedule keeps the item and its duration; the server resets the tenant's answer.
+// «Endre tidspunkt» (iOS #1672): the same row, shifted ends_at, event/maintenance, not a new item.
+export function maintenanceRescheduleParams(item, startsAt) {
+  const startIso = iso(startsAt);
+  const start = new Date(startIso);
+  const prevStart = item?.starts_at ? new Date(item.starts_at) : null;
+  const prevEnd = item?.ends_at ? new Date(item.ends_at) : null;
+  const span = prevStart && prevEnd && !Number.isNaN(prevStart.getTime()) && !Number.isNaN(prevEnd.getTime())
+    ? prevEnd.getTime() - prevStart.getTime() : null;
+  const ends = span != null && !Number.isNaN(start.getTime())
+    ? new Date(start.getTime() + span).toISOString().replace(/\.\d{3}Z$/, "Z") : null;
+  return {
+    requested_calendar_item_id: item.id,
+    requested_title: item.title,
+    requested_description: item.description ?? null,
+    requested_item_type: "event",
+    requested_category: "maintenance",
+    requested_starts_at: startIso,
+    requested_due_at: null,
+    requested_ends_at: ends,
+    requested_all_day: false,
+  };
+}
 export function rescheduleMaintenanceVisit(item, startsAt) {
-  const start = new Date(iso(startsAt));
-  const ends = item.ends_at && item.starts_at ? new Date(start.getTime() + (new Date(item.ends_at) - new Date(item.starts_at))) : null;
-  return supabase.rpc("update_calendar_item", {
-    requested_calendar_item_id: item.id, requested_title: item.title, requested_description: item.description,
-    requested_item_type: item.item_type, requested_category: item.category,
-    requested_starts_at: iso(startsAt), requested_due_at: item.due_at,
-    requested_ends_at: ends ? ends.toISOString().replace(/\.\d{3}Z$/, "Z") : null, requested_all_day: item.all_day,
-  });
+  return supabase.rpc("update_calendar_item", maintenanceRescheduleParams(item, startsAt));
 }
 // One calendar item for #kalender/<id> (CalendarView detail). RLS decides who may read it.
 export const calendarItem = (itemId) =>
@@ -2243,8 +2277,8 @@ export const addProtocolComment = (inspectionId, body) =>
   supabase.rpc("add_inspection_protocol_comment", { p_inspection_id: inspectionId, p_body: body });
 
 // The "other" note carries the app's shared handover data after the visible text:
-// "[[eu-handover:{json}]]" (PropertyHandoverSharedNote). The portal edits only the
-// visible text and the done flag of a checklist point; the rest is copied as stored.
+// "[[eu-handover:{json}]]" (PropertyHandoverSharedNote). Checks and meter readings in
+// that note are merged per point before they are stored (portal-handover-sync.js).
 const HANDOVER_PREFIX = "[[eu-handover:";
 const HANDOVER_SUFFIX = "]]";
 export const visibleNote = (note) => {
@@ -2291,19 +2325,73 @@ export const getInspectionItem = (itemId) =>
 // update_inspection_item on a checklist that is already sent/locked (55000).
 export const isChecklistLocked = (res) =>
   /finalized_inspection_immutable/.test(String(res?.error?.message)) || res?.error?.code === "55000";
-export const updateInspectionItem = (item, condition, note) =>
-  supabase.rpc("update_inspection_item", {
-    requested_item_id: item.id, requested_condition: condition,
-    requested_note: note && note.trim() ? note : null, expected_updated_at: item.updated_at,
-  }).then(one);
+// Read the fresh row, merge the shared note, then store with that row's updated_at.
+// PT409 reads and merges once more (writeMergedInspectionItem).
+export const updateInspectionItem = (item, condition, note, revision = null) => writeMergedInspectionItem(item, condition, note, {
+  read: (id) => getInspectionItem(id),
+  write: (fresh, nextCondition, nextNote) => supabase.rpc("update_inspection_item", {
+    requested_item_id: fresh.id, requested_condition: nextCondition,
+    requested_note: nextNote && String(nextNote).trim() ? nextNote : null,
+    expected_updated_at: fresh.updated_at,
+  }).then(one),
+}, revision);
 // Rapid edits of the same checklist point: the write in flight finishes, then only the
 // latest state is sent. Intermediate states are dropped; the last one is never lost.
-const inspectionSaves = createLatestCoalescer((_id, { item, condition, note }) =>
-  updateInspectionItem(item, condition, note).then((res) => {
+const inspectionSaves = createLatestCoalescer((_id, { item, condition, note, revision }) =>
+  updateInspectionItem(item, condition, note, revision).then((res) => {
     if (res?.data?.updated_at) item.updated_at = res.data.updated_at;
     return res;
   }));
-export const saveInspectionItem = (item, condition, note) => inspectionSaves(item.id, { item, condition, note });
+export const saveInspectionItem = (item, condition, note) =>
+  inspectionSaves(item.id, { item, condition, note, revision: handoverWorkingRevision(item.id) });
+// Live checks, meters and photos while a draft protocol is on screen (iOS HandoverRealtimeRemote).
+// Filters use lowercase uuids. The first subscribe is the open; a later SUBSCRIBED is a reconnect.
+export function subscribeHandover(inspections, onChange) {
+  const scope = handoverRealtimeScope(inspections);
+  if (scope.isEmpty || typeof onChange !== "function") return () => {};
+  let channel = null;
+  let stopped = false;
+  let socket = { hadConnection: false, attempt: 0 };
+  let timer = null;
+  let cancelWait = null;
+  const connect = () => {
+    if (stopped) return;
+    cancelWait?.();
+    cancelWait = waitUntilVisible(connect);
+    if (cancelWait) return;
+    const ch = supabase.channel(`handover:${crypto.randomUUID()}`);
+    channel = ch;
+    const emit = (kind) => { if (!stopped && ch === channel) onChange(kind); };
+    ch.on("postgres_changes", { event: "*", schema: "public", table: "inspection_items", filter: scope.itemFilter }, () => emit("protocol"));
+    ch.on("postgres_changes", { event: "UPDATE", schema: "public", table: "inspections", filter: scope.inspectionFilter }, () => emit("protocol"));
+    if (scope.imageFilter) {
+      ch.on("postgres_changes", { event: "*", schema: "public", table: "property_images", filter: scope.imageFilter }, () => emit("photos"));
+    }
+    ch.subscribe((status) => {
+      if (stopped || ch !== channel) return;
+      const next = handoverSocketEvent(socket, status);
+      socket = { hadConnection: next.hadConnection, attempt: next.attempt };
+      if (next.resync) emit("resync");
+      if (!next.retry) return;
+      channel = null;
+      supabase.removeChannel(ch);
+      const delay = Math.min(30_000, 1000 * 2 ** (next.attempt - 1));
+      clearTimeout(timer);
+      cancelWait?.();
+      const retry = () => { timer = setTimeout(connect, delay); };
+      cancelWait = waitUntilVisible(retry);
+      if (!cancelWait) retry();
+    });
+  };
+  connect();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    cancelWait?.();
+    if (channel) supabase.removeChannel(channel);
+    channel = null;
+  };
+}
 // clear_inspection_review_done only when the flag is actually set. The handover select
 // does not include the column, so this stays a no-op until a row carries review_done.
 export function clearInspectionReviewDone(inspection) {
@@ -2721,6 +2809,8 @@ export function inkPad() {
 /* ---------- Kjørebok (MileageController.swift, MileageLedger.swift) ---------- */
 // MileageRateCatalog.json: Skatteetaten's rate for yrkeskjøring med privatbil, also elbil.
 export const MILEAGE_RATES = {
+  2023: { orePerKm: 350, authority: "Skatteetaten" },
+  2024: { orePerKm: 350, authority: "Skatteetaten" },
   2025: { orePerKm: 350, authority: "Skatteetaten" },
   2026: { orePerKm: 350, authority: "Skatteetaten" },
 };

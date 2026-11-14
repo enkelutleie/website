@@ -25,7 +25,7 @@ const ok = { data: { distanceMeters: 15234, durationSeconds: 900, toll_included:
 
 test("request body: free-text addresses, tolls with settings only when wanted", () => {
   assert.deepEqual(routeRequestBody({ from: " Oslo S ", to: "Sandvika", tolls: true, settings }), {
-    from_address: "Oslo S", to_address: "Sandvika", tolls: true, vehicle_type: "fossil", uses_autopass: true,
+    from_address: "Oslo S", to_address: "Sandvika", tolls: true, include_tolls: true, vehicle_type: "fossil", uses_autopass: true,
   });
   assert.deepEqual(routeRequestBody({ from: "A", to: "B", tolls: false, settings }), { from_address: "A", to_address: "B" });
   assert.equal(routeRequestBody({ from: "A", to: "B", tolls: true, settings: { vehicleType: "electric", usesAutopass: false } }).vehicle_type, "electric");

@@ -138,6 +138,8 @@ svg { flex: none; }
 .pt-icon-circle.is-danger { background: var(--danger-icon-bg); color: var(--danger); }
 .pt-icon-circle.is-tax { background: var(--tax-icon-bg); color: var(--tax); }
 .pt-icon-circle.is-warning { background: var(--warning-icon-bg); color: var(--warning); }
+.pt-icon-circle.is-mileage { background: var(--mileage-icon-bg); color: var(--mileage); }
+.pt-icon-circle.is-furnishings { background: var(--furnishings-icon-bg); color: var(--furnishings); }
 .pt-muted { color: var(--secondary-ink); font-size: var(--fs-subheadline); }
 .pt-label { font-size: var(--fs-caption); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--secondary-ink); }
 
@@ -224,6 +226,7 @@ svg { flex: none; }
 .pt-cal-item { display: flex; align-items: flex-start; gap: var(--space-m); padding: 10px 4px; border-radius: var(--radius-sm); color: inherit; text-decoration: none; transition: background-color var(--ease); }
 .pt-cal-item:hover { background: var(--soft-surface); }
 .pt-cal-item.is-awaiting { opacity: .78; }
+.pt-cal-item.is-highlighted { background: var(--brand-soft); }
 .pt-cal-item-icon { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--radius-sm); background: var(--brand-soft); color: var(--brand); }
 .pt-cal-item-icon svg { width: 18px; height: 18px; }
 .pt-cal-item-icon.is-overdue { background: var(--danger-soft); color: var(--danger); }
@@ -252,6 +255,8 @@ svg { flex: none; }
 .pt-amount.is-expense { color: var(--danger); }
 .pt-amount.is-tax { color: var(--tax); }
 .pt-amount.is-warning { color: var(--warning); }
+.pt-amount.is-mileage { color: var(--mileage); }
+.pt-amount.is-furnishings { color: var(--furnishings); }
 
 /* Table */
 .pt-table-wrap { overflow-x: auto; }
@@ -365,6 +370,20 @@ svg { flex: none; }
 .pt-tile-facts { display: flex; flex-direction: column; gap: var(--space-s); margin: 0; }
 .pt-tile-facts dt { font-size: var(--fs-caption); color: var(--secondary-ink); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .pt-tile-facts dd { margin: 2px 0 0; font-size: var(--fs-footnote); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* Boligperm values: copy, call and mail. No inline styles (CSP). */
+.pt-info-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-s); }
+.pt-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pt-info-label { font-size: var(--fs-caption); color: var(--secondary-ink); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.pt-info-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-s); min-width: 0; }
+.pt-info-value { flex: 1 1 8rem; min-width: 0; font-size: var(--fs-footnote); color: var(--secondary-ink); white-space: pre-line; overflow-wrap: anywhere; }
+.pt-info-actions, .pt-info-chip { position: relative; display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); max-width: 100%; }
+.pt-info .pt-btn { white-space: nowrap; }
+.pt-info .pt-btn-small { min-height: 32px; padding: 4px 12px; font-size: var(--fs-footnote); }
+.pt-info-mail { font-weight: 600; overflow-wrap: anywhere; }
+.pt-info-status { font-size: var(--fs-caption); font-weight: 600; color: var(--success); }
+.pt-info-status.is-error { color: var(--danger); }
+.pt-info-status:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.pt-clipboard-fallback { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
 .pt-field-help.is-error { color: var(--danger); }
 .pt-input[aria-invalid="true"] { border-color: var(--danger); }
 /* Form choice field: custom listbox (no native <select>), in-flow so the modal never clips it. */

@@ -375,6 +375,14 @@ function rpcPayload(name, body, options = {}) {
       }];
     case "list_linked_profile_contacts":
       return [{ user_id: TENANT_ID, display_name: "Ola Leietaker", email: "ola@example.com" }];
+    case "update_inspection_item":
+      if (!options.handover) return [];
+      return [{
+        inspection_item_id: body?.requested_item_id,
+        condition: body?.requested_condition,
+        note: body?.requested_note,
+        updated_at: "2026-11-14T12:00:01Z",
+      }];
     default:
       if (premium === false && name === "get_my_complimentary_access") return false;
       return [];
@@ -439,6 +447,10 @@ function respond(url, req, body, options) {
     if (options.gallery && table === "property_images") source = galleryImageRows();
     if (options.handover && Object.prototype.hasOwnProperty.call(options.handover, table)) source = options.handover[table];
     let rows = source.filter((row) => matches(row, url));
+    if (options.handoverFreshItem && table === "inspection_items" && url.searchParams.has("id")) {
+      const fresh = options.handoverFreshItem;
+      rows = rows.map((row) => (row.id === fresh.id ? { ...row, ...fresh, id: row.id } : row));
+    }
     if (options.premium === false && table === "subscription_entitlements") rows = [];
     const wantsObject = (req.headers().accept || "").includes("vnd.pgrst.object");
     if (wantsObject) {
@@ -478,7 +490,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
+      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, handoverFreshItem: options.handoverFreshItem, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),
