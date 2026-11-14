@@ -19,6 +19,7 @@ import { tollBreakdown, tollInputMinor, tollLabel, tollParams, TOLL_TEXT, tripTo
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
+import * as hbCopy from "./portal-handbook-copy.js";
 import { manualOccupantsFor, OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
 import { overviewShowsEvent } from "./portal-calendar-window.js";
@@ -2096,6 +2097,93 @@ const calendarForm = async (pid, item) => {
   });
 };
 
+const copyAria = (label, value) => {
+  if (label) return `Kopier ${label}`;
+  const compact = String(value).replace(/\s+/g, " ").trim();
+  return compact.length <= 80 ? `Kopier ${compact}` : "Kopier teksten";
+};
+const copyStatus = () => {
+  const status = h("span", "pt-info-status");
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.setAttribute("aria-atomic", "true");
+  return status;
+};
+const copyControls = (value, ariaLabel) => {
+  const control = h("button", "pt-btn pt-btn-soft pt-btn-small", hbCopy.COPY_TEXT);
+  control.type = "button";
+  control.setAttribute("aria-label", ariaLabel);
+  const status = copyStatus();
+  let timer = 0;
+  control.addEventListener("click", async () => {
+    const ok = await hbCopy.copyText(value);
+    window.clearTimeout(timer);
+    status.textContent = ok ? hbCopy.COPIED_TEXT : hbCopy.COPY_FAILED_TEXT;
+    status.classList.toggle("is-error", !ok);
+    timer = window.setTimeout(() => {
+      if (!status.isConnected) return;
+      status.textContent = "";
+      status.classList.remove("is-error");
+    }, 2000);
+  });
+  return [control, status];
+};
+const phoneActions = (display, dial) => {
+  const call = h("a", "pt-btn pt-btn-soft pt-btn-small", hbCopy.CALL_TEXT);
+  call.href = `tel:${dial}`;
+  call.setAttribute("aria-label", `Ring ${display}`);
+  const sms = h("a", "pt-btn pt-btn-soft pt-btn-small", hbCopy.SMS_TEXT);
+  sms.href = `sms:${dial}`;
+  sms.setAttribute("aria-label", `Send SMS til ${display}`);
+  return [call, sms];
+};
+const mailLink = (display, email) => {
+  const link = h("a", "pt-info-mail", display);
+  link.href = `mailto:${email}`;
+  return link;
+};
+const appendInfoPart = (parent, part) => {
+  if (part.type === "text") {
+    parent.append(document.createTextNode(part.text));
+    return;
+  }
+  const chip = h("span", "pt-info-chip");
+  if (part.type === "email") chip.append(mailLink(part.text, part.email));
+  else {
+    chip.append(document.createTextNode(part.text));
+    chip.append(...phoneActions(part.text, part.dial));
+  }
+  chip.append(...copyControls(part.text, copyAria(null, part.text)));
+  parent.append(chip);
+};
+// One row: the stored text, a copy button, and call / SMS / mail when the value is one.
+const infoBlock = (entry, { showLabel = true } = {}) => {
+  const row = h("div", "pt-info");
+  if (showLabel && entry.label) row.append(h("span", "pt-info-label", entry.label));
+  const line = h("div", "pt-info-line");
+  const value = h("div", "pt-info-value");
+  if (entry.kind === "email") value.append(mailLink(entry.text, entry.email));
+  else if (entry.parts) entry.parts.forEach((part) => appendInfoPart(value, part));
+  else value.append(document.createTextNode(entry.text));
+  const actions = h("div", "pt-info-actions");
+  if (entry.kind === "phone") actions.append(...phoneActions(entry.text, entry.dial));
+  actions.append(...copyControls(entry.text, copyAria(entry.label, entry.text)));
+  line.append(value, actions);
+  row.append(line);
+  return row;
+};
+const handbookBody = (text) => {
+  const entries = hbCopy.handbookEntries(text);
+  if (!entries.length) return h("p", null, "Ikke fylt ut");
+  const list = h("ul", "pt-info-list");
+  for (const entry of entries) {
+    const item = h("li");
+    item.append(infoBlock(entry));
+    list.append(item);
+  }
+  return list;
+};
+
 const handbookForm = (pid, key, label, body, { required = true } = {}) =>
   act.openForm({
     title: label,
@@ -2119,7 +2207,7 @@ const electricityTile = (pid, res, body, sectionsFailed) => {
   t.append(icon("bolt", text ? "pt-icon-circle is-warning" : "pt-icon-circle is-muted"), h("strong", null, "Strøm"));
   if (failed) t.append(h("p", null, "Strømopplysningene kunne ikke hentes akkurat nå."));
   else if (!text) t.append(h("p", null, "Ikke fylt ut"));
-  else t.append(h("p", "pt-prewrap", text));
+  else t.append(handbookBody(text));
   if (isManager(pid) && !failed) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(pid, "electricity", "Strøm", stored, { required: false }))));
   return t;
 };
@@ -5380,7 +5468,9 @@ const PAGES = {
     const tiles = h("section", "pt-tiles");
     for (const [key, label, ic, tone] of HANDBOOK_TILES) {
       const t = h("article", "pt-tile");
-      t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), h("p", null, res.error ? "Kunne ikke hentes" : bodies.get(key) ?? "Ikke fylt ut"));
+      const body = res.error ? null : bodies.get(key);
+      const shown = res.error ? h("p", null, "Kunne ikke hentes") : body ? handbookBody(body) : h("p", null, "Ikke fylt ut");
+      t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), shown);
       if (isManager(p.id) && !res.error) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(p.id, key, label, bodies.get(key)))));
       tiles.append(t);
       if (key === "fuse_box") tiles.append(electricityTile(p.id, el, bodies.get("electricity") ?? "", res.error));
