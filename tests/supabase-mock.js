@@ -432,6 +432,13 @@ function respond(url, req, body, options) {
     if (req.method() === "POST" && table === "properties" && options.propertyCreateError) {
       return json(400, { message: options.propertyCreateError, code: "P0001" });
     }
+    if (req.method() === "POST" && table === "properties" && options.createdProperties) {
+      const row = Array.isArray(body) ? { ...body[0] } : { ...body };
+      const id = "99999999-9999-4999-8999-999999999999";
+      options.createdProperties.push({ ...row, id, lifecycle_status: row.lifecycle_status || "active" });
+      options.createdMembers?.push({ property_id: id, user_id: row.owner_id, role: "owner", valid_until: null });
+      return json(201, [{ ...row, id }]);
+    }
     if (req.method() === "POST") return json(201, Array.isArray(body) ? body : [body]);
     const supplied = options.gallery && (table === "image_collections" || table === "property_images");
     const known = Object.prototype.hasOwnProperty.call(tables, table) || supplied;
@@ -441,6 +448,8 @@ function respond(url, req, body, options) {
     }
     if (options.gallery && table === "property_images") source = galleryImageRows();
     if (options.handover && Object.prototype.hasOwnProperty.call(options.handover, table)) source = options.handover[table];
+    if (table === "properties" && options.createdProperties?.length) source = [...source, ...options.createdProperties];
+    if (table === "property_members" && options.createdMembers?.length) source = [...source, ...options.createdMembers];
     let rows = source.filter((row) => matches(row, url));
     if (options.premium === false && table === "subscription_entitlements") rows = [];
     const wantsObject = (req.headers().accept || "").includes("vnd.pgrst.object");
@@ -466,6 +475,8 @@ export async function installSupabase(page, options = {}) {
     }, sessionFor());
   }
   await page.routeWebSocket(HOST, (socket) => socket.close());
+  const createdProperties = options.rememberCreates ? [] : null;
+  const createdMembers = options.rememberCreates ? [] : null;
   await page.route(HOST, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -481,7 +492,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, propertyCreateError: options.propertyCreateError, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
+      premium: options.premium, propertyCreateError: options.propertyCreateError, createdProperties, createdMembers, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),
@@ -500,7 +511,14 @@ export async function installSupabase(page, options = {}) {
       options.stats.inflight = (options.stats.inflight ?? 0) + 1;
       options.stats.maxPropertyImages = Math.max(options.stats.maxPropertyImages ?? 0, options.stats.inflight);
     }
-    const delay = options.delayRpc?.[decodeURIComponent(url.pathname.split("/").pop())] ?? (galleryFile ? options.delayStorage : 0);
+    const restTable = url.pathname.startsWith("/rest/v1/") && !url.pathname.includes("/rpc/")
+      ? decodeURIComponent(url.pathname.slice("/rest/v1/".length))
+      : "";
+    const named = decodeURIComponent(url.pathname.split("/").pop());
+    const delay = (req.method() === "GET" && options.delayTable?.[restTable])
+      || options.delayRpc?.[named]
+      || (galleryFile ? options.delayStorage : 0)
+      || 0;
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     if (galleryFile && options.stats) options.stats.inflight -= 1;
     await route.fulfill({

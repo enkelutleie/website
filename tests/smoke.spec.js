@@ -1529,50 +1529,110 @@ test.describe("portal", () => {
     expect(stats.maxPropertyImages).toBeGreaterThan(1);
   });
 
-  test("no subscription can open create-property; other features show the paywall", async ({ page }) => {
+  test("no subscription and no boliger can register the first home", async ({ page }) => {
     const empty = { properties: [], property_members: [] };
     await openPortal(page, { premium: false, handover: empty });
     await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Premium for utleier" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Ny bolig" }).click();
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
     const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
     await expect(create.getByRole("button", { name: "Opprett bolig" })).toBeVisible();
     await create.getByRole("button", { name: "Avbryt" }).click();
     await expect(create).toBeHidden();
 
     await page.getByRole("link", { name: "Økonomi", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Boliger", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toHaveCount(0);
-
-    await page.getByRole("button", { name: "Opprett bolig" }).click();
-    await expect(page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Premium for utleier" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
+    await page.getByRole("link", { name: "Innstillinger", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Konto" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Premium for utleier" })).toHaveCount(0);
   });
 
-  test("a premium rejection from property insert shows the paywall", async ({ page }) => {
+  test("a premium rejection from property insert covers the portal", async ({ page }) => {
     await openPortal(page, {
       premium: false,
       handover: { properties: [], property_members: [] },
       propertyCreateError: "premium_required",
     });
-    await page.getByRole("button", { name: "Ny bolig" }).click();
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
     const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
     await create.getByLabel("Adresse").fill("Testveien 9");
     await create.getByLabel("Postnummer").fill("0150");
     await create.getByLabel("Poststed").fill("Oslo");
     await create.getByRole("button", { name: "Opprett bolig" }).click();
     await expect(create).toBeHidden();
-    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
+    const wall = page.locator("[data-content]");
+    await expect(wall.getByRole("heading", { name: "Premium for utleier" })).toBeVisible();
+    await expect(wall.getByText("Første bolig kan registreres gratis. Utleier trenger Premium for å bruke appen og for flere boliger. Leietaker er gratis. Premium dekker inntil 4 boliger.")).toBeVisible();
+    await expect(wall.getByRole("button", { name: "Gjenopprett kjøp" })).toBeVisible();
+    await expect(wall.getByRole("button", { name: "Logg ut" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toHaveCount(0);
+    await expect(page.locator(".pt-sidebar")).toBeHidden();
   });
 
-  test("an account with boliger and no subscription still lands on the property list", async ({ page }) => {
+  test("the four-home cap stays in the form", async ({ page }) => {
+    await openPortal(page, {
+      premium: false,
+      handover: { properties: [], property_members: [] },
+      propertyCreateError: "consumer_property_cap",
+    });
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create.getByText("Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Premium for utleier" })).toHaveCount(0);
+  });
+
+  test("saving the first bolig closes the form and covers the portal", async ({ page }) => {
+    await openPortal(page, {
+      premium: false,
+      handover: { properties: [], property_members: [] },
+      rememberCreates: true,
+    });
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create).toBeHidden();
+    const wall = page.locator("[data-content]");
+    await expect(wall.getByRole("heading", { name: "Premium for utleier" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Boliger", exact: true })).toHaveCount(0);
+  });
+
+  test("an account with boliger and no subscription lands on the full paywall", async ({ page }) => {
     await openPortal(page, { premium: false });
-    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Ny bolig" })).toBeVisible();
-    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
+    const wall = page.locator("[data-content]");
+    await expect(wall.getByRole("heading", { name: "Premium for utleier" })).toBeVisible();
+    await expect(wall.getByText("Første bolig kan registreres gratis. Utleier trenger Premium for å bruke appen og for flere boliger. Leietaker er gratis. Premium dekker inntil 4 boliger.")).toBeVisible();
+    await expect(wall.getByRole("button", { name: "Gjenopprett kjøp" })).toBeVisible();
+    await expect(wall.getByRole("button", { name: "Logg ut" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ny bolig" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Registrer bolig" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toHaveCount(0);
+    await expect(page.locator(".pt-sidebar")).toBeHidden();
+    await expect(page.locator(".pt-topbar")).toBeHidden();
+    await wall.getByRole("button", { name: "Gjenopprett kjøp" }).click();
+    await expect(wall.getByRole("heading", { name: "Premium for utleier" })).toBeVisible();
+  });
+
+  test("the portal stays on a spinner until the property list answers", async ({ page }) => {
+    await installSupabase(page, { premium: false, delayTable: { properties: 2500 } });
+    await page.goto("/portal/#oversikt");
+    await expect(page.locator("[data-portal]")).toHaveAttribute("aria-busy", "true");
+    await expect(page.locator(".pt-boot-spin")).toBeVisible();
+    await expect(page.locator(".pt-sidebar")).toBeHidden();
+    await expect(page.getByRole("heading", { name: "Premium for utleier" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toHaveCount(0);
+    await expect(page.locator("[data-portal]")).toHaveAttribute("aria-busy", "false", { timeout: 8000 });
+    await expect(page.getByRole("heading", { name: "Premium for utleier" })).toBeVisible();
+    await expect(page.locator(".pt-sidebar")).toBeHidden();
   });
 });
 

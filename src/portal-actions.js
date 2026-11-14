@@ -1533,8 +1533,11 @@ export async function hasPremium() {
   if (comp.data === true) return { ok: true };
   if (ent.error && comp.error) return { ok: false, unknown: true };
   const now = Date.now();
+  // Same predicate as private.property_creation_has_premium: status
+  // active/canceled/grace and expires_at still in the future. A missing
+  // expiry, hold, paused, pending, expired or refunded is not Premium.
   const active = (ent.data ?? []).some((r) =>
-    ["active", "grace", "canceled"].includes(r.status) && (!r.expires_at || new Date(r.expires_at).getTime() > now));
+    ["active", "grace", "canceled"].includes(r.status) && r.expires_at && new Date(r.expires_at).getTime() > now);
   return { ok: active };
 }
 

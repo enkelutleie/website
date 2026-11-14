@@ -1,7 +1,7 @@
 import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
-import { portalFeatureAllowed, propertyInsertPremiumRejection } from "./portal-premium.js";
+import { PREMIUM_WALL_BODY, PREMIUM_WALL_TITLE, PROPERTY_CAP_TEXT, landlordPremiumWall, propertyInsertCap, propertyInsertPremiumRejection } from "./portal-premium.js";
 import * as inv from "./portal-inventory.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
@@ -89,7 +89,7 @@ const NAV = [
 const state = {
   user: null, name: null, properties: [], tenancies: [], manualOccupants: [], roles: new Map(),
   propertyId: null, openTasks: new Map(), cache: new Map(), receiptFilter: "all",
-  premium: false, premiumUnknown: false,
+  premium: false, premiumLoading: true, premiumUnknown: false, propertiesResolved: false, forceWall: false,
 };
 
 /* ---------- helpers ---------- */
@@ -1281,19 +1281,21 @@ const propertyForm = async (p) => {
         if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
         if (!p) {
           const managed = state.properties.filter((x) => isManager(x.id)).length;
-          if (managed >= 4) return "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+          if (managed >= 4) return PROPERTY_CAP_TEXT;
           const shared = v.housingKind === "shared";
           const roomCount = shared ? act.parseRoomCount(v.roomCount) : null;
           if (shared && !v.roomCount) return "Du må oppgi antall rom som skal leies ut.";
           if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
           const images = finn?.files() ?? [];
           const res = await act.createProperty(state.user.id, v);
-          // The trigger on properties is the authority. A premium rejection
-          // closes the form and shows the paywall; the cap and other errors stay in the form.
+          // The trigger on properties is the authority. premium_required closes
+          // the form and covers the portal; the four-home cap stays in the form.
           if (propertyInsertPremiumRejection(res.error)) {
+            state.forceWall = true;
             showPremiumWall();
             return null;
           }
+          if (propertyInsertCap(res.error)) return PROPERTY_CAP_TEXT;
           if (res.error) return act.explain(res.error);
           const id = res.data?.[0]?.id;
           if (id && roomCount) {
@@ -1316,12 +1318,10 @@ const propertyForm = async (p) => {
             }
           }
           if (id) try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
-          // «Om boligen» is behind the paywall without Premium. Stay on the list
-          // so a successful insert does not drop the user onto the wall.
-          const openHome = portalFeatureAllowed("om-boligen", { premium: state.premium, propertyCount: state.properties.length + 1 });
-          if (!openHome && location.hash !== "#boliger") location.hash = "#boliger";
           await refresh("Boligen er opprettet.");
-          if (openHome) location.hash = "#om-boligen";
+          // The sheet closes first. Once the new home is in the list, a landlord
+          // without Premium is covered by the wall instead of opening the home.
+          if (premiumMode() === "hidden") location.hash = "#om-boligen";
           return null;
         }
         const res = await act.updateProperty(p, v, facts);
@@ -2181,10 +2181,10 @@ const electricityTile = (pid, res) => {
   return t;
 };
 
-// A landlord with no properties yet: the same «Ny bolig» action as on Boliger.
+// A landlord with no properties yet. «Registrer bolig» opens the «Ny bolig» form.
 const noPropertiesYet = () => {
   const c = emptyPage("building", "Ingen boliger ennå", "Legg til den første boligen din for å komme i gang. Du kan også legge til boliger i appen.");
-  c.append(button("Ny bolig", "pt-btn-primary", () => propertyForm()));
+  c.append(button("Registrer bolig", "pt-btn-primary", () => propertyForm()));
   return c;
 };
 const noProperty = () => (state.properties.length
@@ -6054,12 +6054,30 @@ const closePortalMenu = () => {
   root.querySelector(".pt-sidebar")?.classList.remove("is-open");
   root.querySelector("[data-portal-menu]")?.setAttribute("aria-expanded", "false");
 };
+const premiumMode = () => landlordPremiumWall({
+  premium: state.premium,
+  premiumLoading: state.premiumLoading,
+  propertyCount: state.properties.length,
+  propertiesResolved: state.propertiesResolved,
+  forceWall: state.forceWall,
+});
 const render = async () => {
   const token = ++renderToken;
   setPageCleanup(null);
-  const items = allItems();
   closeBell();
   closePortalMenu();
+  const mode = premiumMode();
+  if (mode === "loading") {
+    root.setAttribute("aria-busy", "true");
+    return;
+  }
+  if (mode === "wall") {
+    if (token !== renderToken) return;
+    showPremiumWall();
+    return;
+  }
+  root.classList.remove("is-premium-wall");
+  const items = allItems();
   // Sub-routes: #vedlikehold/<sak-id>, #vedlikehold/historikk and #kalender/<id>[/<sak-id>].
   let [id, sub, extra] = location.hash.slice(1).split("/");
   if (id === "overtakelse") id = "inn-utflytting";
@@ -6075,11 +6093,6 @@ const render = async () => {
   const role = property() ? roleOf(state.propertyId) : null;
   root.querySelector("[data-user-role]").textContent = role ?? "Utleier";
   syncBellScope();
-  if (!portalFeatureAllowed(id, { premium: state.premium, propertyCount: state.properties.length })) {
-    if (token !== renderToken) return;
-    showPremiumWall();
-    return;
-  }
   root.querySelector("[data-page-title]").textContent = item.label;
   let nodes;
   try {
@@ -6088,6 +6101,7 @@ const render = async () => {
     nodes = [emptyPage("info", "Noe gikk galt", "Prøv å laste siden på nytt om litt.")];
   }
   if (token !== renderToken) return;
+  root.setAttribute("aria-busy", "false");
   content.replaceChildren(...nodes);
 };
 
@@ -6254,32 +6268,47 @@ const firstNameOf = (profile, user) =>
   profile?.first_name?.trim() || profile?.display_name?.trim() ||
   user?.user_metadata?.full_name?.trim() || user?.user_metadata?.name?.trim() || null;
 
-// Paywall for a feature the account may not use yet. The sidebar stays, so
-// Boliger and «Opprett bolig» remain reachable. Logout stays on the wall too.
+// Full-screen landlord wall. Not dismissable: the sidebar and header are
+// covered, and the only actions are re-reading Premium and logging out.
+// «Gjenopprett kjøp» has no StoreKit here; it re-reads subscription_entitlements
+// and get_my_complimentary_access, which is where a restored purchase lands.
 const premiumWall = () => {
-  const c = emptyPage("house", "Nettportalen er en del av Premium",
-    state.premiumUnknown
-      ? "Vi fikk ikke sjekket abonnementet ditt akkurat nå. Prøv å laste siden på nytt om litt."
-      : "Aktiver Premium i Enkel Utleie-appen på iPhone, så får du tilgang til resten av nettportalen med samme konto.");
-  c.append(
-    button("Opprett bolig", "pt-btn-primary", openCreateProperty),
-    button("Logg ut", "pt-btn-secondary", logOut),
-  );
+  const c = emptyPage("house", PREMIUM_WALL_TITLE, PREMIUM_WALL_BODY);
+  const restore = button("Gjenopprett kjøp", "pt-btn-primary", async () => {
+    restore.disabled = true;
+    restore.setAttribute("aria-busy", "true");
+    try {
+      const premium = await act.hasPremium();
+      state.premium = premium.ok;
+      state.premiumLoading = false;
+      state.premiumUnknown = !premium.ok && Boolean(premium.unknown);
+      if (premium.ok) {
+        state.forceWall = false;
+        if (!bell.stop) startBell();
+        await render();
+      }
+    } catch { /* stay on the wall */ } finally {
+      if (!state.premium) {
+        restore.disabled = false;
+        restore.removeAttribute("aria-busy");
+      }
+    }
+  });
+  c.append(restore, button("Logg ut", "pt-btn-secondary", logOut));
   return c;
 };
 const showPremiumWall = () => {
-  root.querySelector("[data-page-title]").textContent = "Enkel Utleie Premium";
+  root.classList.add("is-premium-wall");
+  root.setAttribute("aria-busy", "false");
+  root.querySelector("[data-nav]")?.replaceChildren();
+  root.querySelector("[data-page-title]").textContent = PREMIUM_WALL_TITLE;
   content.replaceChildren(premiumWall());
-};
-const openCreateProperty = () => {
-  if (location.hash !== "#boliger") location.hash = "#boliger";
-  else render();
-  propertyForm();
 };
 
 const load = async (session, isRefresh = false) => {
   const user = session.user;
   state.user = user;
+  const premiumPromise = isRefresh ? null : act.hasPremium();
   const [profileRes, propertiesRes, propertyRolesRes, tenanciesRes, occupantsRes, tasksRes] = await Promise.all([
     act.ownProfile(user.id),
     supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override, municipality_number, municipality_name")
@@ -6298,6 +6327,9 @@ const load = async (session, isRefresh = false) => {
   // you are only the tenant; those stay in the app and are never shown here.
   const manages = (pid) => ["owner", "co_landlord"].includes(state.roles.get(pid));
   state.properties = overviewFailed ? [] : (propertiesRes.data ?? []).filter((p) => manages(p.id));
+  // The list has answered, including a failed read. Until this is set, and
+  // there is no list in memory yet, the portal stays on the spinner.
+  state.propertiesResolved = true;
   // Refresh drops a tenancy that was just ended. Ended rows are not loaded into this list.
   state.tenancies = overviewFailed ? [] : overviewTenancies((tenanciesRes.data ?? []).filter((t) => manages(t.property_id)));
   state.manualOccupants = occupantsRes.error || overviewFailed ? [] : (occupantsRes.data ?? []).filter((o) => manages(o.property_id));
@@ -6307,19 +6339,13 @@ const load = async (session, isRefresh = false) => {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
   }
-  // Premium is read once per visit. It decides which screens open; the
-  // insert trigger still decides whether a new bolig is stored.
+  // Premium is subscription_entitlements (production, unexpired) or
+  // get_my_complimentary_access. Read once per visit, in parallel with the list.
   if (!isRefresh) {
-    const premium = await act.hasPremium();
+    const premium = await premiumPromise;
     state.premium = premium.ok;
+    state.premiumLoading = false;
     state.premiumUnknown = !premium.ok && Boolean(premium.unknown);
-    const hash = location.hash.slice(1).split("/")[0];
-    const landing = hash || "oversikt";
-    // Home after login is the property list when Oversikt itself is gated,
-    // so the wall is not the first thing a new account sees.
-    if ((!hash || hash === "oversikt") && !portalFeatureAllowed(landing, { premium: state.premium, propertyCount: state.properties.length })) {
-      history.replaceState(null, "", `${location.pathname}${location.search}#boliger`);
-    }
   }
   let saved = null;
   try { saved = sessionStorage.getItem("pt-property"); } catch { /* ignore */ }
@@ -6327,14 +6353,23 @@ const load = async (session, isRefresh = false) => {
 
   root.querySelector("[data-user-name]").textContent = state.name || "Min side";
   root.querySelector("[data-avatar]").textContent = (state.name || "?").charAt(0).toUpperCase();
-  if (!isRefresh) startBell();
-  root.setAttribute("aria-busy", "false");
   renderSelect();
+  // A failed overview is the existing error page: not the wall, and not the
+  // empty «Registrer bolig» shell, because the list never actually arrived.
   if (overviewFailed) {
+    root.classList.remove("is-premium-wall");
+    root.setAttribute("aria-busy", "false");
+    if (!isRefresh) startBell();
     renderNav("oversikt");
     content.replaceChildren(emptyPage("info", "Vi fikk ikke hentet oversikten", "Prøv å laste siden på nytt om litt. Alt er tilgjengelig i appen i mellomtiden."));
     return;
   }
+  if (premiumMode() === "wall") {
+    if (!isRefresh) window.addEventListener("hashchange", render);
+    showPremiumWall();
+    return;
+  }
+  if (!isRefresh) startBell();
   if (!isRefresh) window.addEventListener("hashchange", render);
   await render();
 };

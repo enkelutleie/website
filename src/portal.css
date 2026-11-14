@@ -114,7 +114,18 @@ svg { flex: none; }
 .pt-user-text span { font-size: var(--fs-caption); color: var(--secondary-ink); }
 
 .pt-content { padding: 28px 32px 48px; max-width: 1240px; width: 100%; display: flex; flex-direction: column; gap: 20px; }
-.pt-loading { color: var(--secondary-ink); }
+.pt-loading { color: var(--secondary-ink); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.pt-boot-spin { width: 32px; height: 32px; border: 3px solid var(--brand-soft); border-top-color: var(--brand); border-radius: 50%; animation: pt-spin .8s linear infinite; }
+@keyframes pt-spin { to { transform: rotate(360deg); } }
+/* Spinner and the full-screen wall hide the portal chrome. No inline styles. */
+.pt-app[aria-busy="true"] .pt-sidebar,
+.pt-app[aria-busy="true"] .pt-topbar,
+.pt-app.is-premium-wall .pt-sidebar,
+.pt-app.is-premium-wall .pt-topbar { display: none; }
+.pt-app[aria-busy="true"],
+.pt-app.is-premium-wall { display: block; }
+.pt-app[aria-busy="true"] .pt-content,
+.pt-app.is-premium-wall .pt-content { min-height: 100vh; max-width: 640px; margin: 0 auto; align-items: center; justify-content: center; }
 
 /* Buttons */
 .pt-btn { font: inherit; font-size: var(--fs-subheadline); font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--button-min-height); padding: 12px 24px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; transition: opacity var(--ease), transform var(--ease), background-color var(--ease); }
