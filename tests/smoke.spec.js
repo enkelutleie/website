@@ -471,7 +471,7 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
-  // Per-type colors on «Siste transaksjoner» / «Transaksjoner»: purple, gold, red, green.
+  // Per-type colors on «Siste transaksjoner» / «Transaksjoner»: blue, yellow, red, green.
   test("transaction rows color icon and amount by type (Kjørebok, møbler, utgift, inntekt)", async ({ page }) => {
     const tx = (id, over) => ({
       id, property_id: PROPERTY_ID, transaction_type: "expense", category: "other_expense", legacy_category: null,
@@ -496,18 +496,21 @@ test.describe("portal", () => {
     await expect(row("Maling farge").locator(".pt-amount")).toHaveClass(/is-expense/);
     expect(await rgbOf(row("Maling farge").locator(".pt-amount"))).toBe("rgb(255, 59, 48)");
     for (const text of ["Sofa farge", "Bord farge"]) {
-      await expect(row(text).locator(".pt-icon-circle")).toHaveClass(/is-warning/);
-      await expect(row(text).locator(".pt-amount")).toHaveClass(/is-warning/);
-      expect(await rgbOf(row(text).locator(".pt-amount"))).toBe("rgb(255, 149, 0)");
+      await expect(row(text).locator(".pt-icon-circle")).toHaveClass(/is-furnishings/);
+      await expect(row(text).locator(".pt-amount")).toHaveClass(/is-furnishings/);
+      expect(await rgbOf(row(text).locator(".pt-amount"))).toBe("rgb(219, 158, 33)");
     }
     const trip = row("Visning");
     await expect(trip).toContainText("Kjørebok");
-    await expect(trip.locator(".pt-icon-circle")).toHaveClass(/is-tax/);
-    await expect(trip.locator(".pt-amount")).toHaveClass(/is-tax/);
-    expect(await rgbOf(trip.locator(".pt-amount"))).toBe("rgb(175, 82, 222)");
+    await expect(trip.locator(".pt-icon-circle")).toHaveClass(/is-mileage/);
+    await expect(trip.locator(".pt-amount")).toHaveClass(/is-mileage/);
+    expect(await rgbOf(trip.locator(".pt-amount"))).toBe("rgb(0, 136, 255)");
     const furnitureTile = page.locator("a.pt-tile-link").filter({ hasText: "Møbler og inventar" });
-    await expect(furnitureTile.locator(".pt-icon-circle")).toHaveClass(/is-warning/);
-    expect(await rgbOf(furnitureTile.locator(".pt-icon-circle"))).toBe("rgb(255, 149, 0)");
+    await expect(furnitureTile.locator(".pt-icon-circle")).toHaveClass(/is-furnishings/);
+    expect(await rgbOf(furnitureTile.locator(".pt-icon-circle"))).toBe("rgb(219, 158, 33)");
+    const mileageTile = page.locator("a.pt-tile-link").filter({ hasText: "Kjørebok" });
+    await expect(mileageTile.locator(".pt-icon-circle")).toHaveClass(/is-mileage/);
+    expect(await rgbOf(mileageTile.locator(".pt-icon-circle"))).toBe("rgb(0, 136, 255)");
     expect(errors).toEqual([]);
   });
 
@@ -659,7 +662,7 @@ test.describe("portal", () => {
     await expect(dialog.getByLabel("Kilometer")).toHaveValue("15,2");
     await expect(dialog.getByLabel("Bompenger (beregnet)")).toHaveValue("33,60");
     expect(routeCalls(writes)).toHaveLength(1);
-    expect(routeCalls(writes)[0].body).toEqual({ from_address: "Oslo S", to_address: "Sandvika", tolls: true, vehicle_type: "fossil", uses_autopass: true });
+    expect(routeCalls(writes)[0].body).toEqual({ from_address: "Oslo S", to_address: "Sandvika", tolls: true, include_tolls: true, vehicle_type: "fossil", uses_autopass: true });
     await dialog.getByLabel("Formål").fill("Visning");
     await dialog.getByRole("button", { name: "Lagre tur" }).click();
     await expect.poll(() => rpcBody(writes, "create_mileage_trip")).toBeTruthy();

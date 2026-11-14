@@ -4269,10 +4269,10 @@ const economyTiles = () => {
   const tiles = h("section", "pt-tiles");
   const tile = h("a", "pt-tile pt-tile-link");
   tile.href = "#okonomi/kjorebok";
-  tile.append(icon("car", "pt-icon-circle is-tax"), h("strong", null, "Kjørebok"), h("p", null, "Logg turer. Beløpet blir en utgift i regnskapet."));
+  tile.append(icon("car", "pt-icon-circle is-mileage"), h("strong", null, "Kjørebok"), h("p", null, "Logg turer. Beløpet blir en utgift i regnskapet."));
   const furniture = h("a", "pt-tile pt-tile-link");
   furniture.href = "#okonomi/mobler";
-  furniture.append(icon("sofa", "pt-icon-circle is-warning"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
+  furniture.append(icon("sofa", "pt-icon-circle is-furnishings"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
   const report = h("a", "pt-tile pt-tile-link");
   report.href = "#okonomi/arsoppgave";
   report.append(icon("doc", "pt-icon-circle is-tax"), h("strong", null, "Årsoppgave"), h("p", null, "Dokumentasjon av leieinntekter og utgifter"));
@@ -4439,7 +4439,7 @@ const annualPage = async (pid) => {
   }
   const trips = card(`${n++}  Kjørebok`, "car");
   trips.append(reportTable([{ label: "Dato" }, { label: "Fra → til" }, { label: "Formål" }, { label: "Km", align: R }],
-    report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Sum kjøring", annual.kmText(report.summary.drivingMeters)], annual.drivingSums(report)));
+    report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Totalt kjørt", annual.kmText(report.summary.drivingMeters)], annual.drivingSums(report)));
   const sum = card(`${n++}  Oppsummering`, "net");
   sum.append(reportTable([{ label: "" }, { label: "", align: R }],
     [["Sum inntekter", kr2(report.summary.incomeMinor)], ["Sum utgifter", kr2(report.summary.expenseMinor)]],
@@ -4628,7 +4628,7 @@ const mileagePage = async (pid) => {
       const route = [act.displayPlace(t.from_place), act.displayPlace(t.to_place)].filter(Boolean).join(" – ");
       const toll = tripTollMinor(t);
       main.append(h("strong", null, route || t.purpose || "Kjøretur"), h("span", null, [dateText(t.trip_date), t.purpose, `${act.kilometerText(t.distance_meters)} km`, toll > 0 ? `${TOLL_TEXT.title} ${money(toll)}` : null].filter(Boolean).join(" · ")));
-      li.append(icon("car", "pt-icon-circle is-tax"), main, h("span", "pt-amount is-expense", `−${money(tripTotalMinor(t))}`));
+      li.append(icon("car", "pt-icon-circle is-mileage"), main, h("span", "pt-amount is-mileage", `−${money(tripTotalMinor(t))}`));
       if (isManager(pid)) li.append(button("Rediger", "pt-btn-soft pt-btn-small", () => mileageForm(pid, t)));
       ul.append(li);
     }
@@ -4870,7 +4870,7 @@ const assetRow = (item, row, alloc, data, showProperty) => {
   const amount = row.isPurchase ? item.purchaseAmountMinor : row.closingMinor ?? row.openingMinor ?? item.purchaseAmountMinor;
   const side = h("div", "pt-row-side");
   side.append(h("span", "pt-amount", kr(amount)), h("span", `pt-chip ${tone}`.trim(), badge));
-  top.append(icon("sofa", "pt-icon-circle is-tax"), main, side);
+  top.append(icon("sofa", "pt-icon-circle is-furnishings"), main, side);
   li.append(top);
   const manager = isManager(item.propertyId);
   const detail = h("div", "pt-asset-detail");
