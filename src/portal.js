@@ -21,6 +21,7 @@ import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueU
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
 import { manualOccupantsFor, OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
+import { overviewShowsEvent } from "./portal-calendar-window.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
 // and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
@@ -641,10 +642,12 @@ const calendarCard = async (pid, full = false, focus = null) => {
   const answers = new Map((responses?.data ?? []).map((r) => [r.calendar_item_id, r.decision]));
   // Then the room answers (iOS #1600): info events need no answer, and one room's decline
   // does not hide the event for the others. A failed v2 read keeps the legacy answers.
-  const items = res.error ? [] : overlayManager((res.data ?? [])
+  const loaded = res.error ? [] : overlayManager((res.data ?? [])
     .filter((i) => i.status !== "cancelled")
     .map((i) => (answers.get(i.id) && answers.get(i.id) !== i.tenant_response ? { ...i, tenant_response: answers.get(i.id) } : i)), roomRows);
   const now = new Date();
+  // Overview hides events that have already passed (iOS #1644). The calendar page keeps them.
+  const items = full ? loaded : loaded.filter((i) => overviewShowsEvent(i, now));
   const here = osloParts(now);
   const today = new Date(osloWallToUtcIso(here.date, "00:00"));
   if (!calendarView) calendarView = { y: here.year, m: here.month - 1 };
@@ -779,7 +782,7 @@ const calendarCard = async (pid, full = false, focus = null) => {
     }
     out.push(title);
     const limit = full ? (showAll ? upcoming.length : CALENDAR_UPCOMING_PAGE) : CALENDAR_UPCOMING_PREVIEW;
-    if (!upcoming.length) out.push(inline("Ingen kommende hendelser."));
+    if (!upcoming.length) out.push(inline(full ? "Ingen kommende hendelser." : "Ingen kommende kalenderpunkter."));
     else {
       const list = h("ul", "pt-cal-items");
       upcoming.slice(0, limit).forEach((i) => list.append(calendarRow(i, ctx)));
@@ -989,7 +992,7 @@ const propertiesTable = () => {
   return c;
 };
 
-const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long" });
+const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long", timeZone: "Europe/Oslo" });
 // Category for the title fallback; a row without a category falls through to «Inntekt»/«Utgift».
 const txCategoryName = (r) => (String(r.category ?? "").trim() ? act.categoryTitle(r) : null);
 const transactionRow = (pid, r, docIds = []) => {
@@ -1077,7 +1080,7 @@ const transactionList = async (pid) => {
   const cards = [c];
   for (const [key, list] of months) {
     const m = h("section", "pt-card pt-month");
-    m.append(h("h3", "pt-month-title", MONTH_FORMAT.format(new Date(`${key}-01T12:00:00`)).toLocaleUpperCase("nb-NO")));
+    m.append(h("h3", "pt-month-title", MONTH_FORMAT.format(new Date(osloWallToUtcIso(`${key}-01`, "12:00"))).toLocaleUpperCase("nb-NO")));
     const ul = h("ul", "pt-list");
     for (const r of list) ul.append(transactionRow(pid, r, docsOf.get(r.id)));
     m.append(ul);
@@ -1289,14 +1292,14 @@ const propertyForm = async (p) => {
         if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
         if (!p) {
           const managed = state.properties.filter((x) => isManager(x.id)).length;
-          if (managed >= 4) return "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+          if (managed >= 4) return act.PROPERTY_CAP_TEXT;
           const shared = v.housingKind === "shared";
           const roomCount = shared ? act.parseRoomCount(v.roomCount) : null;
           if (shared && !v.roomCount) return "Du må oppgi antall rom som skal leies ut.";
           if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
           const images = finn?.files() ?? [];
           const res = await act.createProperty(state.user.id, v);
-          if (res.error) return act.explain(res.error);
+          if (res.error) return act.propertyCreateError(res.error) ?? act.explain(res.error);
           const id = res.data?.[0]?.id;
           if (id && roomCount) {
             const rooms = await act.ensureSharedRooms(id, roomCount);
@@ -2093,12 +2096,12 @@ const calendarForm = async (pid, item) => {
   });
 };
 
-const handbookForm = (pid, key, label, body) =>
+const handbookForm = (pid, key, label, body, { required = true } = {}) =>
   act.openForm({
     title: label,
     intro: "Teksten blir synlig for leietakerne i boligpermen.",
     submitLabel: "Lagre",
-    fields: [{ name: "body", label: "Innhold", type: "textarea", value: body ?? "", maxLength: 4000, rows: 8, required: true }],
+    fields: [{ name: "body", label: "Innhold", type: "textarea", value: body ?? "", maxLength: 4000, rows: 8, required }],
     onSubmit: async (v) => {
       const res = await act.saveHandbookSection(pid, key, v.body);
       if (res.error) return act.explain(res.error);
@@ -2107,75 +2110,17 @@ const handbookForm = (pid, key, label, body) =>
     },
   });
 
-// Strøm (iOS PropertyHandbookElectricity): målepunkt-ID and målernummer, not meter readings.
-const ELECTRICITY_MP_HINT = "18 siffer som starter med 7070575000.";
-const ELECTRICITY_MP_INVALID = "Målepunkt-ID må være 18 siffer og starte med 7070575000.";
-const ELECTRICITY_MN_TOO_LONG = "Målernummeret kan ha høyst 40 tegn.";
-const electricityForm = (pid, current) => {
-  const problems = (inputs) => {
-    const mp = act.normalizeMeteringPoint(inputs.meteringPoint.value);
-    const mn = act.normalizeMeterNumber(inputs.meterNumber.value);
-    return { mp, mn, mpBad: !act.meteringPointValid(mp), mnBad: !act.meterNumberValid(mn) };
-  };
-  return act.openForm({
-    title: "Strøm",
-    intro: "Målepunkt-ID og målernummer gjør det enklere for leietakeren å bytte strømavtale. Begge feltene er valgfrie.",
-    submitLabel: "Lagre",
-    fields: [
-      { name: "meteringPoint", label: "Målepunkt-ID", type: "text", value: current.metering_point_id ?? "", maxLength: 40, placeholder: "707057500…", help: ELECTRICITY_MP_HINT },
-      { name: "meterNumber", label: "Målernummer", type: "text", value: current.meter_number ?? "", maxLength: 60 },
-    ],
-    onChange: (inputs) => {
-      const { mpBad, mnBad } = problems(inputs);
-      const mpField = inputs.meteringPoint.closest(".pt-field");
-      const mnField = inputs.meterNumber.closest(".pt-field");
-      const mpHelp = mpField.querySelector(".pt-field-help");
-      if (mpHelp) {
-        mpHelp.textContent = mpBad ? ELECTRICITY_MP_INVALID : ELECTRICITY_MP_HINT;
-        mpHelp.classList.toggle("is-error", mpBad);
-      }
-      let mnHelp = mnField.querySelector(".pt-field-help");
-      if (mnBad && !mnHelp) {
-        mnHelp = h("span", "pt-field-help is-error", ELECTRICITY_MN_TOO_LONG);
-        mnField.append(mnHelp);
-      } else if (!mnBad && mnHelp) mnHelp.remove();
-      inputs.meteringPoint.setAttribute("aria-invalid", mpBad ? "true" : "false");
-      inputs.meterNumber.setAttribute("aria-invalid", mnBad ? "true" : "false");
-      const submit = inputs.meteringPoint.form?.querySelector("button[type=submit]");
-      if (submit) submit.disabled = mpBad || mnBad;
-    },
-    onSubmit: async (_v, inputs) => {
-      const { mp, mn, mpBad, mnBad } = problems(inputs);
-      if (mpBad) return ELECTRICITY_MP_INVALID;
-      if (mnBad) return ELECTRICITY_MN_TOO_LONG;
-      if (mp === (current.metering_point_id ?? null) && mn === (current.meter_number ?? null)) return null;
-      const res = await act.saveHandbookElectricity(pid, mp, mn);
-      if (res.error) return "Strømopplysningene kunne ikke lagres. Prøv igjen.";
-      await refresh("Boligpermen er oppdatert.");
-      return null;
-    },
-  });
-};
-
-const electricityTile = (pid, res) => {
-  const row = res?.data?.[0] ?? {};
-  const current = { metering_point_id: row.metering_point_id ?? null, meter_number: row.meter_number ?? null };
-  const filled = current.metering_point_id || current.meter_number;
+// Strøm (iOS #1651): one text field, like Stoppekran. Older målepunkt/målernummer stay as read-only lines until a text is saved.
+const electricityTile = (pid, res, body, sectionsFailed) => {
+  const stored = String(body ?? "");
+  const failed = Boolean(sectionsFailed || (res?.error && !stored.trim()));
+  const text = failed ? "" : act.electricityHandbookText(stored, res?.data?.[0]);
   const t = h("article", "pt-tile");
-  t.append(icon("bolt", filled ? "pt-icon-circle is-warning" : "pt-icon-circle is-muted"), h("strong", null, "Strøm"));
-  if (res?.error) t.append(h("p", null, "Strømopplysningene kunne ikke hentes akkurat nå."));
-  else if (!filled) t.append(h("p", null, "Ikke fylt ut"));
-  else {
-    const dl = h("dl", "pt-tile-facts");
-    [["Målepunkt-ID", current.metering_point_id], ["Målernummer", current.meter_number]].forEach(([k, v]) => {
-      if (!v) return;
-      const d = h("div");
-      d.append(h("dt", null, k), h("dd", null, v));
-      dl.append(d);
-    });
-    t.append(dl);
-  }
-  if (isManager(pid) && !res?.error) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => electricityForm(pid, current))));
+  t.append(icon("bolt", text ? "pt-icon-circle is-warning" : "pt-icon-circle is-muted"), h("strong", null, "Strøm"));
+  if (failed) t.append(h("p", null, "Strømopplysningene kunne ikke hentes akkurat nå."));
+  else if (!text) t.append(h("p", null, "Ikke fylt ut"));
+  else t.append(h("p", "pt-prewrap", text));
+  if (isManager(pid) && !failed) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(pid, "electricity", "Strøm", stored, { required: false }))));
   return t;
 };
 
@@ -5438,7 +5383,7 @@ const PAGES = {
       t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), h("p", null, res.error ? "Kunne ikke hentes" : bodies.get(key) ?? "Ikke fylt ut"));
       if (isManager(p.id) && !res.error) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(p.id, key, label, bodies.get(key)))));
       tiles.append(t);
-      if (key === "fuse_box") tiles.append(electricityTile(p.id, el));
+      if (key === "fuse_box") tiles.append(electricityTile(p.id, el, bodies.get("electricity") ?? "", res.error));
     }
     return [intro, tiles];
   },
