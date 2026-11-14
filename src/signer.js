@@ -1,13 +1,11 @@
 import {
-  FINAL_ERRORS, addressLine, base64ToBytes, callSigning, codeValid, errorText, normalizeCode,
-  roleLabel, sessionKey, signatureBody, tokenFromPath,
+  FINAL_ERRORS, addressLine, base64ToBytes, callSigning, errorText,
+  roleLabel, signatureBody, tokenFromPath,
 } from "./signer-api.js";
 
 const root = document.querySelector("[data-signer]");
 const token = tokenFromPath(location.pathname);
 let landlordName = "";
-let emailHint = "";
-let cooldownTimer = null;
 
 const el = (tag, cls, text) => {
   const node = document.createElement(tag);
@@ -46,43 +44,15 @@ const busy = (b, on, label) => {
   b.setAttribute("aria-busy", on ? "true" : "false");
 };
 
-const storedSession = () => {
-  try {
-    const raw = JSON.parse(sessionStorage.getItem(sessionKey(token)) ?? "null");
-    return raw && raw.expiresAt > Date.now() && typeof raw.session === "string" ? raw.session : null;
-  } catch { return null; }
-};
-const storeSession = (session, seconds) => {
-  try { sessionStorage.setItem(sessionKey(token), JSON.stringify({ session, expiresAt: Date.now() + Math.max(60, seconds - 30) * 1000 })); } catch { /* private mode */ }
-};
-const clearSession = () => { try { sessionStorage.removeItem(sessionKey(token)); } catch { /* ignore */ } };
-
 function finalError(code) {
   const title = code === "already_signed" ? "Allerede signert" : code === "token_expired" ? "Lenken har utløpt" : "Lenken kan ikke brukes";
   show(card(heading(title), el("p", "signer-lead", errorText(code)),
     el("p", "signer-muted", "Har du spørsmål? Ta kontakt med utleier, eller skriv til support@enkelutleie.com.")));
 }
 
-function handleError(res, fallback) {
-  if (FINAL_ERRORS.has(res.error)) { clearSession(); finalError(res.error); return true; }
-  if (res.error === "session_required") { clearSession(); fallback?.(); return true; }
+function handleError(res) {
+  if (FINAL_ERRORS.has(res.error)) { finalError(res.error); return true; }
   return false;
-}
-
-/* ---------- 1. Start ---------- */
-async function start() {
-  if (!token) { finalError("token_invalid"); return; }
-  const res = await callSigning({ action: "start", token });
-  if (!res.ok) {
-    if (handleError(res)) return;
-    show(card(heading("Noe gikk galt"), message(errorText(res.error)), retryButton(start)));
-    return;
-  }
-  landlordName = res.data.landlord_name || "Utleier";
-  emailHint = res.data.email_hint || "e-postadressen din";
-  if (storedSession()) { await view(); return; }
-  if (res.data.code_pending) { codeStep({ pending: true }); return; }
-  intro();
 }
 
 const retryButton = (fn) => {
@@ -91,113 +61,18 @@ const retryButton = (fn) => {
   return b;
 };
 
-function intro() {
-  const send = button("Send engangskode");
-  const status = el("div");
-  send.addEventListener("click", async () => {
-    busy(send, true, "Sender kode …");
-    const ok = await requestCode(status);
-    busy(send, false, "Send engangskode");
-    if (ok) codeStep({ sent: true });
-  });
-  show(card(
-    heading("Leiekontrakt til signering"),
-    el("p", "signer-lead", `${landlordName} har sendt deg en leiekontrakt fra Enkel Utleie.`),
-    el("p", null, `For å vise kontrakten sender vi en engangskode til ${emailHint}. Du trenger ikke konto eller app.`),
-    send, status,
-    el("p", "signer-muted", "Koden er gyldig i 10 minutter."),
-  ));
-}
-
-async function requestCode(statusNode) {
-  const res = await callSigning({ action: "send_code", token });
-  if (res.ok) {
-    emailHint = res.data.email_hint || emailHint;
-    return true;
-  }
-  if (handleError(res)) return false;
-  let text = errorText(res.error);
-  if (res.error === "otp_cooldown" && res.data?.retry_after_seconds) text = `Vi har nettopp sendt en kode. Du kan be om en ny om ${res.data.retry_after_seconds} sekunder.`;
-  statusNode.replaceChildren(message(text));
-  return false;
-}
-
-/* ---------- 2. Engangskode ---------- */
-function codeStep({ sent = false, pending = false } = {}) {
-  const form = el("form", "signer-form");
-  const label = el("label", null, "Engangskode");
-  label.htmlFor = "signer-code";
-  const input = el("input", "signer-code");
-  Object.assign(input, { id: "signer-code", name: "code", inputMode: "numeric", autocomplete: "one-time-code", maxLength: 6, required: true, placeholder: "6 sifre" });
-  input.setAttribute("pattern", "[0-9]{6}");
-  input.addEventListener("input", () => { input.value = normalizeCode(input.value); });
-  const submit = el("button", "btn", "Bekreft kode");
-  submit.type = "submit";
-  const status = el("div");
-  const resend = button("Send ny kode", "btn-link");
-  form.append(label, input, submit, status);
-
-  const startCooldown = (seconds) => {
-    clearInterval(cooldownTimer);
-    let left = seconds;
-    resend.disabled = true;
-    resend.textContent = `Send ny kode (${left})`;
-    cooldownTimer = setInterval(() => {
-      left -= 1;
-      if (left <= 0) { clearInterval(cooldownTimer); resend.disabled = false; resend.textContent = "Send ny kode"; return; }
-      resend.textContent = `Send ny kode (${left})`;
-    }, 1000);
-  };
-  if (sent || pending) startCooldown(60);
-
-  resend.addEventListener("click", async () => {
-    resend.disabled = true;
-    const ok = await requestCode(status);
-    if (ok) { status.replaceChildren(message(`Ny kode er sendt til ${emailHint}.`, "info")); input.value = ""; startCooldown(60); }
-    else resend.disabled = false;
-  });
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const code = normalizeCode(input.value);
-    if (!codeValid(code)) { status.replaceChildren(message("Skriv inn de seks sifrene fra e-posten.")); input.focus(); return; }
-    busy(submit, true, "Bekrefter …");
-    const res = await callSigning({ action: "verify_code", token, code });
-    busy(submit, false, "Bekreft kode");
-    if (res.ok) {
-      storeSession(res.data.session, Number(res.data.session_expires_in_seconds) || 3600);
-      await view();
-      return;
-    }
-    if (handleError(res)) return;
-    let text = errorText(res.error);
-    if (res.error === "otp_invalid" && Number.isFinite(res.data?.attempts_left)) {
-      text = res.data.attempts_left > 0 ? `Koden stemmer ikke. Du har ${res.data.attempts_left} forsøk igjen.` : errorText("otp_locked");
-    }
-    status.replaceChildren(message(text));
-    input.select();
-  });
-
-  const lead = pending
-    ? `Vi har allerede sendt en engangskode til ${emailHint}. Skriv den inn under.`
-    : `Vi har sendt en engangskode til ${emailHint}. Skriv den inn under.`;
-  show(card(heading("Skriv inn engangskoden"), el("p", "signer-lead", lead), form,
-    el("p", "signer-muted", "Finner du ikke e-posten? Sjekk søppelpost eller kampanjer."), resend));
-  input.focus();
-}
-
-/* ---------- 3. Kontrakten ---------- */
+/* ---------- 1. Kontrakten (åpnes direkte fra lenken) ---------- */
 async function view() {
-  const session = storedSession();
-  if (!session) { intro(); return; }
+  if (!token) { finalError("token_invalid"); return; }
   show(card(el("p", "signer-muted", "Henter leiekontrakten …")));
-  const res = await callSigning({ action: "view", token, session });
+  const res = await callSigning({ action: "view", token });
   if (!res.ok) {
-    if (handleError(res, () => codeStep({}))) return;
+    if (handleError(res)) return;
     show(card(heading("Noe gikk galt"), message(errorText(res.error)), retryButton(view)));
     return;
   }
   const data = res.data;
+  landlordName = data.landlord_name || "";
   const bytes = base64ToBytes(data.pdf?.base64 ?? "");
   const blobURL = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
   const address = addressLine(data.property);
@@ -218,6 +93,7 @@ async function view() {
   const summary = card(
     heading("Les leiekontrakten"),
     el("p", "signer-lead", address ? `Leiekontrakt for ${address}` : "Leiekontrakt"),
+    landlordName ? el("p", null, `${landlordName} har sendt deg denne leiekontrakten til signering.`) : null,
     parties,
     el("p", "signer-muted", "Les hele kontrakten før du signerer. Du kan også laste den ned."),
     download,
@@ -225,7 +101,7 @@ async function view() {
   const docSection = el("section", "signer-document");
   docSection.setAttribute("aria-label", "Leiekontrakten");
   docSection.append(pages);
-  show(summary, docSection, signCard(data, session));
+  show(summary, docSection, signCard(data));
   renderPDF(bytes, pages, blobURL);
 }
 
@@ -260,7 +136,7 @@ async function renderPDF(bytes, container, blobURL) {
   }
 }
 
-/* ---------- 4. Signatur ---------- */
+/* ---------- 2. Signatur ---------- */
 function signaturePad() {
   const wrap = el("div", "signer-pad");
   const canvas = el("canvas", "signer-pad-canvas");
@@ -326,7 +202,7 @@ function signaturePad() {
   };
 }
 
-function signCard(data, session) {
+function signCard(data) {
   const name = data.party?.name || "Leietaker";
   const pad = signaturePad();
   const placeLabel = el("label", null, "Sted (valgfritt)");
@@ -355,13 +231,13 @@ function signCard(data, session) {
     box.disabled = true;
     place.disabled = true;
     status.replaceChildren(message("Signerer og lager den ferdige kontrakten. Dette kan ta noen sekunder …", "info"));
-    const res = await callSigning(signatureBody({ token, session, jpegBase64: jpeg, width: pad.width, height: pad.height, signerName: name, place: place.value }));
-    if (res.ok) { clearSession(); done(); return; }
+    const res = await callSigning(signatureBody({ token, jpegBase64: jpeg, width: pad.width, height: pad.height, signerName: name, place: place.value }));
+    if (res.ok) { done(); return; }
     pad.lock(false);
     box.disabled = false;
     place.disabled = false;
     busy(submit, false, "Signer og send inn");
-    if (handleError(res, () => codeStep({}))) return;
+    if (handleError(res)) return;
     status.replaceChildren(message(errorText(res.error)));
   });
 
@@ -387,4 +263,4 @@ function done() {
     el("p", "signer-muted", "Du kan lukke denne siden. Lenken kan ikke brukes igjen.")));
 }
 
-start();
+view();
