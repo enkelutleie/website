@@ -18,6 +18,15 @@ import { routeComposer, ROUTE_TEXT } from "./portal-mileage-route.js";
 import { tollBreakdown, tollInputMinor, tollLabel, tollParams, TOLL_TEXT, tripTollMinor, tripTollOptionsFrom, tripTollPrefParams, tripTotalMinor } from "./portal-mileage-tolls.js";
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
+import {
+  adoptLoadedHandoverNote,
+  clearHandoverWorkingNote,
+  createHandoverCoalescer,
+  handoverSameContent,
+  handoverWorkingNote,
+  setHandoverWorkingNote,
+  withChecklistPointDone,
+} from "./portal-handover-sync.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
 import { manualOccupantsFor, OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
@@ -3307,7 +3316,10 @@ const hoTrack = (promise) => {
   promise.finally(() => hoSaves.delete(promise)).catch(() => {});
   return promise;
 };
-const hoSaveItem = (item, condition, note) => hoTrack(act.saveInspectionItem(item, condition, note));
+const hoSaveItem = (item, condition, note) => hoTrack(act.saveInspectionItem(item, condition, note).then((res) => {
+  if (res?.data && item?.inspection_id) state.cache.delete(`ho-items:${item.inspection_id}`);
+  return res;
+}));
 // Returns true when the save is in fact stored: a late "already sent" reply for a
 // value that the locked checklist already holds is not an error.
 const hoSaveFailed = async (res, item, condition, note) => {
@@ -3397,7 +3409,7 @@ const hoChecklist = (items, editable) => {
     note.placeholder = "Valgfri merknad";
     note.setAttribute("aria-label", "Valgfri merknad");
     note.value = visible;
-    const shownNote = () => (item.area_code === "other" ? act.visibleNote(item.note) : (item.note ?? "").trim());
+    const shownNote = () => (item.area_code === "other" ? act.visibleNote(handoverWorkingNote(item.id) ?? item.note) : (item.note ?? "").trim());
     const dirty = () => Boolean(sel.value) && (sel.value !== (item.condition ?? "") || note.value.trim() !== shownNote());
     // quiet: the unsaved edit is stored as part of «Ferdigstill», without its own toast.
     const store = async (quiet) => {
@@ -3405,7 +3417,9 @@ const hoChecklist = (items, editable) => {
         act.toast("Velg tilstand.");
         return false;
       }
-      const text = item.area_code === "other" ? act.withVisibleNote(item.note, note.value) : note.value.trim();
+      const source = item.area_code === "other" ? (handoverWorkingNote(item.id) ?? item.note) : item.note;
+      const text = item.area_code === "other" ? act.withVisibleNote(source, note.value) : note.value.trim();
+      if (item.area_code === "other") setHandoverWorkingNote(item.id, text);
       if ((text ?? "").length > act.INSPECTION_NOTE_LIMIT) {
         act.toast("Merknaden er for lang.");
         return false;
@@ -3442,12 +3456,12 @@ const hoShared = (items, phase, editable, photos) => {
   if (!data) return null;
   const listKey = phase === "move_out" ? "out" : "in";
   const c = card("Nøkler, målere og sjekkpunkter", "key");
-  const points = (Array.isArray(data[listKey]) ? data[listKey] : []).map((row, index) => ({ row, index }))
+  const points = (Array.isArray(data[listKey]) ? data[listKey] : []).map((row) => ({ row }))
     .filter(({ row }) => row && !row.x && (row.k || row.t));
   if (points.length) {
     c.append(h("p", "pt-label", "Sjekkliste"));
     const ul = h("ul", "pt-ho-checks");
-    for (const { row, index } of points) {
+    for (const { row } of points) {
       const li = h("li", "pt-ho-check");
       const label = h("label");
       const box = h("input");
@@ -3461,11 +3475,13 @@ const hoShared = (items, phase, editable, photos) => {
       const strip = hoPhotoStrip(photos?.checklist.get(rowKey(row))?.[listKey], title);
       if (strip) li.append(strip);
       box.addEventListener("change", async () => {
-        const next = act.withChecklistDone(other.note, listKey, index, box.checked);
+        const current = handoverWorkingNote(other.id) ?? other.note;
+        const next = withChecklistPointDone(current, listKey, row, box.checked);
         if (!next || next.length > act.INSPECTION_NOTE_LIMIT) {
           box.checked = !box.checked;
           return act.toast("Kunne ikke lagre punktet. Prøv igjen.");
         }
+        setHandoverWorkingNote(other.id, next);
         box.disabled = true;
         const condition = other.condition ?? "ok";
         const res = await hoSaveItem(other, condition, next);
@@ -3475,6 +3491,7 @@ const hoShared = (items, phase, editable, photos) => {
           return;
         }
         Object.assign(other, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
+        if (!handoverSameContent(next, res.data.note)) await hoReloadPage();
       });
       ul.append(li);
     }
@@ -3560,10 +3577,53 @@ const hoComments = async (inspection, canComment) => {
   }
   return c;
 };
+// The loaded note is the baseline. A working note (an unsaved check or meter) is
+// merged into it, and left dirty so the save still sends this browser's answers.
+const hoApplySharedNote = (rows, editable) => {
+  const other = (rows ?? []).find((row) => row.area_code === "other");
+  if (!other) return;
+  if (!editable) {
+    clearHandoverWorkingNote(other.id);
+    return;
+  }
+  const adopted = adoptLoadedHandoverNote(other.id, other.note);
+  other.note = adopted.note;
+  if (!adopted.dirty) return;
+  const condition = other.condition ?? "ok";
+  hoSaveItem(other, condition, adopted.note).then((res) => {
+    if (res?.error || !res?.data) act.toast(act.inspectionError(res) ?? "Kunne ikke lagre punktet. Prøv igjen.");
+    else Object.assign(other, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
+  });
+};
+// Draft protocols only. A burst of row events reloads once; a reconnect reloads everything.
+const hoWatchProtocol = (inspection, token) => {
+  if (!inspection || inspection.status !== "draft") return;
+  const live = createHandoverCoalescer();
+  const stop = act.subscribeHandover([inspection], (kind) => {
+    live.submit(kind, async (next) => {
+      if (token !== renderToken) return;
+      for (const flush of [...hoDrafts]) {
+        if (!(await flush())) return;
+      }
+      const prefixes = next === "photos" ? ["ho-photos:"] : ["ho:", "rte-", "ho-items:", "ho-comments:", "ho-photos:"];
+      for (const key of [...state.cache.keys()]) {
+        if (prefixes.some((prefix) => key.startsWith(prefix))) state.cache.delete(key);
+      }
+      await render();
+    });
+  });
+  if (token !== renderToken) {
+    live.cancel();
+    stop();
+    return;
+  }
+  setPageCleanup(() => { live.cancel(); stop(); });
+};
 const hoProtocolCards = async (inspection, editable, canComment, d) => {
   const items = await cachedOk(`ho-items:${inspection.id}`, () => act.listInspectionItems(inspection.id));
   if (items.error) return [inline("Sjekklisten kunne ikke hentes akkurat nå.")];
-  const rows = items.data ?? [];
+  const rows = (items.data ?? []).map((row) => ({ ...row }));
+  hoApplySharedNote(rows, editable);
   const note = hoNoteOf(rows);
   const photos = note ? await hoPhotos(d ?? { [inspection.type === "move_out" ? "moveOut" : "moveIn"]: inspection }, hoNoteKeys(note)) : null;
   return [hoChecklist(rows, editable), hoShared(rows, inspection.type, editable, photos), await hoComments(inspection, canComment)].filter(Boolean);
@@ -3588,6 +3648,7 @@ const hoTenantFillToggle = (i) => {
 };
 
 const hoMoveInPage = async (p, t, d) => {
+  const token = renderToken;
   const manager = isManager(p.id);
   const i = d.moveIn;
   const head = card("Innflytting", "checklist");
@@ -3638,6 +3699,7 @@ const hoMoveInPage = async (p, t, d) => {
   }
   const editable = draft && (manager || tenantFilling);
   const canComment = draft && (manager || Boolean(i.sent_for_review_at));
+  hoWatchProtocol(i, token);
   return [hoBack(), head, ...(await hoProtocolCards(i, editable, canComment, d))];
 };
 
@@ -3668,6 +3730,7 @@ const hoNoticeForm = async (p, t, manager) => {
   });
 };
 const hoMoveOutPage = async (p, t, d) => {
+  const token = renderToken;
   const manager = isManager(p.id);
   const proc = d.process;
   const i = d.moveOut;
@@ -3730,6 +3793,7 @@ const hoMoveOutPage = async (p, t, d) => {
   if (buttons.length) head.append(actionsRow(...buttons));
   if (!i) return [hoBack(), head];
   const tenantFilling = !manager && !finalized && i.tenant_may_fill;
+  hoWatchProtocol(i, token);
   return [hoBack(), head, ...(await hoProtocolCards(i, !finalized && (manager || tenantFilling), manager && !finalized, d))];
 };
 

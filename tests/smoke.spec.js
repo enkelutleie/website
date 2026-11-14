@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, HANDOVER_IN_ID, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -1297,6 +1297,44 @@ test.describe("portal", () => {
     const inCard = page.locator(".pt-card").filter({ has: page.getByRole("heading", { name: "Nøkler, målere og sjekkpunkter" }) });
     await expectPhotos(inCard.getByLabel("Kontroller vegger og gulv for skader", { exact: true }), [1, 3]);
     await expectPhotos(inCard.getByLabel("Strøm (kWh)", { exact: true }), [2]);
+    expect(errors).toEqual([]);
+  });
+
+  test("a checklist save merges the other tenant's check and meter instead of replacing the list", async ({ page }) => {
+    const WALLS = "property.detail.handover.moveIn.item.walls";
+    const TAPS = "property.detail.handover.moveIn.item.taps";
+    const marker = (data) => `[[eu-handover:${JSON.stringify(data)}]]`;
+    const tables = handoverTables();
+    const moveIn = tables.inspections.find((row) => row.id === HANDOVER_IN_ID);
+    moveIn.status = "draft";
+    moveIn.finalized_at = null;
+    const item = tables.inspection_items.find((row) => row.inspection_id === HANDOVER_IN_ID);
+    item.note = marker({
+      in: [{ k: WALLS, d: false }, { k: TAPS, d: false }],
+      keys: [{ kind: "frontDoor", issued: 2 }],
+      meters: [{ kind: "electricity", in: "111" }, { kind: "water", in: "222" }],
+    });
+    const freshNote = marker({
+      in: [{ k: WALLS, d: false }, { k: TAPS, d: true, c: "Drypp" }, { t: "Egen flekk", d: true }],
+      keys: [{ kind: "frontDoor", issued: 4 }],
+      meters: [{ kind: "electricity", in: "111" }, { kind: "water", in: "999" }],
+    });
+    const { writes, errors } = await openPortal(page, {
+      handover: tables,
+      handoverFreshItem: { id: item.id, note: freshNote, updated_at: "2026-11-14T11:11:11Z" },
+    });
+    await page.goto("/portal/#inn-utflytting/innflytting");
+    await page.getByRole("checkbox", { name: "Kontroller vegger og gulv for skader" }).click();
+    await expect.poll(() => writes.find((entry) => entry.path.endsWith("/update_inspection_item"))).toBeTruthy();
+    const saved = writes.find((entry) => entry.path.endsWith("/update_inspection_item"));
+    expect(saved.body.expected_updated_at).toBe("2026-11-14T11:11:11Z");
+    const stored = JSON.parse(saved.body.requested_note.slice(saved.body.requested_note.indexOf("{"), saved.body.requested_note.lastIndexOf("}") + 1));
+    expect(stored.in.find((row) => row.k === WALLS).d).toBe(true);
+    expect(stored.in.find((row) => row.k === TAPS)).toMatchObject({ d: true, c: "Drypp" });
+    expect(stored.in.find((row) => row.t === "Egen flekk").d).toBe(true);
+    expect(stored.meters.find((meter) => meter.kind === "water").in).toBe("999");
+    expect(stored.meters.find((meter) => meter.kind === "electricity").in).toBe("111");
+    expect(stored.keys[0].issued).toBe(4);
     expect(errors).toEqual([]);
   });
 
