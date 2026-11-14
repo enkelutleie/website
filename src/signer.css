@@ -20,11 +20,10 @@
 .btn-link[disabled] { color: var(--muted); cursor: default; }
 .signer-form { display: grid; gap: 0.5rem; }
 .signer-card label { font-size: 0.92rem; font-weight: 620; color: var(--navy); }
-.signer-card input[type="text"], .signer-card input:not([type]), .signer-code {
+.signer-card input[type="text"], .signer-card input:not([type]) {
   width: 100%; min-height: 3rem; padding: 0.6rem 0.85rem; border: 1px solid var(--line); border-radius: 0.8rem;
   font: inherit; color: var(--ink); background: #fff;
 }
-.signer-code { font-size: 1.6rem; letter-spacing: 0.45em; text-align: center; font-variant-numeric: tabular-nums; }
 .signer-message { padding: 0.7rem 0.9rem; border-radius: 0.8rem; font-size: 0.95rem; }
 .signer-message.is-error { background: #fdecec; color: #8a1c1c; }
 .signer-message.is-info { background: #e8f3ff; color: var(--navy); }

@@ -6,8 +6,6 @@ export function tokenFromPath(pathname) {
   return match ? match[1] : null;
 }
 
-export const codeValid = (value) => /^\d{6}$/u.test(String(value ?? "").trim());
-export const normalizeCode = (value) => String(value ?? "").replace(/\D/gu, "").slice(0, 6);
 
 export const ERROR_TEXT = {
   token_invalid: "Lenken er ugyldig. Sjekk at du har åpnet hele lenken fra e-posten, eller be utleier sende en ny.",
@@ -21,13 +19,6 @@ export const ERROR_TEXT = {
   invalid_request: "Noe gikk galt. Last siden på nytt og prøv igjen.",
   forbidden_origin: "Siden må åpnes på enkelutleie.com.",
   server_error: "Vi har tekniske problemer akkurat nå. Prøv igjen om litt.",
-  session_required: "Økten din har utløpt. Bekreft med en ny engangskode.",
-  otp_invalid: "Koden stemmer ikke. Sjekk e-posten og prøv igjen.",
-  otp_expired: "Koden har utløpt. Be om en ny kode.",
-  otp_locked: "For mange feil forsøk. Be om en ny kode.",
-  otp_cooldown: "Vi har nettopp sendt en kode. Vent litt før du ber om en ny.",
-  otp_rate_limited: "Du har bedt om for mange koder. Prøv igjen om en time.",
-  email_failed: "Vi klarte ikke å sende koden akkurat nå. Prøv igjen om litt.",
   network: "Fikk ikke kontakt med Enkel Utleie. Sjekk nettforbindelsen og prøv igjen.",
 };
 
@@ -80,11 +71,10 @@ export function base64ToBytes(value) {
   return bytes;
 }
 
-export function signatureBody({ token, session, jpegBase64, width, height, signerName, place, now = new Date() }) {
+export function signatureBody({ token, jpegBase64, width, height, signerName, place, now = new Date() }) {
   return {
     action: "sign",
     token,
-    session,
     approved: true,
     signature: {
       jpeg_base64: jpegBase64,
@@ -97,4 +87,3 @@ export function signatureBody({ token, session, jpegBase64, width, height, signe
   };
 }
 
-export const sessionKey = (token) => `eu-signer-session:${String(token).slice(0, 12)}`;
