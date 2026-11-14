@@ -10,7 +10,7 @@ import { notificationRoute, notificationText, notificationTitle } from "./portal
 import { createFinnImport } from "./portal-finn.js";
 import { createCalendarLive } from "./portal-calendar-live.js";
 import { isCoInviteReceivedRow } from "./portal-co-invite-accept.js";
-import { transactionListTitle } from "./portal-transaction-title.js";
+import { mileageDetailTitle, mileageListTitle, transactionListTitle } from "./portal-transaction-title.js";
 import { transactionListTone } from "./portal-transaction-tone.js";
 import { createBellWaker } from "./portal-bell-wake.js";
 import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
@@ -119,6 +119,12 @@ const addressOf = (p) => ({
   line: [p.address_line1, p.address_line2].filter(Boolean).join(", ") || "Bolig uten adresse",
   place: [p.postal_code, p.city].filter(Boolean).join(" "),
 });
+const propertyDisplayName = (pid) => {
+  const p = state.properties.find((x) => x.id === pid);
+  if (!p) return "";
+  const a = addressOf(p);
+  return p.unit_identifier ? `${a.line} (${p.unit_identifier})` : a.line;
+};
 const property = () => state.properties.find((p) => p.id === state.propertyId) ?? null;
 const roleOf = (id) => {
   const r = state.roles.get(id);
@@ -982,15 +988,62 @@ const propertiesTable = () => {
 const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long" });
 // Category for the title fallback; a row without a category falls through to «Inntekt»/«Utgift».
 const txCategoryName = (r) => (String(r.category ?? "").trim() ? act.categoryTitle(r) : null);
+// A kjørebok expense keeps route, kilometres and tolls off the list. They open here.
+// mileageFields is the trip detail (kilometres last). A trailing «bompenger … kr» is not
+// parsed: the dialog name is the stored description, so route, km and tolls stay visible.
+const openMileageDetail = (pid, r) => {
+  const fields = act.mileageFields(r);
+  const dialog = h("dialog", "pt-modal");
+  dialog.dataset.testid = "economy.mileage.detail";
+  const card = h("div", "pt-modal-card");
+  const head = h("div", "pt-card-head");
+  const titleId = `pt-mileage-detail-${r.id}`;
+  const heading = h("h2", "pt-mileage-title", fields ? mileageDetailTitle(fields.purpose) : String(r.description ?? "").trim());
+  heading.id = titleId;
+  dialog.setAttribute("aria-labelledby", titleId);
+  head.append(heading);
+  const facts = h("dl", "pt-facts pt-mileage-facts");
+  const add = (label, value) => {
+    const d = h("div");
+    d.append(h("dt", null, label), h("dd", null, value));
+    facts.append(d);
+  };
+  if (fields) {
+    const route = [act.displayPlace(fields.fromPlace), act.displayPlace(fields.toPlace)].filter(Boolean).join(" – ") || "–";
+    add("Rute", route);
+    add("Kilometer", `${act.kilometerText(fields.meters)} km`);
+  } else add("Dato", dateText(r.transaction_date) || "–");
+  add("Beløp", `−${money(r.amount_minor)}`);
+  const actions = h("div", "pt-modal-actions");
+  const done = () => {
+    dialog.close();
+    dialog.remove();
+  };
+  const closeBtn = button("Lukk", "pt-btn-secondary", done);
+  actions.append(closeBtn);
+  if (isManager(pid)) {
+    const log = h("a", "pt-btn pt-btn-soft pt-btn-small", "Åpne kjørebok");
+    log.href = "#okonomi/kjorebok";
+    log.addEventListener("click", done);
+    actions.append(log);
+  }
+  card.append(head, facts, actions);
+  dialog.append(card);
+  document.body.append(dialog);
+  dialog.addEventListener("cancel", done);
+  dialog.showModal();
+  closeBtn.focus();
+};
+
 const transactionRow = (pid, r, docIds = []) => {
   const inc = r.transaction_type === "income";
   const li = h("li", "pt-row");
   const main = h("div", "pt-row-main");
-  // EconomyTransactionPresentation.listCopy: a trip expense shows its purpose and «25,5 km», no category.
-  const mileage = act.mileageFields(r);
+  // Transaksjoner: «Kjørebok · <formål>», then property and date on their own lines.
+  // Route, kilometres and tolls stay off the row. Oversikt has no «Siste transaksjoner».
+  const mileage = act.mileageListFields(r);
   const category = mileage ? null : act.categoryTitle(r);
-  const title = mileage ? mileage.purpose || "Kjørebok" : transactionListTitle(r, txCategoryName(r));
-  const sub = mileage ? [`${act.kilometerText(mileage.meters)} km`, dateText(r.transaction_date)] : [dateText(r.transaction_date), category];
+  const title = mileage ? mileageListTitle(mileage.purpose) : transactionListTitle(r, txCategoryName(r));
   // iOS #1606 (RECURRING_TX_ICON): a post from a series gets a small capsule right after its title.
   const titleRow = h("div", "pt-tx-title");
   titleRow.append(h("strong", null, title));
@@ -1002,18 +1055,29 @@ const transactionRow = (pid, r, docIds = []) => {
     badge.dataset.testid = "economy.transaction.recurring";
     titleRow.append(badge);
   }
-  main.append(titleRow, h("span", null, sub.join(" · ")));
-  if (mileage) main.append(h("span", "pt-chip", "Kjørebok"));
-  const tone = transactionListTone(r);
-  li.append(icon(inc ? "income" : "expense", `pt-icon-circle ${tone.icon}`), main,
-    h("span", `pt-amount ${tone.amount}`, `${inc ? "" : "−"}${money(r.amount_minor)}`));
+  main.append(titleRow);
+  if (mileage) {
+    const name = propertyDisplayName(pid);
+    if (name) main.append(h("span", null, name));
+    const when = dateText(r.transaction_date);
+    if (when) main.append(h("span", null, when));
+  } else main.append(h("span", null, [dateText(r.transaction_date), category].join(" · ")));
   if (docIds.length) main.append(h("span", "pt-chip is-success", "Kvittering knyttet"));
-  if (isManager(pid) && mileage) {
-    // The trip owns this expense: it is changed in the mileage log, as in the app.
-    const open = h("a", "pt-btn pt-btn-soft pt-btn-small", "Åpne kjørebok");
-    open.href = "#okonomi/kjorebok";
+  const tone = transactionListTone(r);
+  const amount = h("span", `pt-amount ${tone.amount}`, `${inc ? "" : "−"}${money(r.amount_minor)}`);
+  const mark = icon(inc ? "income" : "expense", `pt-icon-circle ${tone.icon}`);
+  if (mileage) {
+    const open = h("button", "pt-row-open");
+    open.type = "button";
+    open.dataset.testid = "economy.transaction.mileage";
+    open.setAttribute("aria-haspopup", "dialog");
+    open.append(mark, main, amount);
+    open.addEventListener("click", () => openMileageDetail(pid, r));
     li.append(open);
-  } else if (isManager(pid)) {
+    return li;
+  }
+  li.append(mark, main, amount);
+  if (isManager(pid)) {
     li.append(
       button("Kvittering", "pt-btn-soft pt-btn-small", () => receiptDialog(pid, r, docIds)),
       button("Endre", "pt-btn-soft pt-btn-small", () => transactionForm(pid, r.transaction_type, r)),
