@@ -429,6 +429,9 @@ function respond(url, req, body, options) {
       return json(400, { message: "duplicate key value violates unique constraint \"property_handbook_sections_pkey\"", code: "23505" });
     }
     if (req.method() === "PATCH" || req.method() === "DELETE") return { status: 204, body: "" };
+    if (req.method() === "POST" && table === "properties" && options.propertyCreateError) {
+      return json(400, { message: options.propertyCreateError, code: "P0001" });
+    }
     if (req.method() === "POST") return json(201, Array.isArray(body) ? body : [body]);
     const supplied = options.gallery && (table === "image_collections" || table === "property_images");
     const known = Object.prototype.hasOwnProperty.call(tables, table) || supplied;
@@ -478,7 +481,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
+      premium: options.premium, propertyCreateError: options.propertyCreateError, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),

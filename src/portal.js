@@ -1,6 +1,7 @@
 import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
+import { portalFeatureAllowed, propertyInsertPremiumRejection } from "./portal-premium.js";
 import * as inv from "./portal-inventory.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
@@ -88,6 +89,7 @@ const NAV = [
 const state = {
   user: null, name: null, properties: [], tenancies: [], manualOccupants: [], roles: new Map(),
   propertyId: null, openTasks: new Map(), cache: new Map(), receiptFilter: "all",
+  premium: false, premiumUnknown: false,
 };
 
 /* ---------- helpers ---------- */
@@ -1286,6 +1288,12 @@ const propertyForm = async (p) => {
           if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
           const images = finn?.files() ?? [];
           const res = await act.createProperty(state.user.id, v);
+          // The trigger on properties is the authority. A premium rejection
+          // closes the form and shows the paywall; the cap and other errors stay in the form.
+          if (propertyInsertPremiumRejection(res.error)) {
+            showPremiumWall();
+            return null;
+          }
           if (res.error) return act.explain(res.error);
           const id = res.data?.[0]?.id;
           if (id && roomCount) {
@@ -1308,8 +1316,12 @@ const propertyForm = async (p) => {
             }
           }
           if (id) try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
+          // «Om boligen» is behind the paywall without Premium. Stay on the list
+          // so a successful insert does not drop the user onto the wall.
+          const openHome = portalFeatureAllowed("om-boligen", { premium: state.premium, propertyCount: state.properties.length + 1 });
+          if (!openHome && location.hash !== "#boliger") location.hash = "#boliger";
           await refresh("Boligen er opprettet.");
-          location.hash = "#om-boligen";
+          if (openHome) location.hash = "#om-boligen";
           return null;
         }
         const res = await act.updateProperty(p, v, facts);
@@ -6043,6 +6055,7 @@ const closePortalMenu = () => {
   root.querySelector("[data-portal-menu]")?.setAttribute("aria-expanded", "false");
 };
 const render = async () => {
+  const token = ++renderToken;
   setPageCleanup(null);
   const items = allItems();
   closeBell();
@@ -6059,11 +6072,15 @@ const render = async () => {
     if (location.hash !== "#oversikt") history.replaceState(null, "", `${location.pathname}${location.search}#oversikt`);
   }
   renderNav(routeOf(item));
-  root.querySelector("[data-page-title]").textContent = item.label;
   const role = property() ? roleOf(state.propertyId) : null;
   root.querySelector("[data-user-role]").textContent = role ?? "Utleier";
   syncBellScope();
-  const token = ++renderToken;
+  if (!portalFeatureAllowed(id, { premium: state.premium, propertyCount: state.properties.length })) {
+    if (token !== renderToken) return;
+    showPremiumWall();
+    return;
+  }
+  root.querySelector("[data-page-title]").textContent = item.label;
   let nodes;
   try {
     nodes = await PAGES[id](sub, extra);
@@ -6237,15 +6254,27 @@ const firstNameOf = (profile, user) =>
   profile?.first_name?.trim() || profile?.display_name?.trim() ||
   user?.user_metadata?.full_name?.trim() || user?.user_metadata?.name?.trim() || null;
 
-const premiumGate = (unknown) => {
-  root.querySelector("[data-nav]").replaceChildren();
-  root.querySelector("[data-page-title]").textContent = "Enkel Utleie Premium";
+// Paywall for a feature the account may not use yet. The sidebar stays, so
+// Boliger and «Opprett bolig» remain reachable. Logout stays on the wall too.
+const premiumWall = () => {
   const c = emptyPage("house", "Nettportalen er en del av Premium",
-    unknown
+    state.premiumUnknown
       ? "Vi fikk ikke sjekket abonnementet ditt akkurat nå. Prøv å laste siden på nytt om litt."
-      : "Aktiver Premium i Enkel Utleie-appen på iPhone, så får du tilgang til nettportalen med samme konto.");
-  c.append(button("Logg ut", "pt-btn-secondary", logOut));
-  content.replaceChildren(c);
+      : "Aktiver Premium i Enkel Utleie-appen på iPhone, så får du tilgang til resten av nettportalen med samme konto.");
+  c.append(
+    button("Opprett bolig", "pt-btn-primary", openCreateProperty),
+    button("Logg ut", "pt-btn-secondary", logOut),
+  );
+  return c;
+};
+const showPremiumWall = () => {
+  root.querySelector("[data-page-title]").textContent = "Enkel Utleie Premium";
+  content.replaceChildren(premiumWall());
+};
+const openCreateProperty = () => {
+  if (location.hash !== "#boliger") location.hash = "#boliger";
+  else render();
+  propertyForm();
 };
 
 const load = async (session, isRefresh = false) => {
@@ -6278,15 +6307,18 @@ const load = async (session, isRefresh = false) => {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
   }
-  // Premium gate: every portal user needs Premium, with no exceptions.
+  // Premium is read once per visit. It decides which screens open; the
+  // insert trigger still decides whether a new bolig is stored.
   if (!isRefresh) {
     const premium = await act.hasPremium();
-    if (!premium.ok) {
-      root.querySelector("[data-user-name]").textContent = state.name || "Min side";
-      root.querySelector("[data-avatar]").textContent = (state.name || "?").charAt(0).toUpperCase();
-      root.setAttribute("aria-busy", "false");
-      premiumGate(premium.unknown);
-      return;
+    state.premium = premium.ok;
+    state.premiumUnknown = !premium.ok && Boolean(premium.unknown);
+    const hash = location.hash.slice(1).split("/")[0];
+    const landing = hash || "oversikt";
+    // Home after login is the property list when Oversikt itself is gated,
+    // so the wall is not the first thing a new account sees.
+    if ((!hash || hash === "oversikt") && !portalFeatureAllowed(landing, { premium: state.premium, propertyCount: state.properties.length })) {
+      history.replaceState(null, "", `${location.pathname}${location.search}#boliger`);
     }
   }
   let saved = null;

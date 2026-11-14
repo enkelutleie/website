@@ -1529,10 +1529,50 @@ test.describe("portal", () => {
     expect(stats.maxPropertyImages).toBeGreaterThan(1);
   });
 
-  test("premium gate when the account has no entitlement", async ({ page }) => {
-    await openPortal(page, { premium: false });
+  test("no subscription can open create-property; other features show the paywall", async ({ page }) => {
+    const empty = { properties: [], property_members: [] };
+    await openPortal(page, { premium: false, handover: empty });
+    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Ny bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await expect(create.getByRole("button", { name: "Opprett bolig" })).toBeVisible();
+    await create.getByRole("button", { name: "Avbryt" }).click();
+    await expect(create).toBeHidden();
+
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Økonomi" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Boliger", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) })).toBeVisible();
+  });
+
+  test("a premium rejection from property insert shows the paywall", async ({ page }) => {
+    await openPortal(page, {
+      premium: false,
+      handover: { properties: [], property_members: [] },
+      propertyCreateError: "premium_required",
+    });
+    await page.getByRole("button", { name: "Ny bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create).toBeHidden();
+    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
+  });
+
+  test("an account with boliger and no subscription still lands on the property list", async ({ page }) => {
+    await openPortal(page, { premium: false });
+    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Ny bolig" })).toBeVisible();
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
   });
 });
 
