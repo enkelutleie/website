@@ -93,6 +93,16 @@ export const explain = (error) => {
   return "Det gikk ikke. Prøv igjen om litt.";
 };
 
+// Server gate on POST /properties (iOS #1642). The message is the whole token.
+export const PROPERTY_CAP_TEXT = "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+export const PREMIUM_REQUIRED_TEXT = "Du trenger Premium for å opprette en bolig. Aktiver Premium i Enkel Utleie-appen på iPhone.";
+export function propertyCreateError(error) {
+  const blob = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""} ${error?.code || ""}`;
+  if (/\bconsumer_property_cap\b/.test(blob)) return PROPERTY_CAP_TEXT;
+  if (/\bpremium_required\b/.test(blob)) return PREMIUM_REQUIRED_TEXT;
+  return null;
+}
+
 export const minorOf = (text) => {
   const clean = String(text ?? "").replace(/\s|kr/gi, "").replace(",", ".");
   if (!/^\d+(\.\d{1,2})?$/.test(clean)) return null;
@@ -1519,6 +1529,15 @@ export const normalizeMeterNumber = (text) => {
   return v || null;
 };
 export const meterNumberValid = (v) => v == null || v.length <= METER_NUMBER_MAX;
+// iOS #1651: the electricity card is the section text. Empty text still shows stored meter lines.
+export function electricityHandbookText(body, settings) {
+  const text = String(body ?? "").trim();
+  if (text) return text;
+  const lines = [];
+  if (settings?.metering_point_id) lines.push(`Målepunkt-ID: ${settings.metering_point_id}`);
+  if (settings?.meter_number) lines.push(`Målernummer: ${settings.meter_number}`);
+  return lines.join("\n");
+}
 export const saveHandbookElectricity = (propertyId, meteringPointId, meterNumber) =>
   supabase.from("property_handbook_settings").upsert(
     { property_id: propertyId, metering_point_id: meteringPointId, meter_number: meterNumber },
@@ -2024,16 +2043,30 @@ export const scheduleMaintenanceVisit = (request, startsAt) =>
     requested_starts_at: iso(startsAt), requested_due_at: null, requested_ends_at: null,
     requested_all_day: false, requested_shared_with_property: false,
   });
-// Reschedule keeps the item and its duration; the server resets the tenant's answer.
+// «Endre tidspunkt» (iOS #1672): the same row, shifted ends_at, event/maintenance, not a new item.
+export function maintenanceRescheduleParams(item, startsAt) {
+  const startIso = iso(startsAt);
+  const start = new Date(startIso);
+  const prevStart = item?.starts_at ? new Date(item.starts_at) : null;
+  const prevEnd = item?.ends_at ? new Date(item.ends_at) : null;
+  const span = prevStart && prevEnd && !Number.isNaN(prevStart.getTime()) && !Number.isNaN(prevEnd.getTime())
+    ? prevEnd.getTime() - prevStart.getTime() : null;
+  const ends = span != null && !Number.isNaN(start.getTime())
+    ? new Date(start.getTime() + span).toISOString().replace(/\.\d{3}Z$/, "Z") : null;
+  return {
+    requested_calendar_item_id: item.id,
+    requested_title: item.title,
+    requested_description: item.description ?? null,
+    requested_item_type: "event",
+    requested_category: "maintenance",
+    requested_starts_at: startIso,
+    requested_due_at: null,
+    requested_ends_at: ends,
+    requested_all_day: false,
+  };
+}
 export function rescheduleMaintenanceVisit(item, startsAt) {
-  const start = new Date(iso(startsAt));
-  const ends = item.ends_at && item.starts_at ? new Date(start.getTime() + (new Date(item.ends_at) - new Date(item.starts_at))) : null;
-  return supabase.rpc("update_calendar_item", {
-    requested_calendar_item_id: item.id, requested_title: item.title, requested_description: item.description,
-    requested_item_type: item.item_type, requested_category: item.category,
-    requested_starts_at: iso(startsAt), requested_due_at: item.due_at,
-    requested_ends_at: ends ? ends.toISOString().replace(/\.\d{3}Z$/, "Z") : null, requested_all_day: item.all_day,
-  });
+  return supabase.rpc("update_calendar_item", maintenanceRescheduleParams(item, startsAt));
 }
 // One calendar item for #kalender/<id> (CalendarView detail). RLS decides who may read it.
 export const calendarItem = (itemId) =>
@@ -2776,6 +2809,8 @@ export function inkPad() {
 /* ---------- Kjørebok (MileageController.swift, MileageLedger.swift) ---------- */
 // MileageRateCatalog.json: Skatteetaten's rate for yrkeskjøring med privatbil, also elbil.
 export const MILEAGE_RATES = {
+  2023: { orePerKm: 350, authority: "Skatteetaten" },
+  2024: { orePerKm: 350, authority: "Skatteetaten" },
   2025: { orePerKm: 350, authority: "Skatteetaten" },
   2026: { orePerKm: 350, authority: "Skatteetaten" },
 };

@@ -26,6 +26,19 @@ export const kronerText = (minor) => {
   const whole = Number.isInteger(v);
   return `${new Intl.NumberFormat("nb-NO", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 }).format(v).replace(/\u2212/g, "-")} kr`;
 };
+// Driving summary lines always show two decimals and a hard space before «kr».
+export const kronerFixed = (minor) => {
+  const n = new Intl.NumberFormat("nb-NO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    .format(Number(minor) / 100).replace(/\u2212/g, "-").replace(/\u202f/g, "\u00a0");
+  return `${n}\u00a0kr`;
+};
+// Skatteetaten yrkeskjøring med privatbil, also elbil. Missing year falls back to stored trip amounts.
+const OFFICIAL_ORE_PER_KM = { 2023: 350, 2024: 350, 2025: 350, 2026: 350 };
+const officialKilometerMinor = (trips, year) => {
+  const rate = OFFICIAL_ORE_PER_KM[year];
+  if (!rate) return trips.reduce((a, t) => a + Number(t.amount_minor ?? 0), 0);
+  return trips.reduce((a, t) => a + Math.floor((Number(t.distance_meters) * rate + 500) / 1000), 0);
+};
 export const kmText = (meters) => `${String(Math.round(Number(meters) / 100) / 10).replace(".", ",")} km`;
 export const fileName = (year, address) => `Årsoppgave ${year} – ${String(address || "Bolig").replace(/[/:\\]/g, "-")}.pdf`;
 
@@ -133,8 +146,8 @@ export function buildReport(input) {
   const incomeMinor = incomeEntries.reduce((a, e) => a + e.amountMinor, 0);
   const expenseMinor = expenseEntries.reduce((a, e) => a + e.amountMinor, 0);
   const drivingMeters = trips.reduce((a, t) => a + Number(t.distance_meters), 0);
-  // iOS #1613: kilometerfradrag (amount_minor) and bompenger are documented beside the distance.
-  const kilometerDeductionMinor = trips.reduce((a, t) => a + Number(t.amount_minor ?? 0), 0);
+  // iOS #1661: kilometerfradrag follows the official rate for the year, not a stored trip amount.
+  const kilometerDeductionMinor = officialKilometerMinor(trips, year);
   const tollAmountMinor = trips.reduce((a, t) => a + (t.toll_amount_minor == null ? 0 : Number(t.toll_amount_minor)), 0);
   return {
     year,
@@ -154,11 +167,11 @@ export function buildReport(input) {
     supplementsFailed: Boolean(input.supplementsFailed),
   };
 }
-// AnnualReportPDF.mileageSection: «Kilometerfradrag», «Bompenger» (only with an amount), «Sum fradrag».
+// AnnualReportPDF.mileageSection (iOS #1661): exactly four lines, tolls shown even at 0,00.
 export const drivingSums = (r) => [
-  ["Kilometerfradrag", kronerText(r.summary.kilometerDeductionMinor ?? 0)],
-  ...((r.summary.tollAmountMinor ?? 0) > 0 ? [["Bompenger", kronerText(r.summary.tollAmountMinor)]] : []),
-  ["Sum fradrag", kronerText(r.summary.drivingDeductionMinor ?? 0)],
+  ["Kilometerfradrag", kronerFixed(r.summary.kilometerDeductionMinor ?? 0)],
+  ["Bompenger", kronerFixed(r.summary.tollAmountMinor ?? 0)],
+  ["Samlet beregnet fradrag", kronerFixed(r.summary.drivingDeductionMinor ?? 0)],
 ];
 export const isEmpty = (r) => !r.incomes.length && !r.expenses.length && !r.trips.length && !r.furniture.length;
 
@@ -196,7 +209,7 @@ export function reportBlocks(r) {
     type: "table", title: `${n++}  Kjørebok`,
     columns: [{ label: "Dato", w: 62 }, { label: "Fra → til", w: 150 }, { label: "Formål", w: 0 }, { label: "Km", w: 60, align: right }],
     rows: r.trips.map((t) => [t.dateText, t.route, t.purpose, kmText(t.meters)]),
-    sum: ["Sum kjøring", kmText(r.summary.drivingMeters)],
+    sum: ["Totalt kjørt", kmText(r.summary.drivingMeters)],
     extraSums: drivingSums(r),
   });
   blocks.push({
