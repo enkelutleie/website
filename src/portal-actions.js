@@ -16,6 +16,7 @@ import {
   mapWithLimit,
   shouldClearInspectionReviewDone,
 } from "./portal-cache.js";
+import { handoverRealtimeScope, handoverSocketEvent, handoverWorkingRevision, writeMergedInspectionItem } from "./portal-handover-sync.js";
 
 // One in-memory copy of the reads the property and tenancy cards share.
 // Invalidated after the user's own changes (invalidatePortalReads), never on a timer.
@@ -2276,8 +2277,8 @@ export const addProtocolComment = (inspectionId, body) =>
   supabase.rpc("add_inspection_protocol_comment", { p_inspection_id: inspectionId, p_body: body });
 
 // The "other" note carries the app's shared handover data after the visible text:
-// "[[eu-handover:{json}]]" (PropertyHandoverSharedNote). The portal edits only the
-// visible text and the done flag of a checklist point; the rest is copied as stored.
+// "[[eu-handover:{json}]]" (PropertyHandoverSharedNote). Checks and meter readings in
+// that note are merged per point before they are stored (portal-handover-sync.js).
 const HANDOVER_PREFIX = "[[eu-handover:";
 const HANDOVER_SUFFIX = "]]";
 export const visibleNote = (note) => {
@@ -2324,19 +2325,73 @@ export const getInspectionItem = (itemId) =>
 // update_inspection_item on a checklist that is already sent/locked (55000).
 export const isChecklistLocked = (res) =>
   /finalized_inspection_immutable/.test(String(res?.error?.message)) || res?.error?.code === "55000";
-export const updateInspectionItem = (item, condition, note) =>
-  supabase.rpc("update_inspection_item", {
-    requested_item_id: item.id, requested_condition: condition,
-    requested_note: note && note.trim() ? note : null, expected_updated_at: item.updated_at,
-  }).then(one);
+// Read the fresh row, merge the shared note, then store with that row's updated_at.
+// PT409 reads and merges once more (writeMergedInspectionItem).
+export const updateInspectionItem = (item, condition, note, revision = null) => writeMergedInspectionItem(item, condition, note, {
+  read: (id) => getInspectionItem(id),
+  write: (fresh, nextCondition, nextNote) => supabase.rpc("update_inspection_item", {
+    requested_item_id: fresh.id, requested_condition: nextCondition,
+    requested_note: nextNote && String(nextNote).trim() ? nextNote : null,
+    expected_updated_at: fresh.updated_at,
+  }).then(one),
+}, revision);
 // Rapid edits of the same checklist point: the write in flight finishes, then only the
 // latest state is sent. Intermediate states are dropped; the last one is never lost.
-const inspectionSaves = createLatestCoalescer((_id, { item, condition, note }) =>
-  updateInspectionItem(item, condition, note).then((res) => {
+const inspectionSaves = createLatestCoalescer((_id, { item, condition, note, revision }) =>
+  updateInspectionItem(item, condition, note, revision).then((res) => {
     if (res?.data?.updated_at) item.updated_at = res.data.updated_at;
     return res;
   }));
-export const saveInspectionItem = (item, condition, note) => inspectionSaves(item.id, { item, condition, note });
+export const saveInspectionItem = (item, condition, note) =>
+  inspectionSaves(item.id, { item, condition, note, revision: handoverWorkingRevision(item.id) });
+// Live checks, meters and photos while a draft protocol is on screen (iOS HandoverRealtimeRemote).
+// Filters use lowercase uuids. The first subscribe is the open; a later SUBSCRIBED is a reconnect.
+export function subscribeHandover(inspections, onChange) {
+  const scope = handoverRealtimeScope(inspections);
+  if (scope.isEmpty || typeof onChange !== "function") return () => {};
+  let channel = null;
+  let stopped = false;
+  let socket = { hadConnection: false, attempt: 0 };
+  let timer = null;
+  let cancelWait = null;
+  const connect = () => {
+    if (stopped) return;
+    cancelWait?.();
+    cancelWait = waitUntilVisible(connect);
+    if (cancelWait) return;
+    const ch = supabase.channel(`handover:${crypto.randomUUID()}`);
+    channel = ch;
+    const emit = (kind) => { if (!stopped && ch === channel) onChange(kind); };
+    ch.on("postgres_changes", { event: "*", schema: "public", table: "inspection_items", filter: scope.itemFilter }, () => emit("protocol"));
+    ch.on("postgres_changes", { event: "UPDATE", schema: "public", table: "inspections", filter: scope.inspectionFilter }, () => emit("protocol"));
+    if (scope.imageFilter) {
+      ch.on("postgres_changes", { event: "*", schema: "public", table: "property_images", filter: scope.imageFilter }, () => emit("photos"));
+    }
+    ch.subscribe((status) => {
+      if (stopped || ch !== channel) return;
+      const next = handoverSocketEvent(socket, status);
+      socket = { hadConnection: next.hadConnection, attempt: next.attempt };
+      if (next.resync) emit("resync");
+      if (!next.retry) return;
+      channel = null;
+      supabase.removeChannel(ch);
+      const delay = Math.min(30_000, 1000 * 2 ** (next.attempt - 1));
+      clearTimeout(timer);
+      cancelWait?.();
+      const retry = () => { timer = setTimeout(connect, delay); };
+      cancelWait = waitUntilVisible(retry);
+      if (!cancelWait) retry();
+    });
+  };
+  connect();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    cancelWait?.();
+    if (channel) supabase.removeChannel(channel);
+    channel = null;
+  };
+}
 // clear_inspection_review_done only when the flag is actually set. The handover select
 // does not include the column, so this stays a no-op until a row carries review_done.
 export function clearInspectionReviewDone(inspection) {
