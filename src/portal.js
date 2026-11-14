@@ -15,6 +15,7 @@ import { transactionListTitle } from "./portal-transaction-title.js";
 import { transactionListTone } from "./portal-transaction-tone.js";
 import { createBellWaker } from "./portal-bell-wake.js";
 import { acceptedCountText, CALENDAR_ROOM_PICKER_ENABLED, groupSummaries, requireResponseMapping, respondentLine, RR_TEXT, overlayManager, proposeTimes, ROOM_TEXT, roomChoices, roomStatus, roomTitle, showsPicker, showsRequiresToggle } from "./portal-calendar-rooms.js";
+import { upcomingSectionItems } from "./portal-calendar-upcoming.js";
 import { routeComposer, ROUTE_TEXT } from "./portal-mileage-route.js";
 import { tollBreakdown, tollInputMinor, tollLabel, tollParams, TOLL_TEXT, tripTollMinor, tripTollOptionsFrom, tripTollPrefParams, tripTotalMinor } from "./portal-mileage-tolls.js";
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
@@ -748,6 +749,7 @@ const calendarCard = async (pid, full = false, focus = null) => {
         calendarView = { y: here.year, m: here.month - 1 };
         selected = null;
         drawDay();
+        drawList();
         draw(".pt-cal-next");
       });
       center.append(todayBtn);
@@ -772,6 +774,7 @@ const calendarCard = async (pid, full = false, focus = null) => {
         selected = isSel ? null : { y, m, d };
         draw();
         drawDay();
+        drawList();
         monthBox.querySelectorAll(".pt-cal-day")[d - 1]?.focus();
       });
       grid.append(b);
@@ -784,12 +787,20 @@ const calendarCard = async (pid, full = false, focus = null) => {
     const title = h("p", "pt-cal-section-title", "Kommende hendelser");
     if (res.error) { listBox.replaceChildren(title, inline("Kalenderen kunne ikke hentes akkurat nå.")); return; }
     const overdue = full ? items.filter((i) => calendarIsOverdue(i, now)).sort((a, b) => calendarItemDate(a) - calendarItemDate(b)) : [];
-    const upcoming = calendarUpcoming(items, now, today);
+    // The day card already draws these rows. «Kommende» omits them; other dates stay
+    // in the same order. If nothing remains, the section is hidden. Forfalt is not filtered.
+    const shownOnDay = selected ? items.filter((i) => sameDay(i, selected.y, selected.m, selected.d)) : [];
+    const upcomingAll = calendarUpcoming(items, now, today);
+    const upcoming = upcomingSectionItems(upcomingAll, shownOnDay);
     const out = [];
     if (overdue.length) {
       const list = h("ul", "pt-cal-items");
       overdue.forEach((i) => list.append(calendarRow(i, ctx)));
       out.push(h("p", "pt-cal-section-title is-overdue", "Forfalt"), list);
+    }
+    if (upcomingAll.length && !upcoming.length) {
+      listBox.replaceChildren(...out);
+      return;
     }
     out.push(title);
     const limit = full ? (showAll ? upcoming.length : CALENDAR_UPCOMING_PAGE) : CALENDAR_UPCOMING_PREVIEW;
