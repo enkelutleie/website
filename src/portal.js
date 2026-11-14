@@ -1,7 +1,7 @@
 import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
-import { PREMIUM_WALL_BODY, PREMIUM_WALL_TITLE, PROPERTY_CAP_TEXT, landlordPremiumWall, propertyInsertCap, propertyInsertPremiumRejection } from "./portal-premium.js";
+import { PREMIUM_APP_NOTE, PREMIUM_BLOCKED, PREMIUM_BODY, PREMIUM_FREE_LINE, PREMIUM_MONTHLY_MINOR, PREMIUM_MONTHLY_PERIOD, PREMIUM_PLAN_MONTHLY, PREMIUM_PLAN_YEARLY, PREMIUM_TITLE, PREMIUM_YEARLY_MINOR, PREMIUM_YEARLY_PERIOD, PROPERTY_CAP_TEXT, premiumGateApplies, premiumPriceText, premiumSavingsLabel, propertyInsertCap, propertyInsertPremiumRejection } from "./portal-premium.js";
 import * as inv from "./portal-inventory.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
@@ -89,7 +89,7 @@ const NAV = [
 const state = {
   user: null, name: null, properties: [], tenancies: [], manualOccupants: [], roles: new Map(),
   propertyId: null, openTasks: new Map(), cache: new Map(), receiptFilter: "all",
-  premium: false, premiumLoading: true, premiumUnknown: false, propertiesResolved: false, forceWall: false,
+  premium: false, premiumLoading: true, premiumUnknown: false, propertiesResolved: false,
 };
 
 /* ---------- helpers ---------- */
@@ -1155,7 +1155,13 @@ const transactionForm = (pid, type, row) => {
       if (!amountMinor || amountMinor <= 0) return "Skriv et gyldig beløp større enn 0.";
       const category = keepsFurnishing && v.category === "miscellaneous_expense" ? "furnishings_equipment" : v.category;
       const values = { ...v, category, type, amountMinor, recurrence: v.repeats === "yes" ? v.recurrence : "none" };
+      if (!row) {
+        const blocked = await blockWithoutPremium(pid);
+        if (blocked) return blocked;
+      }
       const res = row ? await act.updateTransaction(row, values) : await act.createTransaction(pid, values, activeTenancy?.id);
+      const denied = blockIfServerRequiresPremium(res.error);
+      if (denied) return denied;
       if (res.error) return act.explain(res.error);
       const created = Array.isArray(res.data) ? res.data[0] : res.data;
       if (!row && v.receipt && created?.id) {
@@ -1287,13 +1293,17 @@ const propertyForm = async (p) => {
           if (shared && !v.roomCount) return "Du må oppgi antall rom som skal leies ut.";
           if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
           const images = finn?.files() ?? [];
+          // Home number two needs Premium. The list already shows one, so the
+          // dialog opens and nothing is sent. The trigger remains the authority
+          // when the list was empty and the server answers premium_required.
+          if (managed >= 1) {
+            const blocked = await blockWithoutPremium();
+            if (blocked) return blocked;
+          }
           const res = await act.createProperty(state.user.id, v);
-          // The trigger on properties is the authority. premium_required closes
-          // the form and covers the portal; the four-home cap stays in the form.
           if (propertyInsertPremiumRejection(res.error)) {
-            state.forceWall = true;
-            showPremiumWall();
-            return null;
+            showPremiumDialog();
+            return PREMIUM_BLOCKED;
           }
           if (propertyInsertCap(res.error)) return PROPERTY_CAP_TEXT;
           if (res.error) return act.explain(res.error);
@@ -1319,9 +1329,7 @@ const propertyForm = async (p) => {
           }
           if (id) try { sessionStorage.setItem("pt-property", id); } catch { /* ignore */ }
           await refresh("Boligen er opprettet.");
-          // The sheet closes first. Once the new home is in the list, a landlord
-          // without Premium is covered by the wall instead of opening the home.
-          if (premiumMode() === "hidden") location.hash = "#om-boligen";
+          location.hash = "#om-boligen";
           return null;
         }
         const res = await act.updateProperty(p, v, facts);
@@ -1450,7 +1458,11 @@ const inviteForm = async (pid, tenancy) => {
       fields: [emailField],
       onSubmit: async (v) => {
         if (!validEmail(v.email)) return "Skriv en gyldig e-postadresse.";
+        const blocked = await blockWithoutPremium(pid);
+        if (blocked) return blocked;
         const res = await act.inviteToExisting(tenancy.id, v.email);
+        const denied = blockIfServerRequiresPremium(res.error);
+        if (denied) return denied;
         if (res.error) return inviteError(res.error);
         await inviteDone(res);
         return null;
@@ -1480,7 +1492,11 @@ const inviteForm = async (pid, tenancy) => {
     ],
     onSubmit: async (v) => {
       if (!validEmail(v.email)) return "Skriv en gyldig e-postadresse.";
+      const blocked = await blockWithoutPremium(pid);
+      if (blocked) return blocked;
       const res = await act.inviteNewTenancy(pid, v.email, rooms ? v.unit : null);
+      const denied = blockIfServerRequiresPremium(res.error);
+      if (denied) return denied;
       if (res.error) return inviteError(res.error);
       await inviteDone(res);
       return null;
@@ -1766,7 +1782,13 @@ const contractForm = (pid, detail) => {
       if (v.notice && !(Number(v.notice) >= 1 && Number(v.notice) <= 12)) return "Oppsigelsestiden må være mellom 1 og 12 måneder.";
       if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummer må være 11 siffer";
       const values = { ...v, rentMinor, depositMinor, housingKind: p?.housing_kind };
+      if (!detail) {
+        const blocked = await blockWithoutPremium(pid);
+        if (blocked) return blocked;
+      }
       const res = detail ? await act.updateAgreementDraft(detail, values) : await act.createAgreementDraft(tenancy, values);
+      const denied = blockIfServerRequiresPremium(res.error);
+      if (denied) return denied;
       if (res.message) return res.message;
       if (res.error) {
         if (/open_conflict/.test(res.error.message)) return "Det finnes allerede en åpen leiekontrakt for dette leieforholdet.";
@@ -4579,9 +4601,15 @@ const mileageForm = (pid, trip) => {
       if (!meters) return "Skriv inn kilometer mellom 0,1 og 2000.";
       if (!rateFor(v.date)) return "Ingen offisiell kilometresats for dette året.";
       if (tollShown && tollSettings.includeTolls && !tollInputMinor(v.toll).valid) return TOLL_TEXT.invalid;
+      if (!trip) {
+        const blocked = await blockWithoutPremium(pid);
+        if (blocked) return blocked;
+      }
       const values = { date: v.date, meters, purpose: v.purpose, from: v.from, to: v.to };
       const tolls = { ...tollParams({ settings: tollSettings, input: v.toll ?? "", estimated: route.state.tollEstimated, correcting: !!trip }), ...tripTollPrefParams(tollSettings) };
       const res = trip ? await act.correctMileageTrip(trip.id, values, requestId, tolls) : await act.createMileageTrip(pid, values, requestId, tolls);
+      const denied = blockIfServerRequiresPremium(res.error);
+      if (denied) return denied;
       if (res.error) return trip ? "Kunne ikke oppdatere turen." : "Kunne ikke lagre turen.";
       route.cancel();
       mileageState.year = Number(v.date.slice(0, 4));
@@ -4824,7 +4852,13 @@ const assetForm = async (pid, data, asset = null) => {
       if (!v.name) return "Skriv inn et navn.";
       if (!v.amountMinor || v.amountMinor <= 0) return "Skriv inn kjøpspris.";
       if (v.overThreshold && !raw.lifetime) return "Svar på om møbelet forventes å vare i minst 3 år.";
+      if (!asset) {
+        const blocked = await blockWithoutPremium(pid);
+        if (blocked) return blocked;
+      }
       const res = asset ? await inv.updateAsset(asset.id, v) : await inv.createAsset(pid, v, requestId);
+      const denied = blockIfServerRequiresPremium(res.error);
+      if (denied) return denied;
       if (res.error) return asset ? "Kunne ikke oppdatere møbelet eller inventaret. Prøv igjen." : "Kunne ikke lagre eiendelen.";
       if (!inputs.rate.closest(".pt-field").hidden) {
         const prior = data.elections[scope.key]?.[v.year];
@@ -6054,29 +6088,11 @@ const closePortalMenu = () => {
   root.querySelector(".pt-sidebar")?.classList.remove("is-open");
   root.querySelector("[data-portal-menu]")?.setAttribute("aria-expanded", "false");
 };
-const premiumMode = () => landlordPremiumWall({
-  premium: state.premium,
-  premiumLoading: state.premiumLoading,
-  propertyCount: state.properties.length,
-  propertiesResolved: state.propertiesResolved,
-  forceWall: state.forceWall,
-});
 const render = async () => {
   const token = ++renderToken;
   setPageCleanup(null);
   closeBell();
   closePortalMenu();
-  const mode = premiumMode();
-  if (mode === "loading") {
-    root.setAttribute("aria-busy", "true");
-    return;
-  }
-  if (mode === "wall") {
-    if (token !== renderToken) return;
-    showPremiumWall();
-    return;
-  }
-  root.classList.remove("is-premium-wall");
   const items = allItems();
   // Sub-routes: #vedlikehold/<sak-id>, #vedlikehold/historikk and #kalender/<id>[/<sak-id>].
   let [id, sub, extra] = location.hash.slice(1).split("/");
@@ -6268,47 +6284,129 @@ const firstNameOf = (profile, user) =>
   profile?.first_name?.trim() || profile?.display_name?.trim() ||
   user?.user_metadata?.full_name?.trim() || user?.user_metadata?.name?.trim() || null;
 
-// Full-screen landlord wall. Not dismissable: the sidebar and header are
-// covered, and the only actions are re-reading Premium and logging out.
-// «Gjenopprett kjøp» has no StoreKit here; it re-reads subscription_entitlements
-// and get_my_complimentary_access, which is where a restored purchase lands.
-const premiumWall = () => {
-  const c = emptyPage("house", PREMIUM_WALL_TITLE, PREMIUM_WALL_BODY);
+// Closable Premium sheet. The web portal cannot buy through App Store or
+// Google Play, so the cards only select a plan (yearly starts selected).
+// «Gjenopprett kjøp» re-reads subscription_entitlements and
+// get_my_complimentary_access. Nothing is purchased here.
+let premiumDialog = null;
+let premiumFlight = null;
+const applyPremium = (premium) => {
+  state.premium = Boolean(premium?.ok);
+  state.premiumLoading = false;
+  state.premiumUnknown = !state.premium && Boolean(premium?.unknown);
+};
+const blockWithoutPremium = async (pid) => {
+  if (state.premiumLoading && !state.premium) applyPremium(await (premiumFlight ?? act.hasPremium()));
+  const role = pid ? state.roles.get(pid) : undefined;
+  if (!premiumGateApplies({ premium: state.premium, role })) return null;
+  showPremiumDialog();
+  return PREMIUM_BLOCKED;
+};
+const blockIfServerRequiresPremium = (error) => {
+  if (!propertyInsertPremiumRejection(error)) return null;
+  showPremiumDialog();
+  return PREMIUM_BLOCKED;
+};
+const showPremiumDialog = () => {
+  if (premiumDialog?.open) return;
+  const dialog = h("dialog", "pt-modal pt-premium-dialog");
+  const card = h("div", "pt-modal-card pt-premium-sheet");
+  const titleId = `pt-premium-title-${Math.random().toString(36).slice(2, 8)}`;
+  const heading = h("h2", null, PREMIUM_TITLE);
+  heading.id = titleId;
+  dialog.setAttribute("aria-labelledby", titleId);
+  const hero = h("div", "pt-premium-hero");
+  const mascot = h("img", "pt-premium-mascot");
+  mascot.src = "/brand/house-mascot-happy.png";
+  mascot.alt = "";
+  mascot.width = 104;
+  mascot.height = 104;
+  hero.append(mascot, icon("crown", "pt-premium-hero-crown"));
+  const plans = h("div", "pt-premium-plans");
+  plans.setAttribute("role", "radiogroup");
+  plans.setAttribute("aria-label", "Premium");
+  let selected = "yearly";
+  const buttons = {};
+  const paint = () => {
+    for (const [id, node] of Object.entries(buttons)) {
+      const on = id === selected;
+      node.classList.toggle("is-selected", on);
+      node.setAttribute("aria-checked", on ? "true" : "false");
+      node.tabIndex = on ? 0 : -1;
+    }
+  };
+  const select = (id) => {
+    selected = id;
+    paint();
+    buttons[id]?.focus();
+  };
+  const plan = (id, name, price, period, savings) => {
+    const node = h("button", "pt-premium-plan");
+    node.type = "button";
+    node.setAttribute("role", "radio");
+    node.dataset.plan = id;
+    const mark = h("span", "pt-premium-plan-icon");
+    mark.append(icon("crown", "pt-premium-plan-crown"));
+    const copy = h("span", "pt-premium-plan-copy");
+    copy.append(
+      h("span", "pt-premium-plan-name", name),
+      h("span", "pt-premium-plan-price", price),
+      h("span", "pt-premium-plan-period", period),
+    );
+    if (savings) copy.append(h("span", "pt-premium-save", savings));
+    node.append(mark, h("span", "pt-premium-plan-rule"), copy, h("span", "pt-premium-radio"));
+    node.addEventListener("click", () => select(id));
+    buttons[id] = node;
+    return node;
+  };
+  plans.append(
+    plan("monthly", PREMIUM_PLAN_MONTHLY, premiumPriceText(PREMIUM_MONTHLY_MINOR), PREMIUM_MONTHLY_PERIOD, null),
+    plan("yearly", PREMIUM_PLAN_YEARLY, premiumPriceText(PREMIUM_YEARLY_MINOR), PREMIUM_YEARLY_PERIOD, premiumSavingsLabel()),
+  );
+  plans.addEventListener("keydown", (e) => {
+    if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    select(selected === "yearly" ? "monthly" : "yearly");
+  });
+  paint();
   const restore = button("Gjenopprett kjøp", "pt-btn-primary", async () => {
     restore.disabled = true;
     restore.setAttribute("aria-busy", "true");
     try {
-      const premium = await act.hasPremium();
-      state.premium = premium.ok;
-      state.premiumLoading = false;
-      state.premiumUnknown = !premium.ok && Boolean(premium.unknown);
-      if (premium.ok) {
-        state.forceWall = false;
-        if (!bell.stop) startBell();
-        await render();
-      }
-    } catch { /* stay on the wall */ } finally {
-      if (!state.premium) {
+      applyPremium(await act.hasPremium());
+      if (state.premium) dialog.close();
+    } catch { /* stay open */ } finally {
+      if (!state.premium && restore.isConnected) {
         restore.disabled = false;
         restore.removeAttribute("aria-busy");
       }
     }
   });
-  c.append(restore, button("Logg ut", "pt-btn-secondary", logOut));
-  return c;
-};
-const showPremiumWall = () => {
-  root.classList.add("is-premium-wall");
-  root.setAttribute("aria-busy", "false");
-  root.querySelector("[data-nav]")?.replaceChildren();
-  root.querySelector("[data-page-title]").textContent = PREMIUM_WALL_TITLE;
-  content.replaceChildren(premiumWall());
+  const actions = h("div", "pt-premium-actions");
+  actions.append(restore, button("Lukk", "pt-btn-secondary", () => dialog.close()));
+  card.append(
+    hero,
+    heading,
+    h("p", "pt-premium-body", PREMIUM_BODY),
+    h("p", "pt-premium-free", PREMIUM_FREE_LINE),
+    plans,
+    h("p", "pt-premium-note", PREMIUM_APP_NOTE),
+    actions,
+  );
+  dialog.append(card);
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    if (premiumDialog === dialog) premiumDialog = null;
+  });
+  document.body.append(dialog);
+  premiumDialog = dialog;
+  dialog.showModal();
 };
 
 const load = async (session, isRefresh = false) => {
   const user = session.user;
   state.user = user;
-  const premiumPromise = isRefresh ? null : act.hasPremium();
+  premiumFlight = isRefresh ? premiumFlight : act.hasPremium();
   const [profileRes, propertiesRes, propertyRolesRes, tenanciesRes, occupantsRes, tasksRes] = await Promise.all([
     act.ownProfile(user.id),
     supabase.from("properties").select("id, address_line1, address_line2, postal_code, city, unit_identifier, housing_kind, rental_profile, finn_code, payment_account_override, municipality_number, municipality_name")
@@ -6339,14 +6437,10 @@ const load = async (session, isRefresh = false) => {
     for (const p of state.properties) state.openTasks.set(p.id, 0);
     for (const t of tasksRes.data ?? []) state.openTasks.set(t.property_id, (state.openTasks.get(t.property_id) ?? 0) + 1);
   }
-  // Premium is subscription_entitlements (production, unexpired) or
-  // get_my_complimentary_access. Read once per visit, in parallel with the list.
-  if (!isRefresh) {
-    const premium = await premiumPromise;
-    state.premium = premium.ok;
-    state.premiumLoading = false;
-    state.premiumUnknown = !premium.ok && Boolean(premium.unknown);
-  }
+  // Premium is an active subscription or get_my_complimentary_access.
+  // Read once per visit, in parallel with the list, before the first paint,
+  // so the dialog never flashes while the status is still unknown.
+  if (!isRefresh) applyPremium(await premiumFlight);
   let saved = null;
   try { saved = sessionStorage.getItem("pt-property"); } catch { /* ignore */ }
   state.propertyId = state.properties.some((p) => p.id === saved) ? saved : state.properties[0]?.id ?? null;
@@ -6354,19 +6448,13 @@ const load = async (session, isRefresh = false) => {
   root.querySelector("[data-user-name]").textContent = state.name || "Min side";
   root.querySelector("[data-avatar]").textContent = (state.name || "?").charAt(0).toUpperCase();
   renderSelect();
-  // A failed overview is the existing error page: not the wall, and not the
-  // empty «Registrer bolig» shell, because the list never actually arrived.
+  // A failed overview is the existing error page, not the empty
+  // «Registrer bolig» shell, because the list never actually arrived.
   if (overviewFailed) {
-    root.classList.remove("is-premium-wall");
     root.setAttribute("aria-busy", "false");
     if (!isRefresh) startBell();
     renderNav("oversikt");
     content.replaceChildren(emptyPage("info", "Vi fikk ikke hentet oversikten", "Prøv å laste siden på nytt om litt. Alt er tilgjengelig i appen i mellomtiden."));
-    return;
-  }
-  if (premiumMode() === "wall") {
-    if (!isRefresh) window.addEventListener("hashchange", render);
-    showPremiumWall();
     return;
   }
   if (!isRefresh) startBell();

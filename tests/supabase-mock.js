@@ -322,13 +322,12 @@ function matches(row, url) {
 
 function rpcPayload(name, body, options = {}) {
   if (options.handover?.rpc && Object.prototype.hasOwnProperty.call(options.handover.rpc, name)) return options.handover.rpc[name];
-  const premium = options.premium;
   const offset = Number(body?.requested_offset ?? 0);
   if (offset > 0) return [];
   const pid = body?.requested_property_id;
   switch (name) {
     case "get_my_complimentary_access":
-      return false;
+      return options.complimentary === true;
     case "get_property_home_guide_completed":
       return true;
     case "open_deposit_settlement":
@@ -376,7 +375,6 @@ function rpcPayload(name, body, options = {}) {
     case "list_linked_profile_contacts":
       return [{ user_id: TENANT_ID, display_name: "Ola Leietaker", email: "ola@example.com" }];
     default:
-      if (premium === false && name === "get_my_complimentary_access") return false;
       return [];
   }
 }
@@ -417,6 +415,9 @@ function respond(url, req, body, options) {
     if (options.missingRpc?.includes(name)) {
       return json(404, { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache`, details: null, hint: null });
     }
+    if (options.premiumRequiredRpc?.includes(name)) {
+      return json(400, { message: "premium_required", code: "P0001" });
+    }
     if (fail.has(name) || errorOn.has(name)) {
       return json(400, { message: "duplicate key value violates unique constraint \"property_handbook_sections_pkey\"", code: "23505" });
     }
@@ -451,7 +452,11 @@ function respond(url, req, body, options) {
     if (table === "properties" && options.createdProperties?.length) source = [...source, ...options.createdProperties];
     if (table === "property_members" && options.createdMembers?.length) source = [...source, ...options.createdMembers];
     let rows = source.filter((row) => matches(row, url));
-    if (options.premium === false && table === "subscription_entitlements") rows = [];
+    if (table === "subscription_entitlements" && options.premium === false) {
+      if (options.premiumReads) options.premiumReads.entitlements += 1;
+      const reads = options.premiumReads?.entitlements ?? 1;
+      if (!(options.restorePremium && reads > 1)) rows = [];
+    }
     const wantsObject = (req.headers().accept || "").includes("vnd.pgrst.object");
     if (wantsObject) {
       if (rows.length !== 1) {
@@ -477,6 +482,7 @@ export async function installSupabase(page, options = {}) {
   await page.routeWebSocket(HOST, (socket) => socket.close());
   const createdProperties = options.rememberCreates ? [] : null;
   const createdMembers = options.rememberCreates ? [] : null;
+  const premiumReads = { entitlements: 0 };
   await page.route(HOST, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -492,7 +498,7 @@ export async function installSupabase(page, options = {}) {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method())) writes.push({ method: req.method(), path: url.pathname, body });
     const result = respond(url, req, body, {
       fail, errorOn, invalidPassword: options.invalidPassword, abortPassword: options.abortPassword,
-      premium: options.premium, propertyCreateError: options.propertyCreateError, createdProperties, createdMembers, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
+      premium: options.premium, complimentary: options.complimentary, restorePremium: options.restorePremium, premiumReads, premiumRequiredRpc: options.premiumRequiredRpc, propertyCreateError: options.propertyCreateError, createdProperties, createdMembers, signedAgreement: options.signedAgreement, omitAvatars: options.omitAvatars, gallery: options.gallery, taxFacts: options.taxFacts, handover: options.handover, missingRpc: options.missingRpc, mileageRoute: options.mileageRoute,
     });
     if (options.requests) options.requests.push({
       method: req.method(), path: url.pathname, select: url.searchParams.get("select"),

@@ -1,32 +1,72 @@
-// Full-screen Premium wall for the landlord portal (iOS LandlordPremiumWall).
+// Premium for the landlord portal.
 //
-// A landlord without Premium and with zero homes (owner or co_landlord) uses
-// the portal and can register the first home. As soon as they manage one
-// home, the wall covers the whole portal. The property list must have
-// answered before either is shown; until then the caller shows a spinner.
-// Tenants are not in this count and never see the wall.
+// The portal stays open. A closable dialog is the only paywall, and it opens
+// when a landlord without Premium tries one of the gated actions (new income
+// or expense, new mileage trip, new furniture, tenant invite, new contract)
+// or when creating a home is rejected with premium_required. The first home
+// is still free; the trigger on `properties` is the authority for home number
+// two (premium_required) and home number five (consumer_property_cap).
+// Tenants never see the dialog.
 //
-// The insert itself is decided by the triggers on `properties`
-// (20261114200000_property_creation_first_free): the first home is stored
-// without Premium, the next raises premium_required, and the fifth raises
-// consumer_property_cap. Both are SQLSTATE P0001. Complimentary access
-// counts as Premium.
+// Premium is an active subscription OR a row in private.complimentary_access.
+// Clients cannot read that table. public.get_my_complimentary_access() is
+// security definer and answers the caller's own status. No schema change.
 
-export const PREMIUM_WALL_TITLE = "Premium for utleier";
-export const PREMIUM_WALL_BODY = "Første bolig kan registreres gratis. Utleier trenger Premium for å bruke appen og for flere boliger. Leietaker er gratis. Premium dekker inntil 4 boliger.";
+export const PREMIUM_TITLE = "Premium for utleier";
+export const PREMIUM_BODY = "Få full kontroll på utleien – alt samlet på ett sted. Spar tid, hold oversikten og administrer boligene dine enkelt og effektivt.";
+export const PREMIUM_FREE_LINE = "Opprett bolig gratis, og oppgrader når du er klar for mer!";
+export const PREMIUM_APP_NOTE = "Premium kjøpes i Enkel Utleie-appen.";
 export const PROPERTY_CAP_TEXT = "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
 
-// "hidden" shows the portal. "loading" is the spinner. "wall" covers everything.
-export function landlordPremiumWall({
-  premium = false,
-  premiumLoading = false,
-  propertyCount = 0,
-  propertiesResolved = false,
-  forceWall = false,
+export const PREMIUM_PLAN_MONTHLY = "Premium månedlig";
+export const PREMIUM_PLAN_YEARLY = "Premium årlig";
+export const PREMIUM_MONTHLY_MINOR = 4900;
+export const PREMIUM_YEARLY_MINOR = 44900;
+export const PREMIUM_MONTHLY_PERIOD = "per måned";
+export const PREMIUM_YEARLY_PERIOD = "per år";
+
+// Returned from a form submit so the sheet stays open and nothing is saved.
+export const PREMIUM_BLOCKED = Symbol("premium_blocked");
+
+const ACTIVE_STATUS = new Set(["active", "grace", "canceled"]);
+
+// Whole kroner only. 12 × 49 kr − 449 kr = 139 kr. Anything else is not a simple pill.
+export function premiumYearlySavingsMinor(monthlyMinor = PREMIUM_MONTHLY_MINOR, yearlyMinor = PREMIUM_YEARLY_MINOR) {
+  const saved = monthlyMinor * 12 - yearlyMinor;
+  if (saved <= 0 || saved % 100 !== 0) return null;
+  return saved;
+}
+
+export function premiumSavingsLabel(minor = premiumYearlySavingsMinor()) {
+  if (minor == null) return null;
+  return `Spar ${minor / 100} kr per år`;
+}
+
+export function premiumPriceText(minor) {
+  if (minor == null || minor % 100 !== 0) return null;
+  return `${minor / 100} kr`;
+}
+
+// A tenant is never gated. Everyone else in the landlord portal is.
+export function premiumGateApplies({ premium = false, role } = {}) {
+  if (role === "tenant") return false;
+  return premium !== true;
+}
+
+// subscription_entitlements (production, unexpired) or complimentary access.
+// Same status predicate as private.property_creation_has_premium.
+export function premiumFromReads({
+  complimentary = false,
+  entitlements = null,
+  entitlementsError = false,
+  complimentaryError = false,
+  now = Date.now(),
 } = {}) {
-  if (premium) return "hidden";
-  if (forceWall || propertyCount >= 1) return premiumLoading ? "loading" : "wall";
-  return propertiesResolved ? "hidden" : "loading";
+  if (complimentary === true) return { ok: true };
+  if (entitlementsError && complimentaryError) return { ok: false, unknown: true };
+  const active = (Array.isArray(entitlements) ? entitlements : []).some((row) =>
+    ACTIVE_STATUS.has(row?.status) && row?.expires_at && new Date(row.expires_at).getTime() > now);
+  return { ok: active };
 }
 
 const errorBlob = (error) => [error?.message, error?.details, error?.hint].filter((part) => part != null).join(" ");
