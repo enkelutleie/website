@@ -49,18 +49,32 @@ test("field, label and RPC params follow MileageComposerView", () => {
 });
 
 import { buildReport, reportBlocks } from "./portal-annual.js";
-test("årsoppgave: Kilometerfradrag, Bompenger only with an amount, Sum fradrag; null tolls are 0", () => {
-  const trip = (id, amount, toll) => ({ id, trip_date: "2026-03-01", from_place: "A", to_place: "B", purpose: "Visning", distance_meters: 20000, amount_minor: amount, toll_amount_minor: toll, voided_at: null });
-  const base = { year: 2026, transactions: [], links: [], documents: [], items: [], elections: {}, categoryTitle: () => "", landlordName: "Kari", propertyTitle: "Testveien 1", tenantNames: [], generatedAt: new Date("2026-11-11T12:00:00Z") };
-  const sums = (trips) => reportBlocks(buildReport({ ...base, trips })).find((b) => String(b.title).includes("Kjørebok"));
-  const withToll = sums([trip("t1", 7000, 3360), trip("t2", 7000, null)]);
-  assert.deepEqual(withToll.sum[0], "Sum kjøring");
-  assert.deepEqual(withToll.extraSums.map((s) => s[0]), ["Kilometerfradrag", "Bompenger", "Sum fradrag"]);
-  const values = Object.fromEntries(withToll.extraSums);
-  assert.equal(values.Kilometerfradrag, "140 kr");
-  assert.equal(values.Bompenger, "33,60 kr");
-  assert.equal(values["Sum fradrag"], "173,60 kr");
-  assert.deepEqual(sums([trip("t3", 7000, undefined)]).extraSums.map((s) => s[0]), ["Kilometerfradrag", "Sum fradrag"]);
+test("årsoppgave kjørebok: four lines, official 3,50 kr/km, tolls even at 0,00", () => {
+  const trip = (id, meters, amount, toll) => ({ id, trip_date: "2026-03-01", from_place: "A", to_place: "B", purpose: "Visning", distance_meters: meters, amount_minor: amount, toll_amount_minor: toll, voided_at: null });
+  const base = { year: 2026, transactions: [], links: [], documents: [], items: [], elections: {}, categoryTitle: (t) => t.category, landlordName: "Kari", propertyTitle: "Testveien 1", tenantNames: [], generatedAt: new Date("2026-11-11T12:00:00Z") };
+  const block = (trips, year = 2026) => reportBlocks(buildReport({ ...base, year, trips })).find((b) => String(b.title).includes("Kjørebok"));
+  const nbsp = "\u00a0";
+  // 38 900 m × 3,50 kr/km = 136,15 kr, even when the stored trip amount disagrees.
+  const one = block([trip("t1", 38900, 1, 13040)]);
+  assert.equal(one.sum[0], "Totalt kjørt");
+  assert.equal(one.sum[1], "38,9 km");
+  assert.deepEqual(one.extraSums.map((s) => s[0]), ["Kilometerfradrag", "Bompenger", "Samlet beregnet fradrag"]);
+  assert.equal(one.extraSums[0][1], `136,15${nbsp}kr`);
+  assert.equal(one.extraSums[1][1], `130,40${nbsp}kr`);
+  assert.equal(one.extraSums[2][1], `266,55${nbsp}kr`);
+  const zeroToll = block([trip("t2", 20000, 99999, 0), trip("t3", 20000, 99999, null)]);
+  assert.equal(zeroToll.extraSums[1][1], `0,00${nbsp}kr`);
+  assert.equal(zeroToll.extraSums[0][1], `140,00${nbsp}kr`);
+  // A year outside the catalogue keeps the stored trip amount.
+  const fallback = block([trip("t4", 20000, 1234, 0)], 2022);
+  assert.equal(fallback.extraSums[0][1], `12,34${nbsp}kr`);
+  const report = buildReport({
+    ...base,
+    transactions: [{ id: "i", transaction_type: "income", category: "rent", amount_minor: 100, transaction_date: "2026-01-02", description: "Husleie" }],
+    trips: [],
+  });
+  assert.equal(typeof report.incomes[0].category, "string");
+  assert.equal(report.incomes[0].category, "rent");
 });
 
 test("per-trip choices (iOS #1619): stored values, null falls back to fossil/on/on, all three sent", () => {
