@@ -1852,6 +1852,9 @@ const requireResponseCard = ({ on, picker, rooms, selected, legacyLabels, onVali
     card.append(who);
     radios = { all, pick };
   }
+  // While «Merk som vedlikeholdssak» is on, the card is hidden and its choice is not
+  // written. The switch, who and rooms stay as they were and come back when it is turned off.
+  let suspended = false;
   const value = () => requireResponseMapping({
     shown: true, on: st.on, picker, mode: st.mode, selected: st.selected,
     legacyRooms: legacyLabels?.length && !st.on ? [...(selected ?? [])] : null,
@@ -1868,22 +1871,32 @@ const requireResponseCard = ({ on, picker, rooms, selected, legacyLabels, onVali
       list.hidden = st.mode !== "select";
       for (const row of list.children) row.classList.toggle("is-selected", row.querySelector("input").checked);
     }
-    onValidity?.(value().valid);
+    // A hidden card does not block save. The maintenance write forces a reply itself.
+    onValidity?.(suspended ? true : value().valid);
+  };
+  const setSuspended = (next) => {
+    if (suspended === next) return;
+    suspended = next;
+    sync();
   };
   toggle.addEventListener("change", () => { st.on = toggle.checked; sync(); });
   // The form's own input listener must not treat these controls as fields.
   card.addEventListener("input", (e) => e.stopPropagation());
   queueMicrotask(sync);
-  return { el: card, value, sync };
+  return { el: card, value, sync, setSuspended };
 };
 
 const calendarForm = async (pid, item) => {
   const when = localParts(item?.item_type === "deadline" ? item.due_at : item?.starts_at || item?.due_at);
   const deadline = item?.item_type === "deadline";
   const linked = !!item?.maintenance_request_id;
+  const descriptionField = { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 5000, rows: 3 };
   const fields = [
     { name: "title", label: "Tittel", type: "text", value: item?.title ?? "", required: true, maxLength: 160 },
   ];
+  // Ny hendelse: tittel, beskrivelse, så «Merk som vedlikeholdssak» over «Krever svar».
+  // Endre hendelse har ikke vedlikeholdsbryteren, og beskrivelsen blir stående der den var.
+  if (!item) fields.push(descriptionField);
   // Tenancies with an active tenant (calendar_tenancy_has_active_tenant), lowest id first
   // (calendarDefaultTenancyID). Only these can be picked as the audience.
   const tenancies = mtActiveTenancies(pid);
@@ -1931,13 +1944,14 @@ const calendarForm = async (pid, item) => {
   }) : null;
   let cases = [];
   let initialAudience = "private";
-  if (rr) fields.push({ name: "requireResponse", type: "element", el: rr.el });
   if (!item) {
     fields.push(
       { name: "maintenance", label: "Merk som vedlikeholdssak", type: "checkbox", value: false, help: "Viser skiftenøkkel og oppretter en vedlikeholdssak for hendelsen." },
       { name: "maintenanceCategory", label: "Type vedlikehold", type: "choice", options: act.MAINTENANCE_CATEGORIES, value: "other", required: true },
     );
-  } else {
+  }
+  if (rr) fields.push({ name: "requireResponse", type: "element", el: rr.el });
+  if (item) {
     // CalendarItemScopeEditor (iOS #1530): link or unlink a maintenance case after creation.
     const res = await maintenanceRows(pid);
     cases = (res.data ?? []).filter((r) => !act.isFinishedMaintenance(r) || r.id === item.maintenance_request_id);
@@ -1953,8 +1967,8 @@ const calendarForm = async (pid, item) => {
     { name: "date", label: deadline ? "Frist" : "Dato", type: "date", value: when.date, required: true },
     { name: "allDay", label: "Hele dagen", type: "choice", options: [["false", "Nei"], ["true", "Ja"]], value: item?.all_day ? "true" : "false", required: true },
     { name: "time", label: "Klokkeslett", type: "time", value: when.time },
-    { name: "description", label: "Beskrivelse", type: "textarea", value: item?.description ?? "", maxLength: 5000, rows: 3 },
   );
+  if (item) fields.push(descriptionField);
   // Hidden switch (maintenance, «Kun for utleiere», no tenant): reply required, whole home.
   const rrValue = () => (rr ? rr.value() : { requiresResponse: true, audience: null, valid: true });
   if (!item) {
@@ -2003,8 +2017,10 @@ const calendarForm = async (pid, item) => {
       show("maintenanceCategory", marked);
       show("category", !marked);
       show("maintenanceVisibility", marked);
-      // Hidden and forced on for maintenance.
+      // Hidden while maintenance is on. The switch value is kept and comes back.
+      // The write still forces requires_response for the whole home.
       show("requireResponse", !marked);
+      rr?.setSuspended(marked);
     },
     onSubmit: async (v) => {
       if (item) {

@@ -434,6 +434,7 @@ test.describe("portal", () => {
       await page.getByRole("button", { name: "Rediger", exact: true }).click();
       const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Endre hendelse" }) });
       const toggle = dialog.getByRole("switch", { name: /Krever svar fra leietaker/ });
+      await expect(dialog.getByText("Merk som vedlikeholdssak")).toHaveCount(0);
       if (on) await expect(toggle).toBeChecked(); else await expect(toggle).not.toBeChecked();
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
@@ -940,12 +941,63 @@ test.describe("portal", () => {
     expect(body.requested_shared_with_property).toBe(true);
     expect(writes.some((w) => w.path.endsWith("/rpc/create_calendar_item"))).toBe(false);
     expect(writes.some((w) => /calendar_item_audience|calendar_item_room_responses/.test(w.path) && !w.path.includes("/rpc/"))).toBe(false);
-    // Maintenance hides the whole card (forced on).
+    // Maintenance hides the whole card. The switch value is kept and comes back.
     await page.getByRole("button", { name: "+ Ny hendelse" }).click();
     const again = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny hendelse" }) });
+    const againCard = rrCard(again);
+    await againCard.toggle.click();
     await again.getByText("Merk som vedlikeholdssak").click();
-    await expect(rrCard(again).toggle).toBeHidden();
+    await expect(againCard.toggle).toBeHidden();
     await expect(again.getByText("Krever svar fra leietaker")).toBeHidden();
+    await expect(again.getByText("Hvem skal svare?", { exact: true })).toBeHidden();
+    await again.getByText("Merk som vedlikeholdssak").click();
+    await expect(againCard.toggle).toBeVisible();
+    await expect(againCard.toggle).not.toBeChecked();
+    expect(errors).toEqual([]);
+  });
+
+  test("Ny hendelse puts maintenance above «Krever svar», and a hidden card still saves requires_response (iOS #1686)", async ({ page }) => {
+    const caseId = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1";
+    const handover = readyToEndTables();
+    handover.rpc.create_maintenance_request = [{ maintenance_request_id: caseId }];
+    const { writes, errors } = await openPortal(page, { handover });
+    const dialog = await newEventDialog(page);
+    const order = await dialog.locator("[data-field]").evaluateAll((els) => els.map((el) => el.dataset.field));
+    expect(order.indexOf("title")).toBeLessThan(order.indexOf("description"));
+    expect(order.indexOf("description")).toBeLessThan(order.indexOf("maintenance"));
+    expect(order.indexOf("maintenance")).toBeLessThan(order.indexOf("maintenanceCategory"));
+    expect(order.indexOf("maintenanceCategory")).toBeLessThan(order.indexOf("requireResponse"));
+    expect(order.indexOf("requireResponse")).toBeLessThan(order.indexOf("date"));
+    const top = async (name) => (await dialog.getByText(name).boundingBox()).y;
+    expect(await top("Beskrivelse (valgfritt)")).toBeLessThan(await top("Merk som vedlikeholdssak"));
+    expect(await top("Merk som vedlikeholdssak")).toBeLessThan(await top("Krever svar fra leietaker"));
+    const card = rrCard(dialog);
+    const save = dialog.getByRole("button", { name: "Legg i kalenderen" });
+    await card.select.click();
+    await expect(save).toBeDisabled();
+    await dialog.getByText("Merk som vedlikeholdssak").click();
+    await expect(card.toggle).toBeHidden();
+    await expect(card.who).toBeHidden();
+    await expect(dialog.getByText("Type vedlikehold", { exact: true })).toBeVisible();
+    await expect(save).toBeEnabled();
+    await dialog.getByText("Merk som vedlikeholdssak").click();
+    await expect(card.toggle).toBeVisible();
+    await expect(card.toggle).toBeChecked();
+    await expect(card.select).toBeChecked();
+    await expect(save).toBeDisabled();
+    await card.toggle.click();
+    await dialog.getByText("Merk som vedlikeholdssak").click();
+    await dialog.getByText("Merk som vedlikeholdssak").click();
+    await expect(card.toggle).toBeVisible();
+    await expect(card.toggle).not.toBeChecked();
+    await dialog.getByText("Merk som vedlikeholdssak").click();
+    await save.click();
+    await expect.poll(() => writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2"))).toBeTruthy();
+    const body = writes.find((w) => w.path.endsWith("/rpc/create_calendar_item_v2")).body;
+    expect(body.requested_requires_response).toBe(true);
+    expect(body.requested_audience_tenancy_ids).toBeNull();
+    expect(body.requested_maintenance_request_id).toBe(caseId);
+    expect(body.requested_shared_with_property).toBe(false);
     expect(errors).toEqual([]);
   });
 
@@ -1089,6 +1141,10 @@ test.describe("portal", () => {
   test("Endre hendelse keeps saved rooms and sends a room change through update_calendar_item_audience (iOS #1602)", async ({ page }) => {
     const { writes, errors } = await openPortal(page, { handover: savedRoomEvent() });
     let dialog = await openEdit(page);
+    const editOrder = await dialog.locator("[data-field]").evaluateAll((els) => els.map((el) => el.dataset.field));
+    expect(editOrder).not.toContain("maintenance");
+    expect(editOrder.indexOf("requireResponse")).toBeLessThan(editOrder.indexOf("linkCase"));
+    expect(editOrder.indexOf("date")).toBeLessThan(editOrder.indexOf("description"));
     let card = rrCard(dialog);
     await expect(card.toggle).toBeChecked();
     await expect(card.select).toBeChecked();
