@@ -30,7 +30,12 @@ const norm = (v) => String(v ?? "").trim();
 export const routeRequestBody = ({ from, to, tolls, settings }) => ({
   from_address: norm(from),
   to_address: norm(to),
-  ...(tolls ? { tolls: true, vehicle_type: settings?.vehicleType === "electric" ? "electric" : "fossil", uses_autopass: settings?.usesAutopass !== false } : {}),
+  ...(tolls ? {
+    tolls: true,
+    include_tolls: true,
+    vehicle_type: settings?.vehicleType === "electric" ? "electric" : "fossil",
+    uses_autopass: settings?.usesAutopass !== false,
+  } : {}),
 });
 
 // Edge answer → { meters, toll: { minor, estimated } | null }. Toll null when not included or out of range.

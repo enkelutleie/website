@@ -2,6 +2,7 @@ import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
 import * as inv from "./portal-inventory.js";
+import { ASSET_LOAD_ERROR, isCancellation, loadManagedInventory, unsettledInventory } from "./portal-inventory-load.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
 import * as annual from "./portal-annual.js";
@@ -19,9 +20,20 @@ import { routeComposer, ROUTE_TEXT } from "./portal-mileage-route.js";
 import { tollBreakdown, tollInputMinor, tollLabel, tollParams, TOLL_TEXT, tripTollMinor, tripTollOptionsFrom, tripTollPrefParams, tripTotalMinor } from "./portal-mileage-tolls.js";
 import { isNationalIdentityNumber, postponeKey, READY_BUTTON, READY_LATER, READY_TITLE, readyLines } from "./portal-ready-to-end.js";
 import { comparisonMeters, comparisonRows, groupChecklistPhotos, rowKey, uniqueUrls } from "./portal-checklist-photos.js";
+import {
+  adoptLoadedHandoverNote,
+  clearHandoverWorkingNote,
+  createHandoverCoalescer,
+  handoverSameContent,
+  handoverWorkingNote,
+  setHandoverWorkingNote,
+  withChecklistPointDone,
+} from "./portal-handover-sync.js";
 import { formHomeUse, HALF_USE_HELP, HALF_USE_QUESTION, HALF_USE_REQUIRED, halfUseChoiceValue, halfUseOptions } from "./portal-own-home.js";
+import * as hbCopy from "./portal-handbook-copy.js";
 import { manualOccupantsFor, OVERVIEW_TENANCY_STATUSES, overviewTenancies, overviewTenancyPresentation } from "./tenancy-listing.js";
 import { osloParts, osloTodayISO, osloWallToUtcIso, osloYear } from "./oslo-time.js";
+import { overviewShowsEvent } from "./portal-calendar-window.js";
 
 // Desktop portal. Every query and write runs with the user's own session, so RLS
 // and the app's RPCs decide what is allowed. Writes live in portal-actions.js.
@@ -318,7 +330,8 @@ const kpis = async (pid) => {
 // caller's own active tenancies decide, which is the same as before the shared calendar.
 // TENANT_UPCOMING_NO_RESPONSE (iOS #1607): only requires_response === true asks for a reply.
 // Missing, null and false are an info event: shown, but without reply buttons or waiting status.
-const calendarRequiresResponse = (item) => item?.requires_response === true;
+// A planned maintenance visit never asks for approval, even on an old row that still has the flag (iOS #1621).
+const calendarRequiresResponse = (item) => item?.requires_response === true && !item?.maintenance_request_id;
 const calendarCanRespond = (item, manager) => {
   if (manager || item.status !== "active" || !calendarRequiresResponse(item)) return false;
   if (typeof item.can_respond === "boolean") return item.can_respond;
@@ -562,10 +575,11 @@ const CALENDAR_UPCOMING_PREVIEW = 3;
 const CALENDAR_UPCOMING_PAGE = 6;
 
 // One row like CalendarItemRow (iOS): icon chip, bold title, badge, subtle date, category line.
-const calendarRow = (i, { now, hasTenant, manager }) => {
+const calendarRow = (i, { now, hasTenant, manager, highlightId }) => {
   const li = h("li");
   const a = h("a", "pt-cal-item");
   a.href = `#kalender/${i.id}`;
+  if (highlightId && i.id === highlightId) a.classList.add("is-highlighted");
   const overdue = calendarIsOverdue(i, now);
   const awaiting = manager && calendarAwaitsTenant(i, hasTenant);
   if (awaiting) a.classList.add("is-awaiting");
@@ -627,7 +641,7 @@ const calendarProposeForm = (item) => {
 // list_calendar_item_responses_v2 rows, or null when it is missing or failed (legacy answers stay).
 const calendarRoomRows = (pid) =>
   cachedOk(`calresp2:${pid}`, () => act.calendarRoomResponses(pid)).then((r) => (r.error ? null : r.data ?? [])).catch(() => null);
-const calendarCard = async (pid, full = false) => {
+const calendarCard = async (pid, full = false, focus = null) => {
   const c = card("Kalender", "calendar");
   const manager = isManager(pid);
   const [res, hasTenant, responses, roomRows] = await Promise.all([
@@ -640,10 +654,12 @@ const calendarCard = async (pid, full = false) => {
   const answers = new Map((responses?.data ?? []).map((r) => [r.calendar_item_id, r.decision]));
   // Then the room answers (iOS #1600): info events need no answer, and one room's decline
   // does not hide the event for the others. A failed v2 read keeps the legacy answers.
-  const items = res.error ? [] : overlayManager((res.data ?? [])
+  const loaded = res.error ? [] : overlayManager((res.data ?? [])
     .filter((i) => i.status !== "cancelled")
     .map((i) => (answers.get(i.id) && answers.get(i.id) !== i.tenant_response ? { ...i, tenant_response: answers.get(i.id) } : i)), roomRows);
   const now = new Date();
+  // Overview hides events that have already passed (iOS #1644). The calendar page keeps them.
+  const items = full ? loaded : loaded.filter((i) => overviewShowsEvent(i, now));
   const here = osloParts(now);
   const today = new Date(osloWallToUtcIso(here.date, "00:00"));
   if (!calendarView) calendarView = { y: here.year, m: here.month - 1 };
@@ -656,7 +672,7 @@ const calendarCard = async (pid, full = false) => {
   const maxYear = Math.max(here.year + CALENDAR_YEAR_SPAN, ...itemYears);
   const years = [];
   for (let y = minYear; y <= maxYear; y++) years.push(y);
-  const ctx = { now, hasTenant, manager };
+  const ctx = { now, hasTenant, manager, highlightId: focus?.highlightId ?? null };
   const sameDay = (i, y, m, day) => {
     const p = itemOslo(i);
     return !!p && p.year === y && p.month - 1 === m && p.day === day;
@@ -666,6 +682,14 @@ const calendarCard = async (pid, full = false) => {
     return { y: d.getUTCFullYear(), m: d.getUTCMonth() };
   };
   let selected = null; // { y, m, d } after a day is tapped
+  if (focus?.highlightId) {
+    const hit = items.find((i) => i.id === focus.highlightId);
+    const p = hit ? itemOslo(hit) : null;
+    if (p) {
+      calendarView = { y: p.year, m: p.month - 1 };
+      selected = { y: p.year, m: p.month - 1, d: p.day };
+    }
+  }
   let showAll = false;
 
   const monthBox = h("div", "pt-cal-month");
@@ -780,7 +804,7 @@ const calendarCard = async (pid, full = false) => {
     }
     out.push(title);
     const limit = full ? (showAll ? upcoming.length : CALENDAR_UPCOMING_PAGE) : CALENDAR_UPCOMING_PREVIEW;
-    if (!upcoming.length) out.push(inline("Ingen kommende hendelser."));
+    if (!upcoming.length) out.push(inline(full ? "Ingen kommende hendelser." : "Ingen kommende kalenderpunkter."));
     else {
       const list = h("ul", "pt-cal-items");
       upcoming.slice(0, limit).forEach((i) => list.append(calendarRow(i, ctx)));
@@ -990,7 +1014,7 @@ const propertiesTable = () => {
   return c;
 };
 
-const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long" });
+const MONTH_FORMAT = new Intl.DateTimeFormat("nb-NO", { month: "long", timeZone: "Europe/Oslo" });
 // Category for the title fallback; a row without a category falls through to «Inntekt»/«Utgift».
 const txCategoryName = (r) => (String(r.category ?? "").trim() ? act.categoryTitle(r) : null);
 const transactionRow = (pid, r, docIds = []) => {
@@ -1078,7 +1102,7 @@ const transactionList = async (pid) => {
   const cards = [c];
   for (const [key, list] of months) {
     const m = h("section", "pt-card pt-month");
-    m.append(h("h3", "pt-month-title", MONTH_FORMAT.format(new Date(`${key}-01T12:00:00`)).toLocaleUpperCase("nb-NO")));
+    m.append(h("h3", "pt-month-title", MONTH_FORMAT.format(new Date(osloWallToUtcIso(`${key}-01`, "12:00"))).toLocaleUpperCase("nb-NO")));
     const ul = h("ul", "pt-list");
     for (const r of list) ul.append(transactionRow(pid, r, docsOf.get(r.id)));
     m.append(ul);
@@ -1101,7 +1125,12 @@ const actionsRow = (...buttons) => {
 const isManager = (pid = state.propertyId) => ["owner", "co_landlord"].includes(state.roles.get(pid));
 const isOwner = (pid = state.propertyId) => state.roles.get(pid) === "owner";
 let session = null;
+// Bumped when a newer inventory load, a refresh, or leaving the in-flight read should win.
+// The superseded read keeps what is on screen and is not shown as «Kunne ikke laste eiendeler.».
+let inventoryEpoch = 0;
+let inventoryShown = { bundles: [], elections: {} };
 const refresh = async (message) => {
+  inventoryEpoch += 1;
   act.invalidatePortalReads();
   state.cache.clear();
   await load(session, true);
@@ -1290,14 +1319,14 @@ const propertyForm = async (p) => {
         if (v.account && v.account.replace(/\D/g, "").length !== 11) return "Kontonummeret må ha 11 siffer.";
         if (!p) {
           const managed = state.properties.filter((x) => isManager(x.id)).length;
-          if (managed >= 4) return "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+          if (managed >= 4) return act.PROPERTY_CAP_TEXT;
           const shared = v.housingKind === "shared";
           const roomCount = shared ? act.parseRoomCount(v.roomCount) : null;
           if (shared && !v.roomCount) return "Du må oppgi antall rom som skal leies ut.";
           if (shared && !roomCount) return "Antall rom må være mellom 1 og 10.";
           const images = finn?.files() ?? [];
           const res = await act.createProperty(state.user.id, v);
-          if (res.error) return act.explain(res.error);
+          if (res.error) return act.propertyCreateError(res.error) ?? act.explain(res.error);
           const id = res.data?.[0]?.id;
           if (id && roomCount) {
             const rooms = await act.ensureSharedRooms(id, roomCount);
@@ -2094,12 +2123,99 @@ const calendarForm = async (pid, item) => {
   });
 };
 
-const handbookForm = (pid, key, label, body) =>
+const copyAria = (label, value) => {
+  if (label) return `Kopier ${label}`;
+  const compact = String(value).replace(/\s+/g, " ").trim();
+  return compact.length <= 80 ? `Kopier ${compact}` : "Kopier teksten";
+};
+const copyStatus = () => {
+  const status = h("span", "pt-info-status");
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.setAttribute("aria-atomic", "true");
+  return status;
+};
+const copyControls = (value, ariaLabel) => {
+  const control = h("button", "pt-btn pt-btn-soft pt-btn-small", hbCopy.COPY_TEXT);
+  control.type = "button";
+  control.setAttribute("aria-label", ariaLabel);
+  const status = copyStatus();
+  let timer = 0;
+  control.addEventListener("click", async () => {
+    const ok = await hbCopy.copyText(value);
+    window.clearTimeout(timer);
+    status.textContent = ok ? hbCopy.COPIED_TEXT : hbCopy.COPY_FAILED_TEXT;
+    status.classList.toggle("is-error", !ok);
+    timer = window.setTimeout(() => {
+      if (!status.isConnected) return;
+      status.textContent = "";
+      status.classList.remove("is-error");
+    }, 2000);
+  });
+  return [control, status];
+};
+const phoneActions = (display, dial) => {
+  const call = h("a", "pt-btn pt-btn-soft pt-btn-small", hbCopy.CALL_TEXT);
+  call.href = `tel:${dial}`;
+  call.setAttribute("aria-label", `Ring ${display}`);
+  const sms = h("a", "pt-btn pt-btn-soft pt-btn-small", hbCopy.SMS_TEXT);
+  sms.href = `sms:${dial}`;
+  sms.setAttribute("aria-label", `Send SMS til ${display}`);
+  return [call, sms];
+};
+const mailLink = (display, email) => {
+  const link = h("a", "pt-info-mail", display);
+  link.href = `mailto:${email}`;
+  return link;
+};
+const appendInfoPart = (parent, part) => {
+  if (part.type === "text") {
+    parent.append(document.createTextNode(part.text));
+    return;
+  }
+  const chip = h("span", "pt-info-chip");
+  if (part.type === "email") chip.append(mailLink(part.text, part.email));
+  else {
+    chip.append(document.createTextNode(part.text));
+    chip.append(...phoneActions(part.text, part.dial));
+  }
+  chip.append(...copyControls(part.text, copyAria(null, part.text)));
+  parent.append(chip);
+};
+// One row: the stored text, a copy button, and call / SMS / mail when the value is one.
+const infoBlock = (entry, { showLabel = true } = {}) => {
+  const row = h("div", "pt-info");
+  if (showLabel && entry.label) row.append(h("span", "pt-info-label", entry.label));
+  const line = h("div", "pt-info-line");
+  const value = h("div", "pt-info-value");
+  if (entry.kind === "email") value.append(mailLink(entry.text, entry.email));
+  else if (entry.parts) entry.parts.forEach((part) => appendInfoPart(value, part));
+  else value.append(document.createTextNode(entry.text));
+  const actions = h("div", "pt-info-actions");
+  if (entry.kind === "phone") actions.append(...phoneActions(entry.text, entry.dial));
+  actions.append(...copyControls(entry.text, copyAria(entry.label, entry.text)));
+  line.append(value, actions);
+  row.append(line);
+  return row;
+};
+const handbookBody = (text) => {
+  const entries = hbCopy.handbookEntries(text);
+  if (!entries.length) return h("p", null, "Ikke fylt ut");
+  const list = h("ul", "pt-info-list");
+  for (const entry of entries) {
+    const item = h("li");
+    item.append(infoBlock(entry));
+    list.append(item);
+  }
+  return list;
+};
+
+const handbookForm = (pid, key, label, body, { required = true } = {}) =>
   act.openForm({
     title: label,
     intro: "Teksten blir synlig for leietakerne i boligpermen.",
     submitLabel: "Lagre",
-    fields: [{ name: "body", label: "Innhold", type: "textarea", value: body ?? "", maxLength: 4000, rows: 8, required: true }],
+    fields: [{ name: "body", label: "Innhold", type: "textarea", value: body ?? "", maxLength: 4000, rows: 8, required }],
     onSubmit: async (v) => {
       const res = await act.saveHandbookSection(pid, key, v.body);
       if (res.error) return act.explain(res.error);
@@ -2108,75 +2224,17 @@ const handbookForm = (pid, key, label, body) =>
     },
   });
 
-// Strøm (iOS PropertyHandbookElectricity): målepunkt-ID and målernummer, not meter readings.
-const ELECTRICITY_MP_HINT = "18 siffer som starter med 7070575000.";
-const ELECTRICITY_MP_INVALID = "Målepunkt-ID må være 18 siffer og starte med 7070575000.";
-const ELECTRICITY_MN_TOO_LONG = "Målernummeret kan ha høyst 40 tegn.";
-const electricityForm = (pid, current) => {
-  const problems = (inputs) => {
-    const mp = act.normalizeMeteringPoint(inputs.meteringPoint.value);
-    const mn = act.normalizeMeterNumber(inputs.meterNumber.value);
-    return { mp, mn, mpBad: !act.meteringPointValid(mp), mnBad: !act.meterNumberValid(mn) };
-  };
-  return act.openForm({
-    title: "Strøm",
-    intro: "Målepunkt-ID og målernummer gjør det enklere for leietakeren å bytte strømavtale. Begge feltene er valgfrie.",
-    submitLabel: "Lagre",
-    fields: [
-      { name: "meteringPoint", label: "Målepunkt-ID", type: "text", value: current.metering_point_id ?? "", maxLength: 40, placeholder: "707057500…", help: ELECTRICITY_MP_HINT },
-      { name: "meterNumber", label: "Målernummer", type: "text", value: current.meter_number ?? "", maxLength: 60 },
-    ],
-    onChange: (inputs) => {
-      const { mpBad, mnBad } = problems(inputs);
-      const mpField = inputs.meteringPoint.closest(".pt-field");
-      const mnField = inputs.meterNumber.closest(".pt-field");
-      const mpHelp = mpField.querySelector(".pt-field-help");
-      if (mpHelp) {
-        mpHelp.textContent = mpBad ? ELECTRICITY_MP_INVALID : ELECTRICITY_MP_HINT;
-        mpHelp.classList.toggle("is-error", mpBad);
-      }
-      let mnHelp = mnField.querySelector(".pt-field-help");
-      if (mnBad && !mnHelp) {
-        mnHelp = h("span", "pt-field-help is-error", ELECTRICITY_MN_TOO_LONG);
-        mnField.append(mnHelp);
-      } else if (!mnBad && mnHelp) mnHelp.remove();
-      inputs.meteringPoint.setAttribute("aria-invalid", mpBad ? "true" : "false");
-      inputs.meterNumber.setAttribute("aria-invalid", mnBad ? "true" : "false");
-      const submit = inputs.meteringPoint.form?.querySelector("button[type=submit]");
-      if (submit) submit.disabled = mpBad || mnBad;
-    },
-    onSubmit: async (_v, inputs) => {
-      const { mp, mn, mpBad, mnBad } = problems(inputs);
-      if (mpBad) return ELECTRICITY_MP_INVALID;
-      if (mnBad) return ELECTRICITY_MN_TOO_LONG;
-      if (mp === (current.metering_point_id ?? null) && mn === (current.meter_number ?? null)) return null;
-      const res = await act.saveHandbookElectricity(pid, mp, mn);
-      if (res.error) return "Strømopplysningene kunne ikke lagres. Prøv igjen.";
-      await refresh("Boligpermen er oppdatert.");
-      return null;
-    },
-  });
-};
-
-const electricityTile = (pid, res) => {
-  const row = res?.data?.[0] ?? {};
-  const current = { metering_point_id: row.metering_point_id ?? null, meter_number: row.meter_number ?? null };
-  const filled = current.metering_point_id || current.meter_number;
+// Strøm (iOS #1651): one text field, like Stoppekran. Older målepunkt/målernummer stay as read-only lines until a text is saved.
+const electricityTile = (pid, res, body, sectionsFailed) => {
+  const stored = String(body ?? "");
+  const failed = Boolean(sectionsFailed || (res?.error && !stored.trim()));
+  const text = failed ? "" : act.electricityHandbookText(stored, res?.data?.[0]);
   const t = h("article", "pt-tile");
-  t.append(icon("bolt", filled ? "pt-icon-circle is-warning" : "pt-icon-circle is-muted"), h("strong", null, "Strøm"));
-  if (res?.error) t.append(h("p", null, "Strømopplysningene kunne ikke hentes akkurat nå."));
-  else if (!filled) t.append(h("p", null, "Ikke fylt ut"));
-  else {
-    const dl = h("dl", "pt-tile-facts");
-    [["Målepunkt-ID", current.metering_point_id], ["Målernummer", current.meter_number]].forEach(([k, v]) => {
-      if (!v) return;
-      const d = h("div");
-      d.append(h("dt", null, k), h("dd", null, v));
-      dl.append(d);
-    });
-    t.append(dl);
-  }
-  if (isManager(pid) && !res?.error) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => electricityForm(pid, current))));
+  t.append(icon("bolt", text ? "pt-icon-circle is-warning" : "pt-icon-circle is-muted"), h("strong", null, "Strøm"));
+  if (failed) t.append(h("p", null, "Strømopplysningene kunne ikke hentes akkurat nå."));
+  else if (!text) t.append(h("p", null, "Ikke fylt ut"));
+  else t.append(handbookBody(text));
+  if (isManager(pid) && !failed) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(pid, "electricity", "Strøm", stored, { required: false }))));
   return t;
 };
 
@@ -2991,53 +3049,28 @@ const maintenanceDetail = async (pid, rid) => {
         overdue ? "Forfalt" : item.status === "completed" ? "Fullført" : "Aktiv"));
       row.append(pills);
       if (overdue && manager) row.append(h("p", "pt-mt-followup", "Vedlikeholdssaken trenger oppfølging. Den planlagte datoen har passert."));
-      const shared = !!item.tenancy_id && item.status === "active" && calendarRequiresResponse(item);
-      if (shared && manager) {
-        const resp = st.responses.get(item.id);
-        const decision = resp?.decision ?? item.tenant_response;
-        const comment = resp?.comment ?? item.tenant_response_comment;
-        if (decision === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker"));
-        else if (decision === "declined") {
-          row.append(responseBox("is-danger", "Avslått av leietaker", comment || "Svaret ligger i chatten."));
-          if (!finished()) {
-            const p = localParts(at);
-            const picker = mtPicker("Velg ny dato", p.date, p.time);
-            row.append(picker.wrap, actionsRow(button("Send ny dato til leietaker", "pt-btn-primary pt-btn-small", async (e) => {
-              const next = picker.value();
-              if (!next) return act.toast("Velg dato og klokkeslett.");
-              e.currentTarget.disabled = true;
-              const err = rpcError(await act.rescheduleMaintenanceVisit(item, next));
-              if (err) { e.currentTarget.disabled = false; return act.toast(err); }
-              await loadSchedule();
-              draw();
-              act.toast("Ny dato er sendt til leietaker.");
-            })));
-          }
-        } else row.append(responseBox("is-warning", "Venter på svar fra leietaker", "Leietaker har ikke svart på den planlagte datoen ennå."));
-      } else if (calendarCanRespond(item, manager) && !finished()) {
-        if (item.tenant_response === "accepted") row.append(responseBox("is-success", "Godkjent av leietaker"));
-        else if (item.tenant_response === "declined") row.append(responseBox("is-danger", "Avslaget er sendt i chat", item.tenant_response_comment || "Svaret ligger i chatten."));
-        else {
-          row.append(responseBox("is-warning", "Passer denne dagen?", "Godta hendelsen, eller avslå og skriv i chatten hvilken dag som passer bedre."));
-          const respond = async (decision, comment) => {
-            const res = await act.respondToCalendarItem(item.id, decision, comment);
-            if (res.error) return "Svaret kunne ikke sendes";
+      // «Endre tidspunkt» (iOS #1672): same picker as the first save, same calendar row.
+      if (manager && item.status === "active" && !finished()) {
+        const slot = h("div", "pt-mt-reschedule");
+        const openPicker = () => {
+          const p = localParts(at);
+          const picker = mtPicker("Tidspunkt", p.date, p.time);
+          const save = button("Lagre tidspunkt", "pt-btn-primary pt-btn-small", async (e) => {
+            const next = picker.value();
+            if (!next) return act.toast("Velg dato og klokkeslett.");
+            e.currentTarget.disabled = true;
+            const err = rpcError(await act.rescheduleMaintenanceVisit(item, next));
+            if (err) { e.currentTarget.disabled = false; return act.toast(err); }
+            state.cache.delete(`cal:${pid}`);
             await loadSchedule();
             draw();
-            // iOS #1514: accepting a planned maintenance date shows no «Du har godtatt hendelsen».
-            if (decision === "declined") act.toast("Avslaget er sendt i chat");
-            return null;
-          };
-          row.append(actionsRow(
-            button("Godta", "pt-btn-primary pt-btn-small", async () => { const err = await respond("accepted"); if (err) act.toast(err); }),
-            button("Avslå", "pt-btn-secondary pt-btn-small", () => act.openForm({
-              title: "Avslå hendelsen",
-              fields: [{ name: "comment", label: "Kommentar", type: "textarea", rows: 3, maxLength: 1000, placeholder: "Hvilken dag passer bedre?", help: "Kommentaren sendes til utleier i chat, så dere kan avtale en annen dag der." }],
-              submitLabel: "Send avslag",
-              onSubmit: (v) => respond("declined", v.comment),
-            })),
-          ));
-        }
+            act.toast("Tidspunktet er oppdatert.");
+          });
+          slot.replaceChildren(picker.wrap, actionsRow(save, button("Avbryt", "pt-btn-secondary pt-btn-small", () => slot.replaceChildren(change))));
+        };
+        const change = button("Endre tidspunkt", "pt-btn-secondary pt-btn-small", openPicker);
+        slot.append(change);
+        row.append(slot);
       }
       // Title, date, description and category of the planned date (update_calendar_item).
       if (manager && item.status === "active" && !finished()) {
@@ -3318,7 +3351,10 @@ const hoTrack = (promise) => {
   promise.finally(() => hoSaves.delete(promise)).catch(() => {});
   return promise;
 };
-const hoSaveItem = (item, condition, note) => hoTrack(act.saveInspectionItem(item, condition, note));
+const hoSaveItem = (item, condition, note) => hoTrack(act.saveInspectionItem(item, condition, note).then((res) => {
+  if (res?.data && item?.inspection_id) state.cache.delete(`ho-items:${item.inspection_id}`);
+  return res;
+}));
 // Returns true when the save is in fact stored: a late "already sent" reply for a
 // value that the locked checklist already holds is not an error.
 const hoSaveFailed = async (res, item, condition, note) => {
@@ -3408,7 +3444,7 @@ const hoChecklist = (items, editable) => {
     note.placeholder = "Valgfri merknad";
     note.setAttribute("aria-label", "Valgfri merknad");
     note.value = visible;
-    const shownNote = () => (item.area_code === "other" ? act.visibleNote(item.note) : (item.note ?? "").trim());
+    const shownNote = () => (item.area_code === "other" ? act.visibleNote(handoverWorkingNote(item.id) ?? item.note) : (item.note ?? "").trim());
     const dirty = () => Boolean(sel.value) && (sel.value !== (item.condition ?? "") || note.value.trim() !== shownNote());
     // quiet: the unsaved edit is stored as part of «Ferdigstill», without its own toast.
     const store = async (quiet) => {
@@ -3416,7 +3452,9 @@ const hoChecklist = (items, editable) => {
         act.toast("Velg tilstand.");
         return false;
       }
-      const text = item.area_code === "other" ? act.withVisibleNote(item.note, note.value) : note.value.trim();
+      const source = item.area_code === "other" ? (handoverWorkingNote(item.id) ?? item.note) : item.note;
+      const text = item.area_code === "other" ? act.withVisibleNote(source, note.value) : note.value.trim();
+      if (item.area_code === "other") setHandoverWorkingNote(item.id, text);
       if ((text ?? "").length > act.INSPECTION_NOTE_LIMIT) {
         act.toast("Merknaden er for lang.");
         return false;
@@ -3453,12 +3491,12 @@ const hoShared = (items, phase, editable, photos) => {
   if (!data) return null;
   const listKey = phase === "move_out" ? "out" : "in";
   const c = card("Nøkler, målere og sjekkpunkter", "key");
-  const points = (Array.isArray(data[listKey]) ? data[listKey] : []).map((row, index) => ({ row, index }))
+  const points = (Array.isArray(data[listKey]) ? data[listKey] : []).map((row) => ({ row }))
     .filter(({ row }) => row && !row.x && (row.k || row.t));
   if (points.length) {
     c.append(h("p", "pt-label", "Sjekkliste"));
     const ul = h("ul", "pt-ho-checks");
-    for (const { row, index } of points) {
+    for (const { row } of points) {
       const li = h("li", "pt-ho-check");
       const label = h("label");
       const box = h("input");
@@ -3472,11 +3510,13 @@ const hoShared = (items, phase, editable, photos) => {
       const strip = hoPhotoStrip(photos?.checklist.get(rowKey(row))?.[listKey], title);
       if (strip) li.append(strip);
       box.addEventListener("change", async () => {
-        const next = act.withChecklistDone(other.note, listKey, index, box.checked);
+        const current = handoverWorkingNote(other.id) ?? other.note;
+        const next = withChecklistPointDone(current, listKey, row, box.checked);
         if (!next || next.length > act.INSPECTION_NOTE_LIMIT) {
           box.checked = !box.checked;
           return act.toast("Kunne ikke lagre punktet. Prøv igjen.");
         }
+        setHandoverWorkingNote(other.id, next);
         box.disabled = true;
         const condition = other.condition ?? "ok";
         const res = await hoSaveItem(other, condition, next);
@@ -3486,6 +3526,7 @@ const hoShared = (items, phase, editable, photos) => {
           return;
         }
         Object.assign(other, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
+        if (!handoverSameContent(next, res.data.note)) await hoReloadPage();
       });
       ul.append(li);
     }
@@ -3571,10 +3612,53 @@ const hoComments = async (inspection, canComment) => {
   }
   return c;
 };
+// The loaded note is the baseline. A working note (an unsaved check or meter) is
+// merged into it, and left dirty so the save still sends this browser's answers.
+const hoApplySharedNote = (rows, editable) => {
+  const other = (rows ?? []).find((row) => row.area_code === "other");
+  if (!other) return;
+  if (!editable) {
+    clearHandoverWorkingNote(other.id);
+    return;
+  }
+  const adopted = adoptLoadedHandoverNote(other.id, other.note);
+  other.note = adopted.note;
+  if (!adopted.dirty) return;
+  const condition = other.condition ?? "ok";
+  hoSaveItem(other, condition, adopted.note).then((res) => {
+    if (res?.error || !res?.data) act.toast(act.inspectionError(res) ?? "Kunne ikke lagre punktet. Prøv igjen.");
+    else Object.assign(other, { condition: res.data.condition, note: res.data.note, updated_at: res.data.updated_at });
+  });
+};
+// Draft protocols only. A burst of row events reloads once; a reconnect reloads everything.
+const hoWatchProtocol = (inspection, token) => {
+  if (!inspection || inspection.status !== "draft") return;
+  const live = createHandoverCoalescer();
+  const stop = act.subscribeHandover([inspection], (kind) => {
+    live.submit(kind, async (next) => {
+      if (token !== renderToken) return;
+      for (const flush of [...hoDrafts]) {
+        if (!(await flush())) return;
+      }
+      const prefixes = next === "photos" ? ["ho-photos:"] : ["ho:", "rte-", "ho-items:", "ho-comments:", "ho-photos:"];
+      for (const key of [...state.cache.keys()]) {
+        if (prefixes.some((prefix) => key.startsWith(prefix))) state.cache.delete(key);
+      }
+      await render();
+    });
+  });
+  if (token !== renderToken) {
+    live.cancel();
+    stop();
+    return;
+  }
+  setPageCleanup(() => { live.cancel(); stop(); });
+};
 const hoProtocolCards = async (inspection, editable, canComment, d) => {
   const items = await cachedOk(`ho-items:${inspection.id}`, () => act.listInspectionItems(inspection.id));
   if (items.error) return [inline("Sjekklisten kunne ikke hentes akkurat nå.")];
-  const rows = items.data ?? [];
+  const rows = (items.data ?? []).map((row) => ({ ...row }));
+  hoApplySharedNote(rows, editable);
   const note = hoNoteOf(rows);
   const photos = note ? await hoPhotos(d ?? { [inspection.type === "move_out" ? "moveOut" : "moveIn"]: inspection }, hoNoteKeys(note)) : null;
   return [hoChecklist(rows, editable), hoShared(rows, inspection.type, editable, photos), await hoComments(inspection, canComment)].filter(Boolean);
@@ -3599,6 +3683,7 @@ const hoTenantFillToggle = (i) => {
 };
 
 const hoMoveInPage = async (p, t, d) => {
+  const token = renderToken;
   const manager = isManager(p.id);
   const i = d.moveIn;
   const head = card("Innflytting", "checklist");
@@ -3649,6 +3734,7 @@ const hoMoveInPage = async (p, t, d) => {
   }
   const editable = draft && (manager || tenantFilling);
   const canComment = draft && (manager || Boolean(i.sent_for_review_at));
+  hoWatchProtocol(i, token);
   return [hoBack(), head, ...(await hoProtocolCards(i, editable, canComment, d))];
 };
 
@@ -3679,6 +3765,7 @@ const hoNoticeForm = async (p, t, manager) => {
   });
 };
 const hoMoveOutPage = async (p, t, d) => {
+  const token = renderToken;
   const manager = isManager(p.id);
   const proc = d.process;
   const i = d.moveOut;
@@ -3741,6 +3828,7 @@ const hoMoveOutPage = async (p, t, d) => {
   if (buttons.length) head.append(actionsRow(...buttons));
   if (!i) return [hoBack(), head];
   const tenantFilling = !manager && !finalized && i.tenant_may_fill;
+  hoWatchProtocol(i, token);
   return [hoBack(), head, ...(await hoProtocolCards(i, !finalized && (manager || tenantFilling), manager && !finalized, d))];
 };
 
@@ -4295,10 +4383,10 @@ const economyTiles = () => {
   const tiles = h("section", "pt-tiles");
   const tile = h("a", "pt-tile pt-tile-link");
   tile.href = "#okonomi/kjorebok";
-  tile.append(icon("car", "pt-icon-circle is-tax"), h("strong", null, "Kjørebok"), h("p", null, "Logg turer. Beløpet blir en utgift i regnskapet."));
+  tile.append(icon("car", "pt-icon-circle is-mileage"), h("strong", null, "Kjørebok"), h("p", null, "Logg turer. Beløpet blir en utgift i regnskapet."));
   const furniture = h("a", "pt-tile pt-tile-link");
   furniture.href = "#okonomi/mobler";
-  furniture.append(icon("sofa", "pt-icon-circle is-warning"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
+  furniture.append(icon("sofa", "pt-icon-circle is-furnishings"), h("strong", null, "Møbler og inventar"), h("p", null, "Se den felles potten og registrer møbler."));
   const report = h("a", "pt-tile pt-tile-link");
   report.href = "#okonomi/arsoppgave";
   report.append(icon("doc", "pt-icon-circle is-tax"), h("strong", null, "Årsoppgave"), h("p", null, "Dokumentasjon av leieinntekter og utgifter"));
@@ -4316,7 +4404,7 @@ const loadAnnual = async (pid, year) => {
     annual.listLinks(pid, start, end),
     act.listMileageTrips(pid, start, end),
     annual.ownershipShares(pid, year),
-    cached("inventory", loadInventory),
+    cachedInventory(),
     act.ownProfile(state.user.id),
     tenancyPeople(pid),
   ]);
@@ -4332,10 +4420,11 @@ const loadAnnual = async (pid, year) => {
   return {
     transactions: txs.data, links: links.data, documents: docs.data ?? [], trips: trips.error ? [] : trips.data,
     driverNames, tenantNames,
-    items: inventory.error ? [] : inventory.items.filter((i) => i.propertyId === pid),
-    elections: inventory.error ? {} : inventory.elections,
+    items: inventory.error ? [] : (inventory.items ?? []).filter((i) => i.propertyId === pid),
+    elections: inventory.error ? {} : (inventory.elections ?? {}),
     landlordName: me.data?.display_name ?? state.name ?? "",
-    supplementsFailed: Boolean(trips.error || roster.error || inventory.error || docs.error),
+    supplementsFailed: Boolean(trips.error || roster.error || inventory.error || docs.error
+      || (inventory.failedPropertyIds ?? []).includes(pid)),
   };
 };
 
@@ -4465,7 +4554,7 @@ const annualPage = async (pid) => {
   }
   const trips = card(`${n++}  Kjørebok`, "car");
   trips.append(reportTable([{ label: "Dato" }, { label: "Fra → til" }, { label: "Formål" }, { label: "Km", align: R }],
-    report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Sum kjøring", annual.kmText(report.summary.drivingMeters)], annual.drivingSums(report)));
+    report.trips.map((t) => [t.dateText, t.route, t.purpose, annual.kmText(t.meters)]), ["Totalt kjørt", annual.kmText(report.summary.drivingMeters)], annual.drivingSums(report)));
   const sum = card(`${n++}  Oppsummering`, "net");
   sum.append(reportTable([{ label: "" }, { label: "", align: R }],
     [["Sum inntekter", kr2(report.summary.incomeMinor)], ["Sum utgifter", kr2(report.summary.expenseMinor)]],
@@ -4654,7 +4743,7 @@ const mileagePage = async (pid) => {
       const route = [act.displayPlace(t.from_place), act.displayPlace(t.to_place)].filter(Boolean).join(" – ");
       const toll = tripTollMinor(t);
       main.append(h("strong", null, route || t.purpose || "Kjøretur"), h("span", null, [dateText(t.trip_date), t.purpose, `${act.kilometerText(t.distance_meters)} km`, toll > 0 ? `${TOLL_TEXT.title} ${money(toll)}` : null].filter(Boolean).join(" · ")));
-      li.append(icon("car", "pt-icon-circle is-tax"), main, h("span", "pt-amount is-expense", `−${money(tripTotalMinor(t))}`));
+      li.append(icon("car", "pt-icon-circle is-mileage"), main, h("span", "pt-amount is-mileage", `−${money(tripTotalMinor(t))}`));
       if (isManager(pid)) li.append(button("Rediger", "pt-btn-soft pt-btn-small", () => mileageForm(pid, t)));
       ul.append(li);
     }
@@ -4742,21 +4831,42 @@ const assetState = { year: null, infoOpen: false, open: new Set() };
 const kr = (minor) => money(minor).replace(/,00 kr$/, " kr");
 const percent = (bps) => `${Math.round(bps / 100)} %`;
 
+// Møbler og inventar across every managed property (iOS AssetListLoad, #1677).
+// One property failing does not fail the page. Abort, navigation, re-render and
+// refresh are not errors. The message is only for a total failure with nothing shown.
 const loadInventory = async () => {
+  const epoch = ++inventoryEpoch;
   const managed = state.properties.filter((p) => isManager(p.id));
-  const perProperty = await Promise.all(managed.map(async (p) => {
-    const [assets, mode] = await Promise.all([inv.listAssets(p.id), inv.accountingMode(p.id)]);
-    const modeValue = mode.error ? null : (Array.isArray(mode.data) ? mode.data[0]?.accounting_mode ?? mode.data[0] : mode.data?.accounting_mode ?? mode.data);
-    return { p, assets, scope: inv.scopeFor(modeValue, p) };
-  }));
-  if (perProperty.some((r) => r.assets.error)) return { error: true };
-  const items = perProperty.flatMap(({ p, assets, scope }) => assets.data.map((a) => inv.itemInput(a, addressOf(p).line, scope)));
-  items.sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate) || a.name.localeCompare(b.name, "nb"));
-  const el = await inv.listElections();
-  const elections = {};
-  for (const e of el.error ? [] : el.data ?? []) (elections[e.scope_key] ??= {})[e.tax_year] = e;
-  const scopes = Object.fromEntries(perProperty.map(({ p, scope }) => [p.id, scope]));
-  return { items, elections, scopes, assets: Object.fromEntries(perProperty.flatMap(({ assets }) => assets.data.map((a) => [a.id, a]))) };
+  const view = await loadManagedInventory({
+    properties: managed,
+    labelOf: (p) => addressOf(p).line,
+    previous: inventoryShown,
+    listAssets: (id) => inv.listAssets(id),
+    accountingMode: (id) => inv.accountingMode(id),
+    listElections: () => inv.listElections(),
+    showsFailure: true,
+    isCancelled: () => epoch !== inventoryEpoch,
+  });
+  if (epoch === inventoryEpoch && view.settled) inventoryShown = { bundles: view.bundles, elections: view.elections };
+  return view;
+};
+// A cancelled or superseded read is not cached, so the next visit tries again.
+// A real result (including a total failure) stays until refresh clears the cache.
+const cachedInventory = () => {
+  const key = "inventory";
+  if (state.cache.has(key)) return state.cache.get(key);
+  let pending;
+  pending = Promise.resolve().then(loadInventory).then((res) => {
+    if (res?.settled === false && state.cache.get(key) === pending) state.cache.delete(key);
+    return res;
+  }).catch((error) => {
+    if (state.cache.get(key) === pending) state.cache.delete(key);
+    const hasRows = (inventoryShown.bundles ?? []).some((bundle) => bundle.rawRows?.length);
+    if (isCancellation(error) || hasRows) return unsettledInventory(inventoryShown);
+    return { error: true, items: [], elections: {}, scopes: {}, assets: {}, bundles: [], failedPropertyIds: [], cancelled: false, settled: true };
+  });
+  state.cache.set(key, pending);
+  return pending;
 };
 
 const assetForm = async (pid, data, asset = null) => {
@@ -4896,7 +5006,7 @@ const assetRow = (item, row, alloc, data, showProperty) => {
   const amount = row.isPurchase ? item.purchaseAmountMinor : row.closingMinor ?? row.openingMinor ?? item.purchaseAmountMinor;
   const side = h("div", "pt-row-side");
   side.append(h("span", "pt-amount", kr(amount)), h("span", `pt-chip ${tone}`.trim(), badge));
-  top.append(icon("sofa", "pt-icon-circle is-tax"), main, side);
+  top.append(icon("sofa", "pt-icon-circle is-furnishings"), main, side);
   li.append(top);
   const manager = isManager(item.propertyId);
   const detail = h("div", "pt-asset-detail");
@@ -4932,7 +5042,7 @@ const assetsPage = async (pid) => {
   const year = assetState.year ?? thisYear;
   const back = h("a", "pt-back", "‹ Økonomi");
   back.href = "#okonomi";
-  const data = await cached("inventory", loadInventory);
+  const data = await cachedInventory();
   const head = card("Møbler og inventar", "sofa");
   head.append(h("p", "pt-muted", "Du kan få skattefradrag for møbler og inventar som brukes i utleien."));
   const info = h("div", "pt-mileage-info");
@@ -4946,7 +5056,12 @@ const assetsPage = async (pid) => {
   }
   const toggle = infoToggle(info, assetState);
   if (data.error) {
-    head.append(actionsRow(toggle), info, inline("Kunne ikke laste eiendeler."));
+    head.append(actionsRow(toggle), info, inline(ASSET_LOAD_ERROR));
+    return [back, head];
+  }
+  // Aborted before anything arrived: keep the header, and do not claim the list is empty.
+  if (data.settled === false && !(data.items ?? []).length) {
+    head.append(actionsRow(toggle), info);
     return [back, head];
   }
   const firstYear = Math.min(thisYear, year, ...data.items.map((i) => inv.yearOf(i.purchaseDate)).filter(Boolean));
@@ -5461,14 +5576,21 @@ const PAGES = {
     const tiles = h("section", "pt-tiles");
     for (const [key, label, ic, tone] of HANDBOOK_TILES) {
       const t = h("article", "pt-tile");
-      t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), h("p", null, res.error ? "Kunne ikke hentes" : bodies.get(key) ?? "Ikke fylt ut"));
+      const body = res.error ? null : bodies.get(key);
+      const shown = res.error ? h("p", null, "Kunne ikke hentes") : body ? handbookBody(body) : h("p", null, "Ikke fylt ut");
+      t.append(icon(ic, `pt-icon-circle ${tone}`.trim()), h("strong", null, label), shown);
       if (isManager(p.id) && !res.error) t.append(actionsRow(button("Rediger", "pt-btn-soft pt-btn-small", () => handbookForm(p.id, key, label, bodies.get(key)))));
       tiles.append(t);
-      if (key === "fuse_box") tiles.append(electricityTile(p.id, el));
+      if (key === "fuse_box") tiles.append(electricityTile(p.id, el, bodies.get("electricity") ?? "", res.error));
     }
     return [intro, tiles];
   },
   async kalender(sub, extra) {
+    // #kalender/vis/<hendelse>: overview with that day selected and the row highlighted.
+    if (sub === "vis") {
+      const p = property();
+      return p ? [await calendarCard(p.id, true, { highlightId: extra })] : [noProperty()];
+    }
     if (sub) return calendarDetail(sub, extra);
     const p = property();
     return p ? [await calendarCard(p.id, true)] : [noProperty()];
@@ -5873,7 +5995,7 @@ const redrawCalendar = async (pid) => {
   const token = renderToken;
   const [id, sub, extra] = calendarRoute();
   const y = window.scrollY;
-  if (id === "kalender" && sub) {
+  if (id === "kalender" && sub && sub !== "vis") {
     if (editingIn(content) || document.querySelector("dialog[open]")) return;
     calendarItems(pid); // the list the detail reuses (one RPC), so it is not asked for twice
     const nodes = await calendarDetail(sub, extra);
@@ -5882,7 +6004,7 @@ const redrawCalendar = async (pid) => {
   } else {
     const old = content.querySelector(`[data-calendar-card="${CSS.escape(pid)}"]`);
     if (!old) return;
-    const next = await calendarCard(pid, old.dataset.calendarFull === "1");
+    const next = await calendarCard(pid, old.dataset.calendarFull === "1", sub === "vis" ? { highlightId: extra } : null);
     if (token !== renderToken || !old.isConnected) return;
     // Keep focus on the same control (e.g. a day or the month arrows) after the swap.
     const focusables = (el) => [...el.querySelectorAll("a[href], button")];
@@ -6083,6 +6205,7 @@ const render = async () => {
   }
   if (token !== renderToken) return;
   content.replaceChildren(...nodes);
+  content.querySelector(".pt-cal-item.is-highlighted")?.scrollIntoView({ block: "center" });
 };
 
 const selectProperty = (id, rerender = true) => {
