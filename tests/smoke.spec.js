@@ -1345,6 +1345,60 @@ test.describe("portal", () => {
     await expect(missing.getByRole("button", { name: "Rediger" })).toHaveCount(0);
   });
 
+  test("boligperm values can be copied, called and mailed", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openPortal(page, {
+      handover: {
+        property_handbook_sections: [
+          { property_id: PROPERTY_ID, section_key: "wifi", is_enabled: true, body: "Nettverk: HjemmeNet\nPassord: hemmelig 123" },
+          { property_id: PROPERTY_ID, section_key: "emergency", is_enabled: true, body: "Vakt: +47 412 34 567\nE-post: vakt@example.no\nRing +47 900 11 223 ved lekkasje." },
+          { property_id: PROPERTY_ID, section_key: "keys_access", is_enabled: true, body: "Portkode: 4321\nAdresse: Testveien 1, 0150 Oslo" },
+        ],
+        property_handbook_settings: [{ property_id: PROPERTY_ID, metering_point_id: "707057500012345678", meter_number: "AB 12" }],
+      },
+    });
+    await page.getByRole("link", { name: "Boligperm", exact: true }).click();
+
+    const wifi = page.locator(".pt-tile", { hasText: "Wi-Fi" });
+    await expect(wifi.getByText("HjemmeNet")).toBeVisible();
+    await expect(wifi.getByText("hemmelig 123")).toBeVisible();
+    await wifi.getByRole("button", { name: "Kopier Passord" }).click();
+    await expect(wifi.getByRole("status").filter({ hasText: "Kopiert" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("hemmelig 123");
+
+    const emergency = page.locator(".pt-tile", { hasText: "Nødinfo" });
+    await expect(emergency.getByText("+47 412 34 567")).toBeVisible();
+    const call = emergency.getByRole("link", { name: "Ring +47 412 34 567" });
+    const sms = emergency.getByRole("link", { name: "Send SMS til +47 412 34 567" });
+    await expect(call).toHaveAttribute("href", "tel:+4741234567");
+    await expect(sms).toHaveAttribute("href", "sms:+4741234567");
+    await expect(emergency.getByRole("link", { name: "vakt@example.no" })).toHaveAttribute("href", "mailto:vakt@example.no");
+    await emergency.getByRole("button", { name: "Kopier E-post" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("vakt@example.no");
+    const inlineCall = emergency.getByRole("link", { name: "Ring +47 900 11 223" });
+    await expect(inlineCall).toHaveAttribute("href", "tel:+4790011223");
+    await expect(emergency.getByRole("link", { name: "Send SMS til +47 900 11 223" })).toHaveAttribute("href", "sms:+4790011223");
+
+    const keys = page.locator(".pt-tile", { hasText: "Nøkler og adgang" });
+    await keys.getByRole("button", { name: "Kopier Portkode" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("4321");
+    await expect(keys.getByRole("link", { name: "Ring 4321" })).toHaveCount(0);
+    await keys.getByRole("button", { name: "Kopier Adresse" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("Testveien 1, 0150 Oslo");
+
+    const power = page.locator(".pt-tile", { hasText: "Strøm" });
+    await expect(power.getByText("707057500012345678")).toBeVisible();
+    await expect(power.getByRole("link", { name: /Ring/ })).toHaveCount(0);
+    await power.getByRole("button", { name: "Kopier Målepunkt-ID" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("707057500012345678");
+    await power.getByRole("button", { name: "Kopier Målernummer" }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("AB 12");
+
+    const empty = page.locator(".pt-tile", { hasText: "Stoppekran" });
+    await expect(empty.getByText("Ikke fylt ut")).toBeVisible();
+    await expect(empty.getByRole("button", { name: /Kopier/ })).toHaveCount(0);
+  });
+
   test("saving a handbook section does not clear link_url", async ({ page }) => {
     const { writes } = await openPortal(page);
     await page.getByRole("link", { name: "Boligperm", exact: true }).click();
