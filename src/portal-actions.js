@@ -2765,21 +2765,52 @@ export const displayPlace = (raw) => {
 };
 // EconomyTransactionPresentation.mileageFields: create_mileage_trip books
 // «Kjørebok · fra – til · formål · 25.5 km». Null when the row is not a trip expense.
+// The kilometre part must be last. A trailing «bompenger N kr» is not a trip detail.
 const isRoutePart = (part) => part.includes(" – ") || part.includes(" - ") || /, (norge|norway)/i.test(part) || /,\s*\d{4}\b/.test(part);
-export const mileageFields = (row) => {
+const kilometersOf = (part) => {
+  const text = String(part ?? "").trim();
+  if (!/km$/i.test(text)) return null;
+  const km = Number(text.slice(0, -2).trim().replace(",", "."));
+  return km > 0 ? km : null;
+};
+const isTollPart = (part) => {
+  const lower = String(part ?? "").trim().toLowerCase();
+  return lower.startsWith("bompenger ") && lower.endsWith(" kr");
+};
+const mileageParts = (row) => {
   if (row?.transaction_type !== "expense") return null;
   const text = String(row.description ?? "").trim();
   if (!text.startsWith("Kjørebok")) return null;
-  const parts = text.split(" · ").map((p) => p.trim()).filter(Boolean);
-  const last = parts[parts.length - 1] ?? "";
-  if (!/km$/i.test(last)) return null;
-  const km = Number(last.slice(0, -2).trim().replace(",", "."));
-  if (!(km > 0)) return null;
+  return text.split(" \u00b7 ").map((p) => p.trim()).filter(Boolean);
+};
+export const mileageFields = (row) => {
+  const parts = mileageParts(row);
+  if (!parts) return null;
+  const km = kilometersOf(parts[parts.length - 1]);
+  if (km == null) return null;
   const rest = parts.slice(1, -1);
   const purpose = [...rest].reverse().find((p) => !isRoutePart(p)) ?? null;
-  return { purpose, meters: Math.round(km * 1000) };
+  const route = splitRoute(rest.find((p) => isRoutePart(p)));
+  return { purpose, meters: Math.round(km * 1000), fromPlace: route.fromPlace, toPlace: route.toPlace };
 };
-export const isMileageExpense = (row) => mileageFields(row) !== null;
+// List rows (mileageRowPurpose): a kilometre part anywhere, including when tolls follow it.
+export const mileageListFields = (row) => {
+  const parts = mileageParts(row);
+  if (!parts || !parts.some((p) => kilometersOf(p) != null)) return null;
+  const remainder = parts.slice(1).filter((p) => kilometersOf(p) == null && !isTollPart(p));
+  const purpose = [...remainder].reverse().find((p) => !isRoutePart(p)) ?? null;
+  return { purpose };
+};
+const splitRoute = (route) => {
+  if (!route) return { fromPlace: null, toPlace: null };
+  const separator = route.includes(" – ") ? " – " : route.includes(" - ") ? " - " : null;
+  if (!separator) return { fromPlace: route, toPlace: null };
+  const ends = route.split(separator);
+  const from = ends[0].trim();
+  const to = ends.slice(1).join(separator).trim();
+  return { fromPlace: from || null, toPlace: to || null };
+};
+export const isMileageExpense = (row) => mileageListFields(row) !== null;
 
 // SupabaseMileageRemote.list: pages of 200 until an empty page. End date is exclusive.
 export async function listMileageTrips(propertyId, startDate, endDate) {

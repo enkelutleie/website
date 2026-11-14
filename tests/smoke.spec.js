@@ -894,6 +894,70 @@ test.describe("portal", () => {
     expect(errors).toEqual([]);
   });
 
+  // Transaksjoner: «Kjørebok · formål», then property and date on separate lines. Route, km and tolls open in the detail.
+  test("a kjørebok row hides route, km and tolls until the trip is opened", async ({ page }) => {
+    const part = (...bits) => bits.join(" \u00b7 ");
+    const tx = (id, over) => ({
+      id, property_id: PROPERTY_ID, transaction_type: "expense", category: "other_expense", legacy_category: null,
+      amount_minor: 10360, transaction_date: "2026-11-01", series_id: null, series_occurrence_date: null,
+      description: "Post", counterparty: null, maintenance_request_id: null, updated_at: "2026-11-01T10:00:00Z", voided_at: null,
+      ...over,
+    });
+    const tollDescription = part("Kjørebok", "Øvre Fergested 21, 4614 Kristiansand S, Norge – Oksevollveien 27B, 4514 Mandal, Norge", "Stoler", "39.1 km", "bompenger 86 kr");
+    const { errors } = await openPortal(page, { handover: {
+      financial_transactions: [
+        tx("82000000-0000-4000-8000-000000000001", { description: part("Kjørebok", "Hjemme – Testveien 1", "Visning", "20 km") }),
+        tx("82000000-0000-4000-8000-000000000003", { description: tollDescription, amount_minor: 50000, transaction_date: "2026-09-21" }),
+        tx("82000000-0000-4000-8000-000000000002", { description: "Maling av vegg", amount_minor: 25000 }),
+      ],
+    } });
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    const trip = page.getByTestId("economy.transaction.mileage").filter({ hasText: "Visning" });
+    await expect(trip.locator(".pt-tx-title strong")).toHaveText("Kjørebok \u00b7 Visning");
+    const lines = trip.locator(".pt-row-main > span:not(.pt-chip)");
+    await expect(lines).toHaveCount(2);
+    await expect(lines.nth(0)).toContainText("Testveien 1");
+    await expect(lines.nth(0)).not.toContainText("2026");
+    await expect(lines.nth(1)).toContainText("2026");
+    await expect(lines.nth(1)).not.toContainText("Testveien");
+    await expect(trip).not.toContainText("Hjemme");
+    await expect(trip).not.toContainText("km");
+    await expect(trip).not.toContainText("Bompenger");
+    await expect(trip.locator(".pt-chip")).toHaveCount(0);
+    await expect(trip.locator(".pt-amount")).toBeVisible();
+    const toll = page.getByTestId("economy.transaction.mileage").filter({ hasText: "Stoler" });
+    await expect(toll.locator(".pt-tx-title strong")).toHaveText("Kjørebok \u00b7 Stoler");
+    await expect(toll).not.toContainText("bompenger");
+    await expect(toll).not.toContainText("Kristiansand");
+    await expect(toll).not.toContainText("km");
+    const expense = page.locator("li.pt-row").filter({ hasText: "Maling av vegg" });
+    await expect(expense.locator(".pt-tx-title strong")).toHaveText("Maling av vegg");
+    await expect(expense.locator(".pt-row-main span").first()).toContainText("Utgift");
+    await expect(expense.getByRole("button", { name: "Endre" })).toBeVisible();
+    await expect(expense.getByTestId("economy.transaction.mileage")).toHaveCount(0);
+    await trip.click();
+    const detail = page.getByTestId("economy.mileage.detail");
+    await expect(detail.getByRole("heading", { name: "Visning", exact: true })).toBeVisible();
+    await expect(detail).toContainText("Hjemme");
+    await expect(detail).toContainText("Testveien 1");
+    await expect(detail).toContainText("20 km");
+    await expect(detail).toContainText("103,60");
+    await expect(detail).not.toContainText("Bompenger");
+    await expect(detail.getByRole("link", { name: "Åpne kjørebok" })).toHaveAttribute("href", "#okonomi/kjorebok");
+    await detail.getByRole("button", { name: "Lukk" }).click();
+    await expect(detail).toHaveCount(0);
+    await expect(trip).not.toContainText("Hjemme");
+    await toll.click();
+    const raw = page.getByTestId("economy.mileage.detail");
+    await expect(raw.getByRole("heading")).toContainText("bompenger 86 kr");
+    await expect(raw.getByRole("heading")).toContainText("Kristiansand");
+    await expect(raw.getByRole("heading")).toContainText("39.1 km");
+    await expect(raw).toContainText("500,00");
+    await raw.getByRole("button", { name: "Lukk" }).click();
+    await expect(raw).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
   // iOS #1600: calendar per room.
   const newEventDialog = async (page) => {
     await page.getByRole("link", { name: "Kalender", exact: true }).click();

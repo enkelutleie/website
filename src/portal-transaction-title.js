@@ -9,6 +9,16 @@ export const rentIncomeTitle = (periodDate) => {
   return `Leieinntekt ${MONTH.format(new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])))}`;
 };
 
+// iOS mileageListTitle: «Kjørebok · <formål>» with U+00B7, or «Kjørebok» when the purpose is missing.
+const MILEAGE_PART = " \u00b7 ";
+export const mileageListTitle = (purpose) => {
+  const text = String(purpose ?? "").trim();
+  return text ? `Kjørebok${MILEAGE_PART}${text}` : "Kjørebok";
+};
+
+// Trip detail title is the purpose itself. «Kjørebok» only when the purpose is missing.
+export const mileageDetailTitle = (purpose) => String(purpose ?? "").trim() || "Kjørebok";
+
 // categoryName: the shown category («Vedlikehold»), or null when the row has no category.
 export const transactionListTitle = (row, categoryName) => {
   const description = String(row?.description ?? "");
