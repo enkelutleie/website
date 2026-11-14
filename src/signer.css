@@ -1,0 +1,56 @@
+.signer-page main.signer { display: grid; gap: 1rem; padding: 1.25rem 0 3rem; max-width: 46rem; }
+.signer-card {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 1.25rem;
+  padding: 1.4rem 1.25rem; box-shadow: 0 14px 40px -28px rgba(27, 58, 107, 0.45);
+  display: grid; gap: 0.75rem;
+}
+.signer-card h1, .signer-card h2 { margin: 0; font-size: 1.45rem; letter-spacing: -0.03em; color: var(--navy); line-height: 1.2; }
+.signer-card h1:focus, .signer-card h2:focus { outline: none; }
+.signer-card p { margin: 0; }
+.signer-lead { font-size: 1.05rem; color: var(--ink); }
+.signer-muted { color: var(--muted); font-size: 0.93rem; }
+.signer-card .btn { width: 100%; min-height: 3.1rem; justify-content: center; font-size: 1.02rem; border: 0; cursor: pointer; }
+.signer-card .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.btn-secondary { background: #e8f3ff; color: var(--navy); box-shadow: none; }
+.btn-secondary:hover { background: #d4e8ff; color: var(--navy); }
+.btn-link {
+  background: none; border: 0; padding: 0.4rem 0; color: var(--blue-deep); font: inherit; font-weight: 600;
+  cursor: pointer; justify-self: start;
+}
+.btn-link[disabled] { color: var(--muted); cursor: default; }
+.signer-form { display: grid; gap: 0.5rem; }
+.signer-card label { font-size: 0.92rem; font-weight: 620; color: var(--navy); }
+.signer-card input[type="text"], .signer-card input:not([type]), .signer-code {
+  width: 100%; min-height: 3rem; padding: 0.6rem 0.85rem; border: 1px solid var(--line); border-radius: 0.8rem;
+  font: inherit; color: var(--ink); background: #fff;
+}
+.signer-code { font-size: 1.6rem; letter-spacing: 0.45em; text-align: center; font-variant-numeric: tabular-nums; }
+.signer-message { padding: 0.7rem 0.9rem; border-radius: 0.8rem; font-size: 0.95rem; }
+.signer-message.is-error { background: #fdecec; color: #8a1c1c; }
+.signer-message.is-info { background: #e8f3ff; color: var(--navy); }
+.signer-parties { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
+.signer-parties li, .signer-signer { display: flex; justify-content: space-between; gap: 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--line); }
+.signer-role { color: var(--muted); font-size: 0.92rem; }
+.signer-document { background: #e9eef6; border-radius: 1.25rem; padding: 0.6rem; }
+.signer-pages { display: grid; gap: 0.6rem; }
+.signer-pages > p { padding: 1rem; text-align: center; }
+.signer-page-canvas { width: 100%; height: auto; background: #fff; border-radius: 0.4rem; box-shadow: 0 2px 10px rgba(18, 35, 63, 0.12); }
+.signer-end { text-align: center; }
+.signer-label { font-size: 0.92rem; font-weight: 620; color: var(--navy); }
+.signer-pad { display: grid; gap: 0.3rem; }
+.signer-pad-canvas {
+  width: 100%; aspect-ratio: 3 / 1; background: #fff; border: 1.5px dashed #9fbbe0; border-radius: 0.9rem;
+  touch-action: none; cursor: crosshair;
+}
+.signer-pad.is-locked .signer-pad-canvas { opacity: 0.7; pointer-events: none; }
+.signer-pad-actions { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.signer-check { display: flex; gap: 0.65rem; align-items: flex-start; font-weight: 500 !important; color: var(--ink) !important; font-size: 1rem !important; padding: 0.4rem 0; }
+.signer-check input { width: 1.35rem; height: 1.35rem; margin: 0.1rem 0 0; flex: none; accent-color: var(--blue); }
+.signer-done-mark {
+  width: 3.5rem; height: 3.5rem; border-radius: 50%; background: #e3f6ea; color: #1d7a3d;
+  display: grid; place-items: center; font-size: 1.9rem; font-weight: 700;
+}
+@media (min-width: 40rem) {
+  .signer-card { padding: 2rem; }
+  .signer-card .btn { width: auto; justify-self: start; padding-inline: 1.6rem; }
+}

@@ -18,6 +18,9 @@ function prettyPersonvern() {
     if (req.url === "/logg-inn") {
       req.url = "/logg-inn/";
     }
+    if (/^\/signer\/[A-Za-z0-9_-]+\/?(\?.*)?$/.test(req.url ?? "")) {
+      req.url = "/signer/index.html";
+    }
     if (req.url === "/portal") {
       req.url = "/portal/";
     }
@@ -52,6 +55,7 @@ function prettyPersonvern() {
       path.startsWith("/support") ||
       path.startsWith("/logg-inn") ||
       path.startsWith("/portal") ||
+      path.startsWith("/signer") ||
       path.startsWith("/om-oss") ||
       path.startsWith("/sporsmal-svar") ||
       path.startsWith("/assets/") ||
@@ -95,6 +99,7 @@ export default defineConfig({
         support: resolve(import.meta.dirname, "support/index.html"),
         loggInn: resolve(import.meta.dirname, "logg-inn/index.html"),
         portal: resolve(import.meta.dirname, "portal/index.html"),
+        signer: resolve(import.meta.dirname, "signer/index.html"),
         notFound: resolve(import.meta.dirname, "404.html"),
       },
     },
