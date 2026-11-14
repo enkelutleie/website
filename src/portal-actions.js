@@ -92,6 +92,16 @@ export const explain = (error) => {
   return "Det gikk ikke. Prøv igjen om litt.";
 };
 
+// Server gate on POST /properties (iOS #1642). The message is the whole token.
+export const PROPERTY_CAP_TEXT = "Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.";
+export const PREMIUM_REQUIRED_TEXT = "Du trenger Premium for å opprette en bolig. Aktiver Premium i Enkel Utleie-appen på iPhone.";
+export function propertyCreateError(error) {
+  const blob = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""} ${error?.code || ""}`;
+  if (/\bconsumer_property_cap\b/.test(blob)) return PROPERTY_CAP_TEXT;
+  if (/\bpremium_required\b/.test(blob)) return PREMIUM_REQUIRED_TEXT;
+  return null;
+}
+
 export const minorOf = (text) => {
   const clean = String(text ?? "").replace(/\s|kr/gi, "").replace(",", ".");
   if (!/^\d+(\.\d{1,2})?$/.test(clean)) return null;
@@ -1518,6 +1528,15 @@ export const normalizeMeterNumber = (text) => {
   return v || null;
 };
 export const meterNumberValid = (v) => v == null || v.length <= METER_NUMBER_MAX;
+// iOS #1651: the electricity card is the section text. Empty text still shows stored meter lines.
+export function electricityHandbookText(body, settings) {
+  const text = String(body ?? "").trim();
+  if (text) return text;
+  const lines = [];
+  if (settings?.metering_point_id) lines.push(`Målepunkt-ID: ${settings.metering_point_id}`);
+  if (settings?.meter_number) lines.push(`Målernummer: ${settings.meter_number}`);
+  return lines.join("\n");
+}
 export const saveHandbookElectricity = (propertyId, meteringPointId, meterNumber) =>
   supabase.from("property_handbook_settings").upsert(
     { property_id: propertyId, metering_point_id: meteringPointId, meter_number: meterNumber },

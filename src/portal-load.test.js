@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { INSPECTION_COLUMNS, INSPECTION_ITEM_COLUMNS, coalesceCalls, maintenanceRescheduleParams } from "./portal-actions.js";
+import { INSPECTION_COLUMNS, INSPECTION_ITEM_COLUMNS, PROPERTY_CAP_TEXT, PREMIUM_REQUIRED_TEXT, coalesceCalls, electricityHandbookText, maintenanceRescheduleParams, propertyCreateError } from "./portal-actions.js";
 
 test("coalesceCalls runs one call for a burst and one follow-up if more arrive mid-call", async () => {
   let release = null;
@@ -48,4 +48,17 @@ test("Endre tidspunkt updates the same row and shifts ends_at", () => {
   const end = new Date(params.requested_ends_at).getTime();
   assert.equal(end - start, 90 * 60 * 1000);
   assert.equal(maintenanceRescheduleParams({ id: "c", title: "Fiks", starts_at: "2026-11-14T08:00:00Z" }, "2026-11-15T10:00").requested_ends_at, null);
+});
+
+test("property creation maps the server premium tokens", () => {
+  assert.equal(propertyCreateError({ message: "premium_required", code: "P0001" }), PREMIUM_REQUIRED_TEXT);
+  assert.equal(propertyCreateError({ message: "consumer_property_cap", code: "P0001" }), PROPERTY_CAP_TEXT);
+  assert.equal(propertyCreateError({ message: "duplicate key" }), null);
+});
+
+test("Strøm shows saved text, otherwise the old meter lines", () => {
+  assert.equal(electricityHandbookText("  Sikring i gangen  ", { metering_point_id: "707057500012345678" }), "Sikring i gangen");
+  assert.equal(electricityHandbookText("  ", { metering_point_id: "707057500012345678", meter_number: "AB 1" }), "Målepunkt-ID: 707057500012345678\nMålernummer: AB 1");
+  assert.equal(electricityHandbookText("", { meter_number: "AB 1" }), "Målernummer: AB 1");
+  assert.equal(electricityHandbookText(null, {}), "");
 });
