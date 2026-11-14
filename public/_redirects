@@ -6,6 +6,9 @@
 /slett-konto /slett-konto/index.html 200
 /support /support/index.html 200
 
+# Offentlig signeringsside for leiekontrakt (lenke fra e-post). Tokenet leses i nettleseren.
+/signer/* /signer/index.html 200
+
 # MIDLERTIDIG («Kommer snart»): skjul markedsundersider. 302 slik at det er lett å reversere.
 # For å gjenopprette: slett blokken under og legg tilbake de to 200-linjene:
 #   /om-oss /om-oss/index.html 200

@@ -5,6 +5,11 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self' https://jfrorhixjsuomwtjwqla.supabase.co wss://jfrorhixjsuomwtjwqla.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
 
+/signer/*
+  Referrer-Policy: no-referrer
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
 /brand/*
   Cache-Control: public, max-age=3600, must-revalidate
 
