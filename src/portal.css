@@ -114,7 +114,15 @@ svg { flex: none; }
 .pt-user-text span { font-size: var(--fs-caption); color: var(--secondary-ink); }
 
 .pt-content { padding: 28px 32px 48px; max-width: 1240px; width: 100%; display: flex; flex-direction: column; gap: 20px; }
-.pt-loading { color: var(--secondary-ink); }
+.pt-loading { color: var(--secondary-ink); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.pt-boot-spin { width: 32px; height: 32px; border: 3px solid var(--brand-soft); border-top-color: var(--brand); border-radius: 50%; animation: pt-spin .8s linear infinite; }
+@keyframes pt-spin { to { transform: rotate(360deg); } }
+/* The boot spinner hides the portal chrome until the list and Premium status
+   have answered. No inline styles. The portal itself is never covered. */
+.pt-app[aria-busy="true"] .pt-sidebar,
+.pt-app[aria-busy="true"] .pt-topbar { display: none; }
+.pt-app[aria-busy="true"] { display: block; }
+.pt-app[aria-busy="true"] .pt-content { min-height: 100vh; max-width: 640px; margin: 0 auto; align-items: center; justify-content: center; }
 
 /* Buttons */
 .pt-btn { font: inherit; font-size: var(--fs-subheadline); font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--button-min-height); padding: 12px 24px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; transition: opacity var(--ease), transform var(--ease), background-color var(--ease); }
@@ -324,6 +332,33 @@ svg { flex: none; }
 
 /* Modals and forms (actions). Same tokens and components as the rest of the portal. */
 .pt-modal { border: 0; padding: 0; background: transparent; max-width: min(560px, calc(100vw - 32px)); width: 100%; }
+.pt-premium-dialog { max-width: min(440px, calc(100vw - 32px)); }
+.pt-premium-sheet { background: linear-gradient(200deg, #e3effc 0%, #f4f8fc 38%, #fafbfd 100%); gap: 16px; }
+.pt-premium-sheet h2 { margin: 0; text-align: center; font-size: 28px; line-height: 1.2; font-weight: 700; color: #0e1230; }
+.pt-premium-hero { position: relative; width: 140px; height: 128px; margin: 0 auto; }
+.pt-premium-mascot { display: block; width: 104px; height: 104px; margin: 24px auto 0; object-fit: contain; }
+.pt-premium-hero-crown { position: absolute; top: 0; right: 10px; width: 36px; height: 36px; color: #f5b10f; transform: rotate(14deg); }
+.pt-premium-hero-crown svg { width: 36px; height: 36px; fill: currentColor; stroke: #d48a00; }
+.pt-premium-body { margin: 0; text-align: center; font-size: 15px; line-height: 1.45; color: #3a4150; }
+.pt-premium-free { margin: 0; text-align: center; font-size: 14px; font-weight: 700; color: #0e1230; }
+.pt-premium-note { margin: 0; text-align: center; font-size: 13px; line-height: 1.4; color: #4a4e5c; }
+.pt-premium-plans { display: flex; flex-direction: column; gap: 12px; }
+.pt-premium-plan { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; font: inherit; color: inherit; background: #fff; border: 1px solid #e3e8ef; border-radius: 16px; padding: 12px 20px 12px 16px; cursor: pointer; box-shadow: 0 3px 10px rgba(27, 58, 107, 0.08); }
+.pt-premium-plan.is-selected { background: #eaf4fd; border: 1.5px solid #3a72d8; }
+.pt-premium-plan-icon { width: 56px; height: 56px; border-radius: 14px; background: #f2f4f8; display: flex; align-items: center; justify-content: center; flex: none; color: #0e1230; }
+.pt-premium-plan.is-selected .pt-premium-plan-icon { background: #ddecfb; color: #f5b10f; }
+.pt-premium-plan-crown svg { width: 26px; height: 26px; }
+.pt-premium-plan.is-selected .pt-premium-plan-crown svg { width: 28px; height: 28px; fill: #f5b10f; stroke: #d48a00; }
+.pt-premium-plan-rule { width: 1px; height: 60px; background: #dde2e7; flex: none; }
+.pt-premium-plan-copy { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.pt-premium-plan-name { font-weight: 700; font-size: 17px; color: #0e1230; }
+.pt-premium-plan-price { font-weight: 700; font-size: 20px; color: #0e1230; }
+.pt-premium-plan-period { font-size: 15px; color: #4a5260; }
+.pt-premium-save { align-self: flex-start; margin-top: 5px; background: #d6e8fc; color: #1450be; font-weight: 600; font-size: 13px; border-radius: 999px; padding: 4px 12px; }
+.pt-premium-radio { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid #9a9ca5; flex: none; box-sizing: border-box; }
+.pt-premium-plan.is-selected .pt-premium-radio { border: 2px solid #1a5fd6; background: radial-gradient(circle, #1a5fd6 0 6px, transparent 7px); }
+.pt-premium-actions { display: flex; flex-direction: column; gap: 12px; }
+.pt-premium-actions .pt-btn { width: 100%; }
 .pt-modal::backdrop { background: rgba(27, 58, 107, 0.32); }
 .pt-modal-card { background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-elevated); padding: 24px; display: flex; flex-direction: column; gap: var(--space-l); max-height: calc(100vh - 64px); overflow-y: auto; color: var(--ink); font-family: var(--font); font-size: var(--fs-body); }
 .pt-modal-card .pt-card-head { margin-bottom: 0; }

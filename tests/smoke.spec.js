@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID } from "./supabase-mock.js";
+import { handoverImageBytes, handoverTables, installSupabase, PROPERTY_ID, READY_A, READY_B, READY_C, ROOM_EVENT_ID, roomCalendarTables, READY_PROCESS_A, readyToEndTables, requiresResponseTables, RR_FALSE_ID, RR_NULL_ID, RR_TRUE_ID, USER_ID } from "./supabase-mock.js";
 
 // Logged-in portal tests use a mocked Supabase client. No request is sent to
 // Production. The suite asserts the corrected behaviour, including "Ny bolig".
@@ -21,6 +21,82 @@ const PAGES = [
   ["Leiehistorikk", "Leiehistorikk"],
   ["Innstillinger", "Innstillinger"],
 ];
+
+const premiumDialog = (page) => page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Premium for utleier" }) });
+const wrote = (writes, name) => writes.some((entry) => String(entry.path).includes(name));
+
+async function saveNewIncome(page) {
+  await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+  await page.getByRole("button", { name: "Ny inntekt" }).click();
+  const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny inntekt" }) });
+  // «Annen inntekt» stays a one-off post. Husleie turns the form into a repeating payment.
+  await dialog.getByRole("button", { name: /Kategori/ }).click();
+  await dialog.getByRole("option", { name: "Annen inntekt", exact: true }).click();
+  await dialog.getByLabel("Beløp").fill("1500");
+  await dialog.getByLabel("Hva gjelder inntekten?").fill("Husleie for november");
+  await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
+  return dialog;
+}
+
+async function saveNewExpense(page) {
+  await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+  await page.getByRole("button", { name: "Ny utgift" }).click();
+  const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny utgift" }) });
+  await dialog.getByLabel("Beløp").fill("200");
+  await dialog.getByLabel("Hva gjelder utgiften?").fill("Reparasjon av vaskemaskin");
+  await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
+  return dialog;
+}
+
+async function saveNewTrip(page) {
+  await page.goto("/portal/#okonomi/kjorebok");
+  await expect(page.getByRole("heading", { name: "Kjøregodtgjørelse" })).toBeVisible();
+  await page.getByRole("button", { name: "Legg til tur" }).click();
+  const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny kjøretur" }) });
+  await dialog.getByLabel("Fra-adresse").fill("Hjemme");
+  await dialog.getByLabel("Til-adresse").fill("Testveien 1");
+  await dialog.getByLabel("Formål").fill("Visning");
+  await dialog.getByLabel("Kilometer").fill("20");
+  await dialog.getByRole("button", { name: "Lagre tur" }).click();
+  return dialog;
+}
+
+async function saveNewAsset(page) {
+  await page.goto("/portal/#okonomi/mobler");
+  await expect(page.getByRole("heading", { name: "Møbler og inventar" })).toBeVisible();
+  await page.getByRole("button", { name: "Legg til møbel eller inventar" }).click();
+  const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Legg til møbel eller inventar" }) });
+  await dialog.getByLabel("Type møbel").fill("Sofa");
+  await dialog.getByLabel("Kjøpspris").fill("1000");
+  await dialog.getByRole("button", { name: "Lagre", exact: true }).click();
+  return dialog;
+}
+
+async function sendTenantInvite(page) {
+  // Testveien 1 already has a tenant, so the invite button is on the empty home.
+  await page.goto("/portal/#oversikt");
+  const picker = page.getByRole("button", { name: /Testveien 1/ });
+  await picker.focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Fjellveien 2").first()).toBeVisible();
+  await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+  await page.getByRole("button", { name: "Inviter leietaker" }).click();
+  const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Inviter leietaker" }) });
+  await dialog.getByLabel("E-post").fill("leietaker@eksempel.no");
+  await dialog.getByRole("button", { name: "Send invitasjon" }).click();
+  return dialog;
+}
+
+async function saveNewContract(page) {
+  await page.goto("/portal/#leiekontrakt");
+  await expect(page.locator("[data-page-title]")).toHaveText("Leiekontrakt");
+  await page.getByRole("button", { name: "Opprett leiekontrakt" }).click();
+  const dialog = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny leiekontrakt" }) });
+  await dialog.getByRole("button", { name: "Lagre utkast" }).click();
+  return dialog;
+}
 
 async function openPortal(page, options = {}) {
   const errors = [];
@@ -1529,10 +1605,358 @@ test.describe("portal", () => {
     expect(stats.maxPropertyImages).toBeGreaterThan(1);
   });
 
-  test("premium gate when the account has no entitlement", async ({ page }) => {
-    await openPortal(page, { premium: false });
-    await expect(page.getByRole("heading", { name: "Nettportalen er en del av Premium" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Økonomi" })).toHaveCount(0);
+  test("no subscription and no boliger can register the first home", async ({ page }) => {
+    const empty = { properties: [], property_members: [] };
+    await openPortal(page, { premium: false, handover: empty });
+    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
+    await expect(page.locator(".pt-sidebar")).toBeVisible();
+
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await expect(create.getByRole("button", { name: "Opprett bolig" })).toBeVisible();
+    await create.getByRole("button", { name: "Avbryt" }).click();
+    await expect(create).toBeHidden();
+
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
+    await page.getByRole("link", { name: "Innstillinger", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Konto" })).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+  });
+
+  test("a premium rejection from property insert opens the dialog and keeps the portal", async ({ page }) => {
+    const { writes } = await openPortal(page, {
+      premium: false,
+      handover: { properties: [], property_members: [] },
+      propertyCreateError: "premium_required",
+    });
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    const wall = premiumDialog(page);
+    await expect(wall).toBeVisible();
+    await expect(wall.getByRole("radio", { name: /Premium årlig/ })).toHaveAttribute("aria-checked", "true");
+    await expect(wall.getByText("Spar 139 kr per år")).toBeVisible();
+    await expect(wall.getByText("Premium kjøpes i Enkel Utleie-appen.")).toBeVisible();
+    await expect(create).toBeVisible();
+    await expect(page.getByText("Boligen er opprettet.")).toHaveCount(0);
+    await expect(page.locator(".pt-sidebar")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
+    expect(writes.some((entry) => entry.method === "POST" && entry.path.endsWith("/properties"))).toBe(true);
+  });
+
+  test("the four-home cap stays in the form", async ({ page }) => {
+    await openPortal(page, {
+      premium: false,
+      handover: { properties: [], property_members: [] },
+      propertyCreateError: "consumer_property_cap",
+    });
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create.getByText("Premium dekker inntil fire boliger. Arkiver en bolig under «Rediger informasjon» for å legge til en ny.")).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+  });
+
+  test("saving the first bolig without Premium opens the home", async ({ page }) => {
+    await openPortal(page, {
+      premium: false,
+      handover: { properties: [], property_members: [] },
+      rememberCreates: true,
+    });
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(create).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await expect(page).toHaveURL(/#om-boligen$/);
+    await expect(page.getByRole("link", { name: "Boliger", exact: true })).toBeVisible();
+    await expect(page.locator(".pt-sidebar")).toBeVisible();
+    await expect(page.getByText("Boligen er opprettet.")).toBeVisible();
+  });
+
+  test("a landlord with boliger and no Premium can use the portal", async ({ page }) => {
+    const { writes } = await openPortal(page, { premium: false });
+    await expect(page.locator(".pt-sidebar")).toBeVisible();
+    await expect(page.locator(".pt-topbar")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await page.getByRole("button", { name: "Ny bolig" }).click();
+    const create = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny bolig" }) });
+    await create.getByLabel("Adresse").fill("Testveien 9");
+    await create.getByLabel("Postnummer").fill("0150");
+    await create.getByLabel("Poststed").fill("Oslo");
+    const before = writes.filter((entry) => entry.method === "POST" && entry.path.endsWith("/properties")).length;
+    await create.getByRole("button", { name: "Opprett bolig" }).click();
+    await expect(premiumDialog(page)).toBeVisible();
+    expect(writes.filter((entry) => entry.method === "POST" && entry.path.endsWith("/properties"))).toHaveLength(before);
+    await expect(page.locator(".pt-sidebar")).toBeVisible();
+  });
+
+  test("the portal stays on a spinner until the property list and Premium status answer", async ({ page }) => {
+    await installSupabase(page, { premium: false, delayTable: { properties: 2500 } });
+    await page.goto("/portal/#oversikt");
+    await expect(page.locator("[data-portal]")).toHaveAttribute("aria-busy", "true");
+    await expect(page.locator(".pt-boot-spin")).toBeVisible();
+    await expect(page.locator(".pt-sidebar")).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toHaveCount(0);
+    await expect(page.locator("[data-portal]")).toHaveAttribute("aria-busy", "false", { timeout: 8000 });
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await expect(page.locator(".pt-sidebar")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Økonomi", exact: true })).toBeVisible();
+  });
+
+  test("without Premium the five actions open the dialog and save nothing", async ({ page }) => {
+    const { writes } = await openPortal(page, { premium: false });
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    await page.getByRole("button", { name: "Endre" }).first().click();
+    const edit = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Endre post" }) });
+    await edit.getByRole("button", { name: "Lagre endringer" }).click();
+    await expect(edit).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    expect(wrote(writes, "update_financial_transaction")).toBe(true);
+
+    const income = await saveNewIncome(page);
+    const wall = premiumDialog(page);
+    await expect(wall).toBeVisible();
+    await expect(wall.getByRole("heading", { name: "Premium for utleier" })).toBeVisible();
+    await expect(wall.getByText("Få full kontroll på utleien")).toBeVisible();
+    await expect(wall.getByText("Opprett bolig gratis, og oppgrader når du er klar for mer!")).toBeVisible();
+    await expect(wall.getByRole("radio", { name: /Premium månedlig/ })).toHaveAttribute("aria-checked", "false");
+    await expect(wall.getByRole("radio", { name: /Premium årlig/ })).toHaveAttribute("aria-checked", "true");
+    await expect(wall.getByText("49 kr", { exact: true })).toBeVisible();
+    await expect(wall.getByText("per måned", { exact: true })).toBeVisible();
+    await expect(wall.getByText("449 kr", { exact: true })).toBeVisible();
+    await expect(wall.getByText("per år", { exact: true })).toBeVisible();
+    await expect(wall.getByText("Spar 139 kr per år")).toBeVisible();
+    await expect(wall.getByText("Premium kjøpes i Enkel Utleie-appen.")).toBeVisible();
+    await expect(wall.getByRole("button", { name: "Gjenopprett kjøp" })).toBeVisible();
+    await expect(wall.getByRole("button", { name: "Lukk" })).toBeVisible();
+    await expect(income).toBeVisible();
+    await expect(page.getByText("Posten er lagret.")).toHaveCount(0);
+    expect(wrote(writes, "create_financial_transaction")).toBe(false);
+    await wall.getByRole("radio", { name: /Premium månedlig/ }).click();
+    await expect(wall.getByRole("radio", { name: /Premium månedlig/ })).toHaveAttribute("aria-checked", "true");
+    expect(wrote(writes, "create_financial_transaction")).toBe(false);
+    await wall.getByRole("button", { name: "Lukk" }).click();
+    await expect(wall).toBeHidden();
+    await income.getByRole("button", { name: "Avbryt" }).click();
+
+    const expense = await saveNewExpense(page);
+    await expect(premiumDialog(page)).toBeVisible();
+    await expect(expense).toBeVisible();
+    expect(wrote(writes, "create_financial_transaction")).toBe(false);
+    await premiumDialog(page).getByRole("button", { name: "Lukk" }).click();
+    await expense.getByRole("button", { name: "Avbryt" }).click();
+
+    const trip = await saveNewTrip(page);
+    await expect(premiumDialog(page)).toBeVisible();
+    await expect(trip).toBeVisible();
+    expect(wrote(writes, "create_mileage_trip")).toBe(false);
+    await premiumDialog(page).getByRole("button", { name: "Lukk" }).click();
+    await trip.getByRole("button", { name: "Avbryt" }).click();
+
+    const asset = await saveNewAsset(page);
+    await expect(premiumDialog(page)).toBeVisible();
+    await expect(asset).toBeVisible();
+    expect(wrote(writes, "create_property_asset")).toBe(false);
+    await premiumDialog(page).getByRole("button", { name: "Lukk" }).click();
+    await asset.getByRole("button", { name: "Avbryt" }).click();
+
+    await page.goto("/portal/#leiekontrakt");
+    await expect(page.locator("[data-page-title]")).toHaveText("Leiekontrakt");
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await page.getByRole("button", { name: "Opprett leiekontrakt" }).click();
+    const contract = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Ny leiekontrakt" }) });
+    await expect(contract).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await contract.getByRole("button", { name: "Lagre utkast" }).click();
+    await expect(premiumDialog(page)).toBeVisible();
+    await expect(contract).toBeVisible();
+    expect(wrote(writes, "create_rental_agreement_draft")).toBe(false);
+    await premiumDialog(page).getByRole("button", { name: "Lukk" }).click();
+    await contract.getByRole("button", { name: "Avbryt" }).click();
+
+    const invite = await sendTenantInvite(page);
+    await expect(premiumDialog(page)).toBeVisible();
+    await expect(invite).toBeVisible();
+    expect(wrote(writes, "create_tenancy_invitation")).toBe(false);
+    await expect(page.locator(".pt-sidebar")).toBeVisible();
+  });
+
+  test("without Premium, edits, an existing draft and a co-landlord invite are not blocked", async ({ page }) => {
+    const assetId = "a5000000-0000-4000-8000-000000000099";
+    const tripId = "7a000000-0000-4000-8000-000000000099";
+    const { writes } = await openPortal(page, {
+      premium: false,
+      handover: {
+        rpc: {
+          list_mileage_trips: [{
+            id: tripId, property_id: PROPERTY_ID, trip_date: "2026-11-05", distance_meters: 20000,
+            purpose: "Visning", from_place: "Hjemme", to_place: "Gamleveien 3", created_at: "2026-11-05T10:00:00Z", voided_at: null,
+          }],
+          list_property_assets: [{
+            id: assetId, property_id: PROPERTY_ID, name: "Sofa", item_kind: "loose_inventory", category: "furnishings",
+            purchase_date: "2026-03-01", purchase_amount_minor: 1_500_000, useful_life_years: 5, life_under_three_years: false,
+            counts_for_taxable_rental: true, fixed_treatment: null, disposal_date: null, disposal_proceeds_minor: null, notes: null,
+          }],
+          get_rental_agreement: [{
+            payload: {
+              agreement: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", draft_revision: 1 },
+              version: {
+                id: "vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", legal_rule_version: "pending_l1_l10", language_code: "nb",
+                snapshot: { terms: { lease_term_type: "indefinite", notice_period_months: 3 } },
+              },
+            },
+          }],
+          list_property_co_landlord_invitations: [{
+            invitation_id: "c0c0c0c0-c0c0-40c0-80c0-c0c0c0c0c0c0", email: "medeier@eksempel.no", status: "pending", delivery_status: "sent",
+          }],
+          create_property_co_landlord_invitation: [{
+            invitation_id: "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1", email: "ny@eksempel.no", was_created: true,
+          }],
+        },
+      },
+    });
+
+    await page.goto("/portal/#okonomi/kjorebok");
+    await page.locator("li.pt-row").filter({ hasText: "Gamleveien 3" }).getByRole("button", { name: "Rediger" }).click();
+    const trip = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger kjøretur" }) });
+    await trip.getByRole("button", { name: "Lagre tur" }).click();
+    await expect(trip).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    expect(wrote(writes, "correct_mileage_trip")).toBe(true);
+    expect(wrote(writes, "create_mileage_trip")).toBe(false);
+
+    await page.goto("/portal/#okonomi/mobler");
+    const sofa = page.locator("li.pt-row").filter({ hasText: "Sofa" }).first();
+    await sofa.getByRole("button", { name: "Oversikt over avskrivning" }).click();
+    await sofa.getByRole("button", { name: "Rediger" }).click();
+    const asset = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger møbel eller inventar" }) });
+    await asset.getByRole("button", { name: "Lagre", exact: true }).click();
+    await expect(asset).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    expect(wrote(writes, "update_property_asset")).toBe(true);
+    expect(wrote(writes, "create_property_asset")).toBe(false);
+
+    await page.goto("/portal/#leiekontrakt");
+    await expect(page.locator("[data-page-title]")).toHaveText("Leiekontrakt");
+    await page.locator("li.pt-row").filter({ hasText: "Utkast" }).getByRole("button", { name: "Rediger" }).click();
+    const draft = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Rediger utkast" }) });
+    await expect(draft).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await draft.getByRole("button", { name: "Lagre utkast" }).click();
+    await expect(draft).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    expect(wrote(writes, "update_rental_agreement_draft")).toBe(true);
+    expect(wrote(writes, "create_rental_agreement_draft")).toBe(false);
+
+    await page.goto("/portal/#om-boligen");
+    await page.getByRole("button", { name: "Legg til medutleier" }).click();
+    const co = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Inviter med-utleier" }) });
+    await co.getByLabel("E-postadresse").fill("ny@eksempel.no");
+    await co.getByRole("button", { name: "Send invitasjon" }).click();
+    await expect(co).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    expect(wrote(writes, "create_property_co_landlord_invitation")).toBe(true);
+
+    await page.getByRole("button", { name: "Send på nytt" }).click();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await expect.poll(() => writes.some((entry) => String(entry.path).includes("send-co-landlord-notification") && entry.body?.action === "resend")).toBe(true);
+  });
+
+  test("with Premium the five actions save", async ({ page }) => {
+    const { writes } = await openPortal(page, { premium: true });
+    const income = await saveNewIncome(page);
+    await expect(income).toBeHidden();
+    await expect(page.getByText("Posten er lagret.")).toBeVisible();
+    expect(wrote(writes, "create_financial_transaction")).toBe(true);
+    await expect(premiumDialog(page)).toHaveCount(0);
+
+    const expense = await saveNewExpense(page);
+    await expect(expense).toBeHidden();
+    expect(writes.filter((entry) => String(entry.path).includes("create_financial_transaction"))).toHaveLength(2);
+
+    const trip = await saveNewTrip(page);
+    await expect(trip).toBeHidden();
+    expect(wrote(writes, "create_mileage_trip")).toBe(true);
+
+    const asset = await saveNewAsset(page);
+    await expect(asset).toBeHidden();
+    expect(wrote(writes, "create_property_asset")).toBe(true);
+
+    const contract = await saveNewContract(page);
+    await expect(contract).toBeHidden();
+    expect(wrote(writes, "create_rental_agreement_draft")).toBe(true);
+
+    const invite = await sendTenantInvite(page);
+    await expect(invite).toBeHidden();
+    expect(wrote(writes, "create_tenancy_invitation")).toBe(true);
+    await expect(premiumDialog(page)).toHaveCount(0);
+  });
+
+  test("complimentary access counts as Premium without a subscription", async ({ page }) => {
+    const { writes } = await openPortal(page, { premium: false, complimentary: true });
+    const income = await saveNewIncome(page);
+    await expect(income).toBeHidden();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    expect(wrote(writes, "create_financial_transaction")).toBe(true);
+  });
+
+  test("Gjenopprett kjøp clears the dialog when Premium is found", async ({ page }) => {
+    const { writes } = await openPortal(page, { premium: false, restorePremium: true });
+    const income = await saveNewIncome(page);
+    const wall = premiumDialog(page);
+    await expect(wall).toBeVisible();
+    expect(wrote(writes, "create_financial_transaction")).toBe(false);
+    await wall.getByRole("button", { name: "Gjenopprett kjøp" }).click();
+    await expect(wall).toBeHidden();
+    await income.getByRole("button", { name: "Lagre", exact: true }).click();
+    await expect(income).toBeHidden();
+    expect(wrote(writes, "create_financial_transaction")).toBe(true);
+    await expect(premiumDialog(page)).toHaveCount(0);
+  });
+
+  test("a server premium_required on a gated save opens the same dialog", async ({ page }) => {
+    const { writes } = await openPortal(page, { premiumRequiredRpc: ["create_financial_transaction"] });
+    const income = await saveNewIncome(page);
+    await expect(premiumDialog(page)).toBeVisible();
+    await expect(income).toBeVisible();
+    await expect(page.getByText("Posten er lagret.")).toHaveCount(0);
+    expect(wrote(writes, "create_financial_transaction")).toBe(true);
+  });
+
+  test("a tenant never sees the Premium dialog", async ({ page }) => {
+    await openPortal(page, {
+      premium: false,
+      handover: {
+        property_members: [{ property_id: PROPERTY_ID, user_id: USER_ID, role: "tenant", valid_until: null }],
+      },
+    });
+    await expect(page.getByRole("heading", { name: "Ingen boliger ennå" })).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await page.getByRole("link", { name: "Økonomi", exact: true }).click();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await page.getByRole("link", { name: "Innstillinger", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Konto" })).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
+    await page.getByRole("link", { name: "Oversikt", exact: true }).click();
+    await page.getByRole("button", { name: "Registrer bolig" }).click();
+    await expect(page.getByRole("heading", { name: "Ny bolig" })).toBeVisible();
+    await expect(premiumDialog(page)).toHaveCount(0);
   });
 });
 

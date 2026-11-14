@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { PREMIUM_BLOCKED, premiumFromReads } from "./portal-premium.js";
 import { createStuckFinalizer } from "./portal-sign-refresh.js";
 import { createCoInviteAcceptGate } from "./portal-co-invite-accept.js";
 import { rentalProfileOf } from "./portal-own-home.js";
@@ -269,6 +270,7 @@ export function openForm({ title, intro, fields, submitLabel = "Lagre", onSubmit
         }
         unlock();
         submit.textContent = submitLabel;
+        if (error === PREMIUM_BLOCKED) return;
         if (error) {
           status.textContent = error;
           status.hidden = false;
@@ -1525,17 +1527,19 @@ export const saveHandbookElectricity = (propertyId, meteringPointId, meterNumber
   );
 
 /* ---------- Premium (subscription_entitlements + get_my_complimentary_access) ---------- */
+// Complimentary access lives in private.complimentary_access, which clients
+// cannot read. The RPC is security definer and answers only the caller.
 export async function hasPremium() {
   const [ent, comp] = await Promise.all([
     supabase.from("subscription_entitlements").select("status, expires_at, environment").eq("environment", "production"),
     supabase.rpc("get_my_complimentary_access"),
   ]);
-  if (comp.data === true) return { ok: true };
-  if (ent.error && comp.error) return { ok: false, unknown: true };
-  const now = Date.now();
-  const active = (ent.data ?? []).some((r) =>
-    ["active", "grace", "canceled"].includes(r.status) && (!r.expires_at || new Date(r.expires_at).getTime() > now));
-  return { ok: active };
+  return premiumFromReads({
+    complimentary: comp.data === true,
+    complimentaryError: Boolean(comp.error),
+    entitlements: ent.data,
+    entitlementsError: Boolean(ent.error),
+  });
 }
 
 /* ---------- Kvitteringer (FinancialTransactionReceiptController / EconomyController) ---------- */
