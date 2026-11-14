@@ -2,6 +2,7 @@ import { supabase, setAuthState, signOut } from "./supabase.js";
 import { ICONS } from "./portal-icons.js";
 import * as act from "./portal-actions.js";
 import * as inv from "./portal-inventory.js";
+import { ASSET_LOAD_ERROR, isCancellation, loadManagedInventory, unsettledInventory } from "./portal-inventory-load.js";
 import * as tplt from "./portal-templates.js";
 import * as letter from "./portal-letter.js";
 import * as annual from "./portal-annual.js";
@@ -1090,7 +1091,12 @@ const actionsRow = (...buttons) => {
 const isManager = (pid = state.propertyId) => ["owner", "co_landlord"].includes(state.roles.get(pid));
 const isOwner = (pid = state.propertyId) => state.roles.get(pid) === "owner";
 let session = null;
+// Bumped when a newer inventory load, a refresh, or leaving the in-flight read should win.
+// The superseded read keeps what is on screen and is not shown as «Kunne ikke laste eiendeler.».
+let inventoryEpoch = 0;
+let inventoryShown = { bundles: [], elections: {} };
 const refresh = async (message) => {
+  inventoryEpoch += 1;
   act.invalidatePortalReads();
   state.cache.clear();
   await load(session, true);
@@ -4305,7 +4311,7 @@ const loadAnnual = async (pid, year) => {
     annual.listLinks(pid, start, end),
     act.listMileageTrips(pid, start, end),
     annual.ownershipShares(pid, year),
-    cached("inventory", loadInventory),
+    cachedInventory(),
     act.ownProfile(state.user.id),
     tenancyPeople(pid),
   ]);
@@ -4321,10 +4327,11 @@ const loadAnnual = async (pid, year) => {
   return {
     transactions: txs.data, links: links.data, documents: docs.data ?? [], trips: trips.error ? [] : trips.data,
     driverNames, tenantNames,
-    items: inventory.error ? [] : inventory.items.filter((i) => i.propertyId === pid),
-    elections: inventory.error ? {} : inventory.elections,
+    items: inventory.error ? [] : (inventory.items ?? []).filter((i) => i.propertyId === pid),
+    elections: inventory.error ? {} : (inventory.elections ?? {}),
     landlordName: me.data?.display_name ?? state.name ?? "",
-    supplementsFailed: Boolean(trips.error || roster.error || inventory.error || docs.error),
+    supplementsFailed: Boolean(trips.error || roster.error || inventory.error || docs.error
+      || (inventory.failedPropertyIds ?? []).includes(pid)),
   };
 };
 
@@ -4731,21 +4738,42 @@ const assetState = { year: null, infoOpen: false, open: new Set() };
 const kr = (minor) => money(minor).replace(/,00 kr$/, " kr");
 const percent = (bps) => `${Math.round(bps / 100)} %`;
 
+// Møbler og inventar across every managed property (iOS AssetListLoad, #1677).
+// One property failing does not fail the page. Abort, navigation, re-render and
+// refresh are not errors. The message is only for a total failure with nothing shown.
 const loadInventory = async () => {
+  const epoch = ++inventoryEpoch;
   const managed = state.properties.filter((p) => isManager(p.id));
-  const perProperty = await Promise.all(managed.map(async (p) => {
-    const [assets, mode] = await Promise.all([inv.listAssets(p.id), inv.accountingMode(p.id)]);
-    const modeValue = mode.error ? null : (Array.isArray(mode.data) ? mode.data[0]?.accounting_mode ?? mode.data[0] : mode.data?.accounting_mode ?? mode.data);
-    return { p, assets, scope: inv.scopeFor(modeValue, p) };
-  }));
-  if (perProperty.some((r) => r.assets.error)) return { error: true };
-  const items = perProperty.flatMap(({ p, assets, scope }) => assets.data.map((a) => inv.itemInput(a, addressOf(p).line, scope)));
-  items.sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate) || a.name.localeCompare(b.name, "nb"));
-  const el = await inv.listElections();
-  const elections = {};
-  for (const e of el.error ? [] : el.data ?? []) (elections[e.scope_key] ??= {})[e.tax_year] = e;
-  const scopes = Object.fromEntries(perProperty.map(({ p, scope }) => [p.id, scope]));
-  return { items, elections, scopes, assets: Object.fromEntries(perProperty.flatMap(({ assets }) => assets.data.map((a) => [a.id, a]))) };
+  const view = await loadManagedInventory({
+    properties: managed,
+    labelOf: (p) => addressOf(p).line,
+    previous: inventoryShown,
+    listAssets: (id) => inv.listAssets(id),
+    accountingMode: (id) => inv.accountingMode(id),
+    listElections: () => inv.listElections(),
+    showsFailure: true,
+    isCancelled: () => epoch !== inventoryEpoch,
+  });
+  if (epoch === inventoryEpoch && view.settled) inventoryShown = { bundles: view.bundles, elections: view.elections };
+  return view;
+};
+// A cancelled or superseded read is not cached, so the next visit tries again.
+// A real result (including a total failure) stays until refresh clears the cache.
+const cachedInventory = () => {
+  const key = "inventory";
+  if (state.cache.has(key)) return state.cache.get(key);
+  let pending;
+  pending = Promise.resolve().then(loadInventory).then((res) => {
+    if (res?.settled === false && state.cache.get(key) === pending) state.cache.delete(key);
+    return res;
+  }).catch((error) => {
+    if (state.cache.get(key) === pending) state.cache.delete(key);
+    const hasRows = (inventoryShown.bundles ?? []).some((bundle) => bundle.rawRows?.length);
+    if (isCancellation(error) || hasRows) return unsettledInventory(inventoryShown);
+    return { error: true, items: [], elections: {}, scopes: {}, assets: {}, bundles: [], failedPropertyIds: [], cancelled: false, settled: true };
+  });
+  state.cache.set(key, pending);
+  return pending;
 };
 
 const assetForm = async (pid, data, asset = null) => {
@@ -4921,7 +4949,7 @@ const assetsPage = async (pid) => {
   const year = assetState.year ?? thisYear;
   const back = h("a", "pt-back", "‹ Økonomi");
   back.href = "#okonomi";
-  const data = await cached("inventory", loadInventory);
+  const data = await cachedInventory();
   const head = card("Møbler og inventar", "sofa");
   head.append(h("p", "pt-muted", "Du kan få skattefradrag for møbler og inventar som brukes i utleien."));
   const info = h("div", "pt-mileage-info");
@@ -4935,7 +4963,12 @@ const assetsPage = async (pid) => {
   }
   const toggle = infoToggle(info, assetState);
   if (data.error) {
-    head.append(actionsRow(toggle), info, inline("Kunne ikke laste eiendeler."));
+    head.append(actionsRow(toggle), info, inline(ASSET_LOAD_ERROR));
+    return [back, head];
+  }
+  // Aborted before anything arrived: keep the header, and do not claim the list is empty.
+  if (data.settled === false && !(data.items ?? []).length) {
+    head.append(actionsRow(toggle), info);
     return [back, head];
   }
   const firstYear = Math.min(thisYear, year, ...data.items.map((i) => inv.yearOf(i.purchaseDate)).filter(Boolean));
