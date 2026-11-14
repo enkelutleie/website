@@ -2735,6 +2735,8 @@ export function inkPad() {
 /* ---------- Kjørebok (MileageController.swift, MileageLedger.swift) ---------- */
 // MileageRateCatalog.json: Skatteetaten's rate for yrkeskjøring med privatbil, also elbil.
 export const MILEAGE_RATES = {
+  2023: { orePerKm: 350, authority: "Skatteetaten" },
+  2024: { orePerKm: 350, authority: "Skatteetaten" },
   2025: { orePerKm: 350, authority: "Skatteetaten" },
   2026: { orePerKm: 350, authority: "Skatteetaten" },
 };

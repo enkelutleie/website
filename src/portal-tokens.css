@@ -25,6 +25,12 @@
   --danger: #ff3b30;
   --warning: #ff9500;
   --tax: #af52de;
+  /* Kjørebok system blue (iOS #1659): light #0088FF, dark #0091FF. */
+  --mileage: #0088ff;
+  --mileage-icon-bg: rgba(0, 136, 255, 0.16);
+  /* Møbler og inventar (iOS #1618/#1669): same yellow in both modes. */
+  --furnishings: #db9e21;
+  --furnishings-icon-bg: rgba(219, 158, 33, 0.16);
   --success-soft: rgba(52, 199, 89, 0.14);
   --danger-soft: rgba(255, 59, 48, 0.14);
   --warning-soft: rgba(255, 149, 0, 0.14);
@@ -64,4 +70,11 @@
   --press-opacity: 0.82;
   --press-scale: 0.99;
   --ease: 160ms ease-out;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mileage: #0091ff;
+    --mileage-icon-bg: rgba(0, 145, 255, 0.16);
+  }
 }
