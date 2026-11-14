@@ -36,3 +36,13 @@ test("maintenance_schedule_changed opens the calendar overview, not the event", 
   assert.equal(notificationRoute({ ...base, destination_type: "calendar_item", destination_id: "item" }, "manager"), "#kalender/vis/item");
   assert.equal(notificationRoute({ notification_type: "calendar_created", destination_type: "calendar_item", destination_id: "item", tenancy_id: "t1" }, "tenant"), "#kalender/item");
 });
+
+test("a chat notification opens that conversation and tenancy, not the inbox", () => {
+  const n = {
+    notification_type: "chat_message", destination_type: "chat_conversation",
+    destination_id: "cccccccc-cccc-4ccc-8ccc-cccccccccc01", tenancy_id: "44444444-4444-4444-8444-44444444aaa1",
+    property_id: "22222222-2222-4222-8222-222222222222", source_type: "chat",
+  };
+  assert.equal(notificationRoute(n, "manager"), "#meldinger/cccccccc-cccc-4ccc-8ccc-cccccccccc01/44444444-4444-4444-8444-44444444aaa1");
+  assert.equal(notificationRoute({ source_type: "chat" }, "manager"), "#meldinger");
+});

@@ -1862,15 +1862,22 @@ const waitUntilVisible = (fn) => {
 };
 
 // ChatRealtimeRemote.changes(conversationID): RLS decides what arrives; the UI reloads, never trusts payloads.
+// Channel chat:<conversation>:<session>, INSERT/UPDATE on chat_messages and chat_member_read_cursors
+// filtered to this conversation. A row for another tenancy is ignored. No sender filter.
 // A burst of inserts reloads the open thread once, a second after the last event.
 export function subscribeChat(conversationId, onChange) {
   const notify = coalesceCalls(() => onChange());
   exposeMeasure("pokeChat", notify);
   const filter = `conversation_id=eq.${conversationId}`;
   const channel = supabase.channel(`chat:${conversationId}:${crypto.randomUUID()}`);
+  const onRow = (payload) => {
+    const row = payload?.new;
+    if (row?.conversation_id && row.conversation_id !== conversationId) return;
+    notify();
+  };
   for (const table of ["chat_messages", "chat_member_read_cursors"]) {
-    channel.on("postgres_changes", { event: "INSERT", schema: "public", table, filter }, () => notify());
-    channel.on("postgres_changes", { event: "UPDATE", schema: "public", table, filter }, () => notify());
+    channel.on("postgres_changes", { event: "INSERT", schema: "public", table, filter }, onRow);
+    channel.on("postgres_changes", { event: "UPDATE", schema: "public", table, filter }, onRow);
   }
   channel.subscribe();
   return () => {
